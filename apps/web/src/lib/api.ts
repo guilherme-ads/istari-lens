@@ -368,6 +368,21 @@ export type ApiInsightChatAnswer = {
   type: "answer";
   answer: string;
   interpreted_question: string;
+  query_plan: {
+    metrics: Array<{ field: string; agg: string }>;
+    dimensions: string[];
+    filters: Array<{ field: string; op: string; value?: unknown[] | null }>;
+    period?: {
+      field?: string | null;
+      start?: string | null;
+      end?: string | null;
+      granularity?: "day" | "week" | "month" | null;
+      preset?: string | null;
+    } | null;
+    sort: Array<{ field: string; dir: "asc" | "desc" }>;
+    limit: number;
+    assumptions: string[];
+  };
   query_config: ApiQuerySpec;
   columns: string[];
   rows: Record<string, unknown>[];

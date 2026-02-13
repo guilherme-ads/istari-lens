@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis, LineChart, Line } from "recharts";
 import {
   MessageSquare,
   Send,
@@ -33,15 +34,25 @@ import { getStoredUser } from "@/lib/auth";
 
 type ProcessingStep = "analyzing" | "building_query" | "querying" | "generating";
 
-type ChatTableData = {
-  headers: string[];
-  rows: (string | number)[][];
-};
-
-type ChatHighlight = {
-  label: string;
-  value: string | number;
-};
+type ChatWidget =
+  | {
+      widget_type: "kpi";
+      title: string;
+      value: string | number;
+    }
+  | {
+      widget_type: "table";
+      title: string;
+      headers: string[];
+      rows: (string | number)[][];
+    }
+  | {
+      widget_type: "bar" | "line";
+      title: string;
+      dimension_key: string;
+      metric_key: string;
+      rows: Array<Record<string, string | number>>;
+    };
 
 type LLMContext = {
   planner_response_id?: string | null;
@@ -53,8 +64,7 @@ type ChatMessage = {
   role: "user" | "assistant" | "clarification" | "error";
   content: string;
   timestamp: Date;
-  table?: ChatTableData;
-  highlights?: ChatHighlight[];
+  widgets?: ChatWidget[];
   processingStep?: ProcessingStep;
   stages?: ProcessingStep[];
 };
@@ -98,6 +108,131 @@ const ProcessingIndicator = ({ step, steps = [step] }: { step: ProcessingStep; s
   </div>
 );
 
+const formatCompactNumber = (value: unknown): string => {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(number);
+};
+
+const renderBoldMarkdown = (content: string) => {
+  const parts = content.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, idx) => {
+    const boldMatch = /^\*\*([^*]+)\*\*$/.exec(part);
+    if (boldMatch) return <strong key={idx}>{boldMatch[1]}</strong>;
+    return <span key={idx}>{part}</span>;
+  });
+};
+
+const toTableRows = (headers: string[], rows: Record<string, unknown>[], limit = 15): (string | number)[][] =>
+  rows.slice(0, limit).map((row) =>
+    headers.map((header) => {
+      const value = row[header];
+      if (typeof value === "number") return value;
+      if (value == null) return "-";
+      return String(value);
+    }),
+  );
+
+const pickMetricColumn = (headers: string[], rows: Record<string, unknown>[]) => {
+  if (headers.includes("m0")) return "m0";
+  return (
+    headers.find((header) =>
+      rows.some((row) => {
+        const value = row[header];
+        return typeof value === "number" || (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)));
+      }),
+    ) || null
+  );
+};
+
+const pickDimensionColumn = (headers: string[], metricColumn: string | null, preferred: string[] = []) => {
+  const preferredHit = preferred.find((field) => headers.includes(field) && field !== metricColumn);
+  if (preferredHit) return preferredHit;
+  return headers.find((header) => header !== metricColumn) || null;
+};
+
+const buildDynamicWidgets = (response: Extract<ApiInsightChatResponse, { type: "answer" }>): ChatWidget[] => {
+  const headers = response.columns || [];
+  const rows = response.rows || [];
+  const hasRows = response.row_count > 0 && rows.length > 0;
+  if (!hasRows || headers.length === 0) return [];
+
+  const hasTimeSeriesShape = headers.includes("time_bucket") || !!response.query_plan?.period?.field;
+  const metricColumn = pickMetricColumn(headers, rows);
+  const dimensionColumn = pickDimensionColumn(headers, metricColumn, response.query_plan?.dimensions || []);
+  const isSimpleAnswer = response.answer.trim().length <= 110 && response.row_count <= 1;
+  if (isSimpleAnswer) return [];
+
+  const tableWidget: ChatWidget = {
+    widget_type: "table",
+    title: "Tabela",
+    headers,
+    rows: toTableRows(headers, rows, 15),
+  };
+
+  if (hasTimeSeriesShape && metricColumn && dimensionColumn) {
+    const chartRows = rows
+      .map((row) => {
+        const x = row[dimensionColumn];
+        const y = row[metricColumn];
+        const yNum = typeof y === "number" ? y : Number(y);
+        if (x == null || !Number.isFinite(yNum)) return null;
+        return { [dimensionColumn]: String(x), [metricColumn]: yNum };
+      })
+      .filter((item): item is Record<string, string | number> => !!item)
+      .slice(0, 30);
+    if (chartRows.length === 0) return [tableWidget];
+    return [
+      {
+        widget_type: "line",
+        title: "Serie temporal",
+        dimension_key: dimensionColumn,
+        metric_key: metricColumn,
+        rows: chartRows,
+      },
+      ...(response.row_count > 12 ? [tableWidget] : []),
+    ];
+  }
+
+  if (metricColumn && !dimensionColumn) {
+    const rawValue = rows[0]?.[metricColumn];
+    const value = typeof rawValue === "number" ? rawValue : Number(rawValue);
+    return [
+      {
+        widget_type: "kpi",
+        title: "KPI",
+        value: Number.isFinite(value) ? value : String(rawValue ?? "-"),
+      },
+    ];
+  }
+
+  if (metricColumn && dimensionColumn) {
+    const chartRows = rows
+      .map((row) => {
+        const x = row[dimensionColumn];
+        const y = row[metricColumn];
+        const yNum = typeof y === "number" ? y : Number(y);
+        if (x == null || !Number.isFinite(yNum)) return null;
+        return { [dimensionColumn]: String(x), [metricColumn]: yNum };
+      })
+      .filter((item): item is Record<string, string | number> => !!item)
+      .slice(0, 20);
+    if (chartRows.length === 0) return [tableWidget];
+    return [
+      {
+        widget_type: "bar",
+        title: "Ranking",
+        dimension_key: dimensionColumn,
+        metric_key: metricColumn,
+        rows: chartRows,
+      },
+      ...(response.row_count > 8 ? [tableWidget] : []),
+    ];
+  }
+
+  return [tableWidget];
+};
+
 const MessageBubble = ({ message }: { message: ChatMessage }) => {
   if (message.role === "user") {
     return (
@@ -135,39 +270,81 @@ const MessageBubble = ({ message }: { message: ChatMessage }) => {
           </Badge>
         )}
 
-        <div className="text-sm text-foreground leading-relaxed whitespace-pre-line">{message.content}</div>
+        <div className="text-sm text-foreground leading-relaxed whitespace-pre-line">{renderBoldMarkdown(message.content)}</div>
 
-        {message.highlights && message.highlights.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {message.highlights.map((h, i) => (
-              <div key={i} className="glass-card px-3 py-2 flex flex-col">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{h.label}</span>
-                <span className="text-lg font-extrabold tracking-tight text-foreground">{h.value}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {message.widgets && message.widgets.length > 0 && (
+          <div className="space-y-3">
+            {message.widgets.map((widget, idx) => {
+              if (widget.widget_type === "kpi") {
+                return (
+                  <div key={`widget-${idx}`} className="glass-card px-3 py-2.5 flex flex-col">
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{widget.title}</span>
+                    <span className="text-2xl font-extrabold tracking-tight text-foreground">{formatCompactNumber(widget.value)}</span>
+                  </div>
+                );
+              }
 
-        {message.table && (
-          <div className="rounded-lg border border-border overflow-hidden text-xs">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/30 hover:bg-muted/30">
-                  {message.table.headers.map((h) => (
-                    <TableHead key={h} className="text-xs font-semibold py-2 whitespace-nowrap">{h}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {message.table.rows.map((row, i) => (
-                  <TableRow key={i}>
-                    {row.map((cell, j) => (
-                      <TableCell key={j} className={cn("py-1.5", typeof cell === "number" ? "font-mono text-right tabular-nums" : "")}>{cell}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+              if (widget.widget_type === "table") {
+                return (
+                  <div key={`widget-${idx}`} className="rounded-lg border border-border overflow-hidden text-xs">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/30 hover:bg-muted/30">
+                          {widget.headers.map((h) => (
+                            <TableHead key={h} className="text-xs font-semibold py-2 whitespace-nowrap">{h}</TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {widget.rows.map((row, i) => (
+                          <TableRow key={i}>
+                            {row.map((cell, j) => (
+                              <TableCell key={j} className={cn("py-1.5", typeof cell === "number" ? "font-mono text-right tabular-nums" : "")}>{cell}</TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                );
+              }
+
+              if (widget.widget_type === "line") {
+                return (
+                  <div key={`widget-${idx}`} className="rounded-lg border border-border px-2 py-3">
+                    <div className="text-[11px] text-muted-foreground mb-2">{widget.title}</div>
+                    <div className="h-52">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={widget.rows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                          <XAxis dataKey={widget.dimension_key} tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} />
+                          <ChartTooltip formatter={(value) => formatCompactNumber(value)} />
+                          <Line type="monotone" dataKey={widget.metric_key} stroke="hsl(var(--accent))" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={`widget-${idx}`} className="rounded-lg border border-border px-2 py-3">
+                  <div className="text-[11px] text-muted-foreground mb-2">{widget.title}</div>
+                  <div className="h-52">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={widget.rows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey={widget.dimension_key} tick={{ fontSize: 10 }} />
+                        <YAxis tick={{ fontSize: 10 }} />
+                        <ChartTooltip formatter={(value) => formatCompactNumber(value)} />
+                        <Bar dataKey={widget.metric_key} fill="hsl(var(--accent))" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -264,24 +441,12 @@ const buildAssistantMessage = (response: ApiInsightChatResponse): ChatMessage =>
     };
   }
 
-  const headers = response.columns || [];
-  const tableRows = (response.rows || []).slice(0, 15).map((row) => headers.map((header) => {
-    const value = row[header];
-    if (typeof value === "number") return value;
-    if (value == null) return "-";
-    return String(value);
-  }));
-
   return {
     id: crypto.randomUUID(),
     role: "assistant",
     content: response.answer,
     timestamp: new Date(),
-    highlights: [
-      { label: "Linhas retornadas", value: response.row_count },
-      { label: "Cache curto", value: response.cache_hit ? "Hit" : "Miss" },
-    ],
-    table: headers.length > 0 ? { headers, rows: tableRows } : undefined,
+    widgets: buildDynamicWidgets(response),
     stages: response.stages,
   };
 };
