@@ -1,0 +1,71 @@
+services:
+  app_db:
+    image: postgres:16-alpine
+    container_name: istari_app_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: istari_product
+    ports:
+      - "5432:5432"
+    volumes:
+      - app_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: istari_api
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@app_db:5432/istari_product
+      APP_DB_URL: postgresql+psycopg://postgres:postgres@app_db:5432/istari_product
+      ANALYTICS_DB_URL: ${ANALYTICS_DB_URL_DOCKER:-postgresql://postgres:postgres@app_db:5432/istari_product}
+      API_PORT: 8000
+      API_HOST: 0.0.0.0
+      ENVIRONMENT: development
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      SECRET_KEY: ${SECRET_KEY:-your-super-secret-key-change-in-prod}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: 60
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      BOOTSTRAP_ADMIN_ENABLED: "true"
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@local}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin123}
+    ports:
+      - "8000:8000"
+    depends_on:
+      app_db:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app
+      - /app/__pycache__
+    command: bash -c "python -c \"from app.database import Base, engine; import app.models; Base.metadata.create_all(bind=engine)\" && alembic stamp head && uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level info --access-log"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
+    container_name: istari_web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: 1
+      NODE_ENV: development
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./tsconfig.base.json:/app/tsconfig.base.json:ro
+      - /app/apps/web/node_modules
+    command: sh -c "npm --prefix apps/web install && npm run --prefix apps/web dev -- --host 0.0.0.0 --port 3000"
+
+volumes:
+  app_db_data:

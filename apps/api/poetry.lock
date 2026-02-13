@@ -1,0 +1,5 @@
+# Este arquivo será auto-gerado por `poetry lock`
+# Para gerar: poetry lock --no-update
+[[package]]
+name = "python"
+version = "3.12"

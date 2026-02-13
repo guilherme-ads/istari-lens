@@ -1,0 +1,107 @@
+### Istari Lens API - Manual Testing with REST Client
+
+### Health Check
+GET http://localhost:8000/health
+
+### Register User
+POST http://localhost:8000/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "password",
+  "full_name": "Demo User"
+}
+
+### Login
+POST http://localhost:8000/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@local",
+  "password": "admin123"
+}
+
+@token = <token from login response>
+
+### List Admin Views
+GET http://localhost:8000/admin/views
+Authorization: Bearer @token
+
+### Create View
+POST http://localhost:8000/admin/views
+Authorization: Bearer @token
+Content-Type: application/json
+
+{
+  "schema_name": "public",
+  "view_name": "vw_growth_users",
+  "description": "Growth users"
+}
+
+### Sync View Metadata
+POST http://localhost:8000/admin/views/1/sync
+Authorization: Bearer @token
+
+### List Datasets
+GET http://localhost:8000/datasets
+Authorization: Bearer @token
+
+### Preview Query
+POST http://localhost:8000/query/preview
+Authorization: Bearer @token
+Content-Type: application/json
+
+{
+  "datasetId": 1,
+  "metrics": [
+    {
+      "field": "revenue",
+      "agg": "sum"
+    }
+  ],
+  "dimensions": ["category"],
+  "filters": [],
+  "sort": [],
+  "limit": 500,
+  "offset": 0
+}
+
+### Create Analysis
+POST http://localhost:8000/analyses
+Authorization: Bearer @token
+Content-Type: application/json
+
+{
+  "dataset_id": 1,
+  "name": "Revenue by Category",
+  "description": "Total revenue grouped by category",
+  "query_config": {
+    "datasetId": 1,
+    "metrics": [
+      {
+        "field": "revenue",
+        "agg": "sum"
+      }
+    ],
+    "dimensions": ["category"],
+    "filters": [],
+    "sort": [],
+    "limit": 500,
+    "offset": 0,
+    "visualization": {
+      "type": "bar"
+    }
+  }
+}
+
+### List Analyses
+GET http://localhost:8000/analyses
+Authorization: Bearer @token
+
+### Create Share
+POST http://localhost:8000/analyses/1/share
+Authorization: Bearer @token
+
+### Access Shared Analysis
+GET http://localhost:8000/shared/[token]

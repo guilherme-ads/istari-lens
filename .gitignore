@@ -1,0 +1,22 @@
+# Istari Lens - Git configuration
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.env
+.env.local
+.DS_Store
+node_modules/
+.next/
+out/
+.vscode/
+.idea/
+*.swp
+*.swo
+.coverage
+htmlcov/
+*.db
+alembic/versions/[0-9]*.py

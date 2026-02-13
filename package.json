@@ -1,0 +1,29 @@
+{
+  "name": "istari-lens",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker-compose -f docker-compose.yml up -d && pnpm run dev:web",
+    "dev:web": "pnpm --filter @istari/web dev",
+    "dev:services": "docker-compose -f docker-compose.yml up",
+    "dev:stop": "docker-compose -f docker-compose.yml down",
+    "build": "turbo build",
+    "build:web": "pnpm --filter @istari/web build",
+    "lint": "turbo lint",
+    "lint:web": "pnpm --filter @istari/web lint",
+    "test": "turbo test",
+    "test:web": "pnpm --filter @istari/web test",
+    "type-check:web": "pnpm --filter @istari/web type-check",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "prettier": "^3.1.0",
+    "turbo": "^1.10.16"
+  },
+  "packageManager": "pnpm@8.14.0"
+}
