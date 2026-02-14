@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown } from "lucide-react";
+import { Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,22 @@ interface WidgetConfigPanelProps {
 
 const numOps = ["sum", "avg", "min", "max"];
 const countLikeOps = ["count", "distinct_count"];
+const relativeDateOptions = [
+  { value: "today", label: "Hoje" },
+  { value: "yesterday", label: "Ontem" },
+  { value: "last_7_days", label: "Ultimos 7 dias" },
+  { value: "last_30_days", label: "Ultimos 30 dias" },
+  { value: "this_month", label: "Este mes" },
+  { value: "last_month", label: "Mes passado" },
+] as const;
+const aggLabelMap = {
+  count: "CONTAGEM",
+  distinct_count: "CONTAGEM ÚNICA",
+  sum: "SOMA",
+  avg: "MÉDIA",
+  max: "MÁXIMO",
+  min: "MÍNIMO",
+} as const;
 
 export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onClose, onSave, onDelete }: WidgetConfigPanelProps) => {
   const [draft, setDraft] = useState<DashboardWidget | null>(widget);
@@ -77,7 +93,13 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
       if (config.time?.column && !temporalColumns.some((column) => column.name === config.time?.column)) {
         messages.push("A coluna de tempo deve ser temporal.");
       }
-      if (config.metrics.length !== 1) messages.push("Grafico de linha requer exatamente 1 metrica.");
+      if (config.metrics.length < 1) messages.push("Grafico de linha requer ao menos 1 metrica.");
+      if (config.metrics.length > 2) messages.push("Grafico de linha permite no maximo 2 metricas.");
+      if ((config.line_data_labels_percent || 0) < 25 || (config.line_data_labels_percent || 0) > 100) {
+        messages.push("Peso de sensibilidade deve ser entre 25 e 100.");
+      }
+      if (![3, 5, 7].includes(config.line_label_window || 3)) messages.push("Janela deve ser 3, 5 ou 7.");
+      if ((config.line_label_min_gap || 0) < 1) messages.push("Distancia minima entre eventos deve ser >= 1.");
     }
 
     if (config.widget_type === "bar") {
@@ -143,6 +165,27 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
       }
     }
 
+    if (normalizedDraft.config.widget_type === "line") {
+      const normalizedMetrics = normalizedDraft.config.metrics.length > 0
+        ? normalizedDraft.config.metrics
+        : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }];
+      normalizedDraft = {
+        ...normalizedDraft,
+        config: {
+          ...normalizedDraft.config,
+          metrics: normalizedMetrics.slice(0, 2).map((item, index) => ({
+            ...item,
+            line_y_axis: item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right",
+          })),
+          dimensions: [],
+          line_data_labels_percent: Math.max(25, Math.min(100, normalizedDraft.config.line_data_labels_percent || 60)),
+          line_label_window: 3,
+          line_label_min_gap: 2,
+          line_label_mode: "both",
+        },
+      };
+    }
+
     const nextErrors = validate(normalizedDraft);
     setErrors(nextErrors);
     if (nextErrors.length > 0) return;
@@ -172,15 +215,26 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
   const compositeEnabled = draft.config.widget_type === "kpi" && !!draft.config.composite_metric;
   const periodLabelMap: Record<"day" | "week" | "month", string> = { day: "dia", week: "semana", month: "mes" };
   const compositeDescription = compositeMetric
-    ? `${compositeMetric.outer_agg.toUpperCase()} da ${metric.op.toUpperCase()}(${metric.column || "*"}) por ${periodLabelMap[compositeMetric.granularity]}`
+    ? `${aggLabelMap[compositeMetric.outer_agg]} da ${aggLabelMap[metric.op]}(${metric.column || "*"}) por ${periodLabelMap[compositeMetric.granularity]}`
     : "";
   const barDim = draft.config.dimensions[0] || "";
   const selectedTableColumns = draft.config.columns || [];
   const getColumnType = (name: string) => columns.find((column) => column.name === name)?.type || "text";
+  const activeFilterColumn = draft.config.filters[0]?.column;
+  const isTemporalFilterColumn = !!activeFilterColumn && getColumnType(activeFilterColumn) === "temporal";
+  const activeFilter = draft.config.filters[0];
+  const activeFilterValue = activeFilter?.value;
+  const isRelativeTemporalFilter = isTemporalFilterColumn
+    && activeFilter?.op === "between"
+    && typeof activeFilterValue === "object"
+    && !!activeFilterValue
+    && !Array.isArray(activeFilterValue)
+    && "relative" in (activeFilterValue as Record<string, unknown>);
+  const temporalOpUiValue = isRelativeTemporalFilter ? "__relative__" : (activeFilter?.op || "eq");
 
   return (
     <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
-      <SheetContent className="w-[380px] sm:w-[440px] overflow-y-auto">
+      <SheetContent className="w-[92vw] sm:w-[33vw] sm:max-w-none sm:min-w-[520px] overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="text-base">Configurar Widget</SheetTitle>
           <SheetDescription className="text-xs">
@@ -197,6 +251,12 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
               placeholder="Nome do widget"
               className="h-8 text-sm"
             />
+          </div>
+
+          <Separator />
+          <div className="space-y-1">
+            <Label className="text-xs font-semibold text-muted-foreground">Dados</Label>
+            <p className="text-[11px] text-muted-foreground">Configure metricas, colunas e tempo.</p>
           </div>
 
           <div className="space-y-1.5">
@@ -228,6 +288,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     config: {
                       ...draft.config,
                       widget_type: "kpi",
+                      kpi_show_as: draft.config.kpi_show_as || "number_2",
                       composite_metric: undefined,
                       order_by: [],
                       dimensions: [],
@@ -246,6 +307,11 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     widget_type: nextType,
                     composite_metric: undefined,
                     top_n: nextType === "bar" ? draft.config.top_n : undefined,
+                    dimensions: nextType === "bar" ? draft.config.dimensions : [],
+                    line_data_labels_enabled: nextType === "line" ? !!draft.config.line_data_labels_enabled : undefined,
+                    line_data_labels_percent: nextType === "line"
+                      ? Math.max(1, Math.min(100, draft.config.line_data_labels_percent || 100))
+                      : undefined,
                   },
                 });
               }}
@@ -323,7 +389,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             </div>
           )}
 
-          {draft.config.widget_type !== "table" && draft.config.widget_type !== "text" && (
+          {draft.config.widget_type !== "table" && draft.config.widget_type !== "text" && draft.config.widget_type !== "line" && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Hash className="h-3 w-3" /> Metrica
@@ -357,12 +423,12 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                 >
                   <SelectTrigger className="w-[130px] h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="count">COUNT</SelectItem>
-                    <SelectItem value="distinct_count">COUNT DISTINCT</SelectItem>
-                    <SelectItem value="sum">SUM</SelectItem>
-                    <SelectItem value="avg">AVG</SelectItem>
-                    <SelectItem value="min">MIN</SelectItem>
-                    <SelectItem value="max">MAX</SelectItem>
+                    <SelectItem value="count">CONTAGEM</SelectItem>
+                    <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
+                    <SelectItem value="sum">SOMA</SelectItem>
+                    <SelectItem value="avg">MÉDIA</SelectItem>
+                    <SelectItem value="min">MÍNIMO</SelectItem>
+                    <SelectItem value="max">MÁXIMO</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select
@@ -439,12 +505,12 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="avg">AVG</SelectItem>
-                        <SelectItem value="sum">SUM</SelectItem>
-                        <SelectItem value="count">COUNT</SelectItem>
-                        <SelectItem value="distinct_count">COUNT DISTINCT</SelectItem>
-                        <SelectItem value="min">MIN</SelectItem>
-                        <SelectItem value="max">MAX</SelectItem>
+                        <SelectItem value="avg">MÉDIA</SelectItem>
+                        <SelectItem value="sum">SOMA</SelectItem>
+                        <SelectItem value="count">CONTAGEM</SelectItem>
+                        <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
+                        <SelectItem value="min">MÍNIMO</SelectItem>
+                        <SelectItem value="max">MÁXIMO</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -498,11 +564,114 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                   </p>
                 </div>
               )}
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-muted-foreground">Mostrar como</Label>
+                <Select
+                  value={draft.config.kpi_show_as || "number_2"}
+                  onValueChange={(value) =>
+                    update({
+                      config: {
+                        ...draft.config,
+                        kpi_show_as: value as "currency_brl" | "number_2" | "integer",
+                      },
+                    })}
+                >
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="currency_brl">Moeda (R$)</SelectItem>
+                    <SelectItem value="number_2">Decimal (2 casas)</SelectItem>
+                    <SelectItem value="integer">Inteiro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           )}
 
           {draft.config.widget_type === "line" && (
             <div className="space-y-2">
+              <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <Hash className="h-3 w-3" /> Metricas (multiplas linhas)
+              </Label>
+              <div className="space-y-2 rounded-md border border-border p-2">
+                {(draft.config.metrics.length > 0 ? draft.config.metrics : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }]).map((item, index) => (
+                  <div key={`line-metric-${index}`} className="flex items-center gap-2">
+                    <Select
+                      value={item.op}
+                      onValueChange={(value) => {
+                        const nextOp = value as typeof item.op;
+                        const isCountLikeOp = countLikeOps.includes(nextOp);
+                        const nextColumn =
+                          isCountLikeOp
+                            ? item.column
+                            : item.column && numericColumns.some((column) => column.name === item.column)
+                              ? item.column
+                              : numericColumns[0]?.name;
+                        const nextMetrics = [...draft.config.metrics];
+                        nextMetrics[index] = { ...item, op: nextOp, column: nextColumn, line_y_axis: item.line_y_axis || (index === 0 ? "left" : "right") };
+                        update({ config: { ...draft.config, metrics: nextMetrics } });
+                      }}
+                    >
+                      <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="count">CONTAGEM</SelectItem>
+                        <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
+                        <SelectItem value="sum">SOMA</SelectItem>
+                        <SelectItem value="avg">MÉDIA</SelectItem>
+                        <SelectItem value="min">MÍNIMO</SelectItem>
+                        <SelectItem value="max">MÁXIMO</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={item.column || "__none__"}
+                      onValueChange={(value) => {
+                        const nextColumn = value === "__none__" ? undefined : value;
+                        const nextMetrics = [...draft.config.metrics];
+                        nextMetrics[index] = { ...item, column: nextColumn, line_y_axis: item.line_y_axis || (index === 0 ? "left" : "right") };
+                        update({ config: { ...draft.config, metrics: nextMetrics } });
+                      }}
+                    >
+                      <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
+                      <SelectContent>
+                        {item.op === "count" && <SelectItem value="__none__">count(*)</SelectItem>}
+                        {(countLikeOps.includes(item.op) ? columns : numericColumns).map((column) => (
+                          <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      disabled={draft.config.metrics.length <= 1}
+                      onClick={() => {
+                        const nextMetrics = draft.config.metrics.filter((_, metricIndex) => metricIndex !== index);
+                        update({ config: { ...draft.config, metrics: nextMetrics } });
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={(draft.config.metrics.length || 0) >= 2}
+                    onClick={() => {
+                      const nextMetrics = [...draft.config.metrics];
+                      nextMetrics.push({ op: "count", column: undefined, line_y_axis: nextMetrics.length === 0 ? "left" : "right" });
+                      update({ config: { ...draft.config, metrics: nextMetrics } });
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+
               <Label className="text-xs font-semibold text-muted-foreground">Tempo</Label>
               <div className="flex items-center gap-2">
                 <Select
@@ -545,6 +714,49 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     <SelectItem value="month">Mes</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-2 rounded-md border border-border p-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Mostrar rotulos de dados</span>
+                  <Switch
+                    checked={!!draft.config.line_data_labels_enabled}
+                    onCheckedChange={(checked) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          line_data_labels_enabled: checked,
+                          line_data_labels_percent: Math.max(25, Math.min(100, draft.config.line_data_labels_percent || 60)),
+                          line_label_window: 3,
+                          line_label_min_gap: 2,
+                          line_label_mode: "both",
+                        },
+                      })}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground w-[140px]">Peso sensibilidade</Label>
+                  <Select
+                    value={String(draft.config.line_data_labels_percent || 60)}
+                    onValueChange={(value) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          line_data_labels_percent: Math.max(25, Math.min(100, Number(value) || 60)),
+                        },
+                      })}
+                    disabled={!draft.config.line_data_labels_enabled}
+                  >
+                    <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="25">25%</SelectItem>
+                      <SelectItem value="50">50%</SelectItem>
+                      <SelectItem value="75">75%</SelectItem>
+                      <SelectItem value="100">100%</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">%</span>
+                </div>
               </div>
             </div>
           )}
@@ -702,6 +914,10 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
           )}
 
           <Separator />
+          <div className="space-y-1">
+            <Label className="text-xs font-semibold text-muted-foreground">Consulta</Label>
+            <p className="text-[11px] text-muted-foreground">Defina filtros, ordenacao e limites.</p>
+          </div>
 
           {draft.config.widget_type !== "text" && <div className="space-y-2">
             <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
@@ -733,12 +949,23 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
               {draft.config.filters[0] && (
                 <>
                   <Select
-                    value={draft.config.filters[0].op}
+                    value={isTemporalFilterColumn ? temporalOpUiValue : draft.config.filters[0].op}
                     onValueChange={(value) =>
                       update({
                         config: {
                           ...draft.config,
-                          filters: [{ ...draft.config.filters[0], op: value as typeof draft.config.filters[0]["op"] }],
+                          filters: [{
+                            ...draft.config.filters[0],
+                            op: value === "__relative__" ? "between" : value as typeof draft.config.filters[0]["op"],
+                            value:
+                              value === "__relative__"
+                                ? { relative: "last_7_days" }
+                                : value === "between"
+                                  ? ["", ""]
+                                  : value === "is_null" || value === "not_null"
+                                    ? undefined
+                                    : draft.config.filters[0].value,
+                          }],
                         },
                       })}
                   >
@@ -750,20 +977,150 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                       <SelectItem value="lt">&lt;</SelectItem>
                       <SelectItem value="gte">&gt;=</SelectItem>
                       <SelectItem value="lte">&lt;=</SelectItem>
-                      <SelectItem value="contains">cont</SelectItem>
+                      {isTemporalFilterColumn ? (
+                        <>
+                          <SelectItem value="between">entre</SelectItem>
+                          <SelectItem value="__relative__">relativa</SelectItem>
+                        </>
+                      ) : (
+                        <>
+                          <SelectItem value="contains">cont</SelectItem>
+                          <SelectItem value="between">entre</SelectItem>
+                        </>
+                      )}
+                      <SelectItem value="in">in</SelectItem>
+                      <SelectItem value="not_in">not in</SelectItem>
+                      <SelectItem value="is_null">nulo</SelectItem>
+                      <SelectItem value="not_null">nao nulo</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Input
-                    className="w-[110px] h-8 text-xs"
-                    value={String(draft.config.filters[0].value || "")}
-                    onChange={(e) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          filters: [{ ...draft.config.filters[0], value: e.target.value }],
-                        },
-                      })}
-                  />
+                  {draft.config.filters[0].op === "is_null" || draft.config.filters[0].op === "not_null" ? (
+                    <div className="w-[150px] h-8" />
+                  ) : isTemporalFilterColumn && isRelativeTemporalFilter ? (
+                    <Select
+                      value={String((draft.config.filters[0].value as Record<string, unknown>)?.relative || "last_7_days")}
+                      onValueChange={(value) =>
+                        update({
+                          config: {
+                            ...draft.config,
+                            filters: [{ ...draft.config.filters[0], op: "between", value: { relative: value } }],
+                          },
+                        })}
+                    >
+                      <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {relativeDateOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : isTemporalFilterColumn && draft.config.filters[0].op === "between" ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="date"
+                        className="w-[140px] h-8 text-xs"
+                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || "")}
+                        onChange={(e) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              filters: [{
+                                ...draft.config.filters[0],
+                                value: [
+                                  e.target.value,
+                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || ""),
+                                ],
+                              }],
+                            },
+                          })}
+                      />
+                      <Input
+                        type="date"
+                        className="w-[140px] h-8 text-xs"
+                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || "")}
+                        onChange={(e) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              filters: [{
+                                ...draft.config.filters[0],
+                                value: [
+                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || ""),
+                                  e.target.value,
+                                ],
+                              }],
+                            },
+                          })}
+                      />
+                    </div>
+                  ) : isTemporalFilterColumn ? (
+                    <Input
+                      type="date"
+                      className="w-[150px] h-8 text-xs"
+                      value={String(draft.config.filters[0].value || "")}
+                      onChange={(e) =>
+                        update({
+                          config: {
+                            ...draft.config,
+                            filters: [{ ...draft.config.filters[0], value: e.target.value }],
+                          },
+                        })}
+                    />
+                  ) : draft.config.filters[0].op === "between" ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        className="w-[110px] h-8 text-xs"
+                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || "")}
+                        onChange={(e) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              filters: [{
+                                ...draft.config.filters[0],
+                                value: [
+                                  e.target.value,
+                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || ""),
+                                ],
+                              }],
+                            },
+                          })}
+                      />
+                      <Input
+                        className="w-[110px] h-8 text-xs"
+                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || "")}
+                        onChange={(e) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              filters: [{
+                                ...draft.config.filters[0],
+                                value: [
+                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || ""),
+                                  e.target.value,
+                                ],
+                              }],
+                            },
+                          })}
+                      />
+                    </div>
+                  ) : (
+                    <Input
+                      className="w-[140px] h-8 text-xs"
+                      value={Array.isArray(draft.config.filters[0].value) ? String((draft.config.filters[0].value as unknown[]).join(",")) : String(draft.config.filters[0].value || "")}
+                      onChange={(e) =>
+                        update({
+                          config: {
+                            ...draft.config,
+                            filters: [{
+                              ...draft.config.filters[0],
+                              value: draft.config.filters[0].op === "in" || draft.config.filters[0].op === "not_in"
+                                ? e.target.value.split(",").map((v) => v.trim()).filter(Boolean)
+                                : e.target.value,
+                            }],
+                          },
+                        })}
+                    />
+                  )}
                 </>
               )}
             </div>

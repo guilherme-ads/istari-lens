@@ -31,7 +31,8 @@ import EmptyState from "@/components/shared/EmptyState";
 import { cn } from "@/lib/utils";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 
-type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between";
+type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative";
+type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_month" | "last_month";
 type DraftNativeFilter = {
   id: string;
   column: string;
@@ -39,11 +40,12 @@ type DraftNativeFilter = {
   value: string;
   dateValue?: Date;
   dateRange?: DateRange;
+  relativePreset?: RelativeDatePreset;
 };
 type PreparedNativeFilter = {
   column: string;
   op: DashboardFilterOp;
-  value: string | string[];
+  value: string | string[] | { relative: RelativeDatePreset };
 };
 
 const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
@@ -64,6 +66,16 @@ const temporalOps: Array<{ value: DashboardFilterOp; label: string }> = [
   { value: "gte", label: ">=" },
   { value: "lte", label: "<=" },
   { value: "between", label: "entre datas" },
+  { value: "relative", label: "data relativa" },
+];
+
+const relativeDateOptions: Array<{ value: RelativeDatePreset; label: string }> = [
+  { value: "today", label: "Hoje" },
+  { value: "yesterday", label: "Ontem" },
+  { value: "last_7_days", label: "Ultimos 7 dias" },
+  { value: "last_30_days", label: "Ultimos 30 dias" },
+  { value: "this_month", label: "Este mes" },
+  { value: "last_month", label: "Mes passado" },
 ];
 
 const formatDateBR = (date: Date) =>
@@ -79,7 +91,7 @@ const parseDate = (value: unknown): Date | undefined => {
 };
 
 const normalizeDashboardFilterOp = (value: string): DashboardFilterOp =>
-  (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "between"].includes(value) ? value : "eq") as DashboardFilterOp;
+  (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "between", "relative"].includes(value) ? value : "eq") as DashboardFilterOp;
 
 const BuilderPage = () => {
   const navigate = useNavigate();
@@ -112,15 +124,20 @@ const BuilderPage = () => {
       existingDashboard.nativeFilters.length > 0
         ? existingDashboard.nativeFilters.map((filter, index) => {
           const isBetween = filter.op === "between" && Array.isArray(filter.value) && filter.value.length === 2;
+          const relativePreset = typeof filter.value === "object" && filter.value !== null && "relative" in filter.value
+            ? (String((filter.value as Record<string, unknown>).relative) as RelativeDatePreset)
+            : undefined;
+          const normalizedOp = relativePreset ? "relative" : normalizeDashboardFilterOp(filter.op);
           const from = isBetween ? parseDate(filter.value[0]) : undefined;
           const to = isBetween ? parseDate(filter.value[1]) : undefined;
           return {
             id: `nf-${existingDashboard.id}-${index}`,
             column: filter.column,
-            op: normalizeDashboardFilterOp(filter.op),
+            op: normalizedOp,
             value: typeof filter.value === "string" ? filter.value : "",
-            dateValue: !isBetween ? parseDate(filter.value) : undefined,
+            dateValue: !isBetween && !relativePreset ? parseDate(filter.value) : undefined,
             dateRange: isBetween ? { from, to } : undefined,
+            relativePreset: relativePreset || "last_7_days",
           };
         })
         : [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }],
@@ -144,6 +161,7 @@ const BuilderPage = () => {
   const [refreshingData, setRefreshingData] = useState(false);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [deleteDashboardOpen, setDeleteDashboardOpen] = useState(false);
+  const [syncingNativeFilters, setSyncingNativeFilters] = useState(false);
   const isAdmin = !!getStoredUser()?.is_admin;
   const preparedNativeFilters = useMemo<PreparedNativeFilter[]>(() => {
     const temporalColumnNames = new Set((viewColumnsQuery.data || []).filter((column) => column.normalized_type === "temporal").map((column) => column.column_name));
@@ -151,6 +169,14 @@ const BuilderPage = () => {
     for (const filter of nativeFilters) {
       if (!filter.column) continue;
       const isTemporal = temporalColumnNames.has(filter.column);
+      if (isTemporal && filter.op === "relative") {
+        parsedFilters.push({
+          column: filter.column,
+          op: "between",
+          value: { relative: (filter.relativePreset || "last_7_days") as RelativeDatePreset },
+        });
+        continue;
+      }
       if (isTemporal && filter.op === "between") {
         if (!filter.dateRange?.from || !filter.dateRange?.to) continue;
         parsedFilters.push({ column: filter.column, op: "between", value: [dateToApi(filter.dateRange.from), dateToApi(filter.dateRange.to)] });
@@ -166,6 +192,24 @@ const BuilderPage = () => {
     }
     return parsedFilters;
   }, [nativeFilters, viewColumnsQuery.data]);
+  const preparedNativeFiltersKey = useMemo(() => JSON.stringify(preparedNativeFilters), [preparedNativeFilters]);
+
+  useEffect(() => {
+    if (!activeDashboardId) return;
+    const debounceId = window.setTimeout(async () => {
+      try {
+        setSyncingNativeFilters(true);
+        await api.updateDashboard(Number(activeDashboardId), { native_filters: preparedNativeFilters });
+        await queryClient.invalidateQueries({ queryKey: ["widget-data", activeDashboardId], refetchType: "active" });
+      } catch {
+        // Intentionally silent to avoid noisy UX while typing filters.
+      } finally {
+        setSyncingNativeFilters(false);
+      }
+    }, 400);
+
+    return () => window.clearTimeout(debounceId);
+  }, [activeDashboardId, preparedNativeFiltersKey, preparedNativeFilters, queryClient]);
 
   const upsertDashboard = useMutation({
     mutationFn: async () => {
@@ -407,10 +451,17 @@ const BuilderPage = () => {
     }
   }, [activeDashboardId, editingWidget?.id, persistLayout, queryClient, sections, toast]);
 
-  const handleAddSection = useCallback(() => {
+  const handleAddSection = useCallback((afterIndex?: number) => {
     const section = createSection();
     section.title = `Secao ${sections.length + 1}`;
-    setSections((prev) => [...prev, section]);
+    setSections((prev) => {
+      if (afterIndex === undefined || afterIndex < 0 || afterIndex >= prev.length) {
+        return [...prev, section];
+      }
+      const next = [...prev];
+      next.splice(afterIndex, 0, section);
+      return next;
+    });
   }, [sections.length]);
 
   const handleShare = async () => {
@@ -637,7 +688,7 @@ const BuilderPage = () => {
       <div className="flex-1 container py-6">
         <div className="glass-card mb-6 p-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0 lg:w-1/2">
+            <div className="min-w-0 lg:w-1/3">
               <label className="text-xs font-semibold text-muted-foreground">Titulo do dashboard</label>
               <Input
                 value={dashboardTitle}
@@ -646,20 +697,31 @@ const BuilderPage = () => {
                 placeholder="Titulo do dashboard"
               />
             </div>
-            <div className="lg:w-1/2">
+            <div className="lg:w-2/3">
               <Label className="text-xs font-semibold text-muted-foreground">Filtro nativo (oculto no front)</Label>
               <div className="mt-2 space-y-2">
-                {nativeFilters.map((filter) => {
+                {nativeFilters.map((filter, filterIndex) => {
                   const selectedColumn = (viewColumnsQuery.data || []).find((column) => column.column_name === filter.column);
                   const isTemporal = selectedColumn?.normalized_type === "temporal";
                   const operatorOptions = isTemporal ? temporalOps : commonOps;
+                  const rowLayoutClass = isTemporal
+                    ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto] gap-2 items-center"
+                    : "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(220px,1fr)_auto] gap-2 items-center";
                   return (
-                    <div key={filter.id} className="grid grid-cols-1 md:grid-cols-[1fr_140px_1fr_auto] gap-2 items-center">
+                    <div key={filter.id} className={rowLayoutClass}>
                       <Select
                         value={filter.column || "__none__"}
                         onValueChange={(value) =>
                           setNativeFilters((prev) => prev.map((item) => item.id === filter.id
-                            ? { ...item, column: value === "__none__" ? "" : value, op: "eq", value: "", dateValue: undefined, dateRange: undefined }
+                            ? {
+                                ...item,
+                                column: value === "__none__" ? "" : value,
+                                op: "eq",
+                                value: "",
+                                dateValue: undefined,
+                                dateRange: undefined,
+                                relativePreset: "last_7_days",
+                              }
                             : item))}
                       >
                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
@@ -675,7 +737,14 @@ const BuilderPage = () => {
                         value={filter.op}
                         onValueChange={(value) =>
                           setNativeFilters((prev) => prev.map((item) => item.id === filter.id
-                            ? { ...item, op: value as DashboardFilterOp, value: "", dateValue: undefined, dateRange: undefined }
+                            ? {
+                                ...item,
+                                op: value as DashboardFilterOp,
+                                value: "",
+                                dateValue: undefined,
+                                dateRange: undefined,
+                                relativePreset: "last_7_days",
+                              }
                             : item))}
                         disabled={!filter.column}
                       >
@@ -698,7 +767,27 @@ const BuilderPage = () => {
                         />
                       )}
 
-                      {isTemporal && filter.op !== "between" && (
+                      {isTemporal && filter.op === "relative" && (
+                        <Select
+                          value={filter.relativePreset || "last_7_days"}
+                          onValueChange={(value) =>
+                            setNativeFilters((prev) => prev.map((item) => item.id === filter.id
+                              ? { ...item, relativePreset: value as RelativeDatePreset }
+                              : item))}
+                          disabled={!filter.column}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {relativeDateOptions.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+
+                      {isTemporal && filter.op !== "between" && filter.op !== "relative" && (
                         <Popover>
                           <PopoverTrigger asChild>
                             <Button
@@ -753,29 +842,45 @@ const BuilderPage = () => {
                         </Popover>
                       )}
 
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        disabled={nativeFilters.length === 1}
-                        onClick={() => setNativeFilters((prev) => prev.filter((item) => item.id !== filter.id))}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {filterIndex > 0 ? (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => setNativeFilters((prev) => prev.filter((item) => item.id !== filter.id))}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : (
+                        <div className="h-8 w-8" />
+                      )}
                     </div>
                   );
                 })}
                 <div className="flex justify-between items-center pt-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs"
-                    onClick={() => setNativeFilters((prev) => [...prev, { id: `nf-${Date.now()}-${Math.random()}`, column: "", op: "eq", value: "" }])}
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1.5" /> Adicionar filtro nativo
-                  </Button>
-                  <span className="text-[11px] text-muted-foreground">Aplicados antes de qualquer filtro visível</span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      onClick={() => setNativeFilters((prev) => [...prev, { id: `nf-${Date.now()}-${Math.random()}`, column: "", op: "eq", value: "" }])}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1.5" /> Adicionar filtro nativo
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-xs"
+                      onClick={() => setNativeFilters([{ id: `nf-${Date.now()}-${Math.random()}`, column: "", op: "eq", value: "" }])}
+                    >
+                      Limpar filtros
+                    </Button>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    {syncingNativeFilters ? "Atualizando dados..." : "Aplicados antes de qualquer filtro visível"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -911,7 +1016,7 @@ const BuilderPage = () => {
             <p className="text-sm text-muted-foreground text-center max-w-md">
               Adicione secoes e widgets para montar seu dashboard usando dados de <strong>{view.schema}.{view.name}</strong>.
             </p>
-            <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={handleAddSection}>
+            <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => handleAddSection()}>
               <Plus className="h-4 w-4 mr-1.5" /> Criar primeira secao
             </Button>
           </motion.div>

@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart as ReLineChart, Line, LabelList,
+  LineChart as ReLineChart, Line, LabelList, Legend,
 } from "recharts";
 import { ArrowUpDown, Download, ChevronLeft, ChevronRight } from "lucide-react";
 import type { DashboardWidget } from "@/types/dashboard";
@@ -16,6 +16,24 @@ const tooltipStyle = {
   fontSize: 12,
   boxShadow: "0 4px 12px -2px rgba(0,0,0,0.08)",
 };
+
+const aggLabelMap = {
+  count: "CONTAGEM",
+  distinct_count: "CONTAGEM ÚNICA",
+  sum: "SOMA",
+  avg: "MÉDIA",
+  max: "MÁXIMO",
+  min: "MÍNIMO",
+} as const;
+
+const linePalette = [
+  "hsl(250, 78%, 75%)",
+  "hsl(17, 84%, 63%)",
+  "hsl(142, 50%, 46%)",
+  "hsl(205, 78%, 60%)",
+  "hsl(330, 72%, 62%)",
+  "hsl(45, 92%, 54%)",
+];
 
 const formatFullNumber = (value: unknown): string => {
   const number = typeof value === "number" ? value : Number(value);
@@ -51,10 +69,20 @@ const toFiniteNumber = (value: unknown): number => {
   const trimmed = value.trim();
   if (!trimmed) return 0;
 
-  const normalized = trimmed
-    .replace(/\s+/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
+  const compact = trimmed.replace(/\s+/g, "");
+  let normalized = compact;
+
+  const isPtBr = /^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(compact);
+  const isEnUs = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(compact);
+
+  if (isPtBr) {
+    normalized = compact.replace(/\./g, "").replace(",", ".");
+  } else if (isEnUs) {
+    normalized = compact.replace(/,/g, "");
+  } else if (compact.includes(",") && !compact.includes(".")) {
+    normalized = compact.replace(",", ".");
+  }
+
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 };
@@ -65,20 +93,140 @@ const getMetricLabel = (widget: DashboardWidget): string => {
     const innerAgg = cfg.inner_agg || cfg.agg || "sum";
     const outerAgg = cfg.outer_agg || "avg";
     const compositeInnerLabel = innerAgg === "count"
-      ? `COUNT(${cfg.value_column || "*"})`
-      : `${innerAgg.toUpperCase()}(${cfg.value_column || "*"})`;
-    return `${outerAgg.toUpperCase()}(${compositeInnerLabel} por ${cfg.granularity})`;
+      ? `CONTAGEM(${cfg.value_column || "*"})`
+      : `${aggLabelMap[innerAgg]}(${cfg.value_column || "*"})`;
+    return `${aggLabelMap[outerAgg]}(${compositeInnerLabel} por ${cfg.granularity})`;
   }
   const metric = widget.config.metrics[0];
   if (!metric) return "Metrica";
   if (metric.op === "count") {
-    return metric.column ? `COUNT(${metric.column})` : "COUNT(*)";
+    return metric.column ? `CONTAGEM(${metric.column})` : "CONTAGEM(*)";
   }
   if (metric.op === "distinct_count") {
-    return `COUNT(DISTINCT ${metric.column || "*"})`;
+    return `CONTAGEM ÚNICA(${metric.column || "*"})`;
   }
-  return `${metric.op.toUpperCase()}(${metric.column || "*"})`;
+  return `${aggLabelMap[metric.op]}(${metric.column || "*"})`;
 };
+
+const formatKpiValueFull = (
+  value: number,
+  showAs: "currency_brl" | "number_2" | "integer",
+): string => {
+  if (showAs === "currency_brl") {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+  }
+  if (showAs === "integer") {
+    return Math.trunc(value).toLocaleString("pt-BR");
+  }
+  return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+};
+
+const formatKpiValueCompact = (
+  value: number,
+  showAs: "currency_brl" | "number_2" | "integer",
+): string => {
+  if (showAs === "currency_brl") {
+    const sign = value < 0 ? "-" : "";
+    return `${sign}R$ ${formatCompactNumber(Math.abs(value))}`;
+  }
+  if (showAs === "integer") {
+    return formatCompactNumber(Math.trunc(value));
+  }
+  return formatCompactNumber(value);
+};
+
+const computePeakValleyEvents = (params: {
+  series: number[];
+  sensitivityPercent: number;
+  windowSize: number;
+  minGap: number;
+  mode: "peak" | "valley" | "both";
+}): Set<number> => {
+  const { series, sensitivityPercent, windowSize, minGap, mode } = params;
+  const events: Array<{ index: number; score: number }> = [];
+  if (series.length < 3) return new Set();
+
+  const safeSensitivity = Math.max(25, Math.min(100, sensitivityPercent));
+  const w = Math.max(1, windowSize);
+
+  for (let i = 0; i < series.length; i += 1) {
+    const leftStart = Math.max(0, i - w);
+    const rightEnd = Math.min(series.length - 1, i + w);
+    const windowValues = series.slice(leftStart, rightEnd + 1);
+    if (windowValues.length < 3) continue;
+
+    const current = series[i];
+    const localMax = Math.max(...windowValues);
+    const localMin = Math.min(...windowValues);
+    const ampLocal = localMax - localMin;
+    const threshold = ampLocal * (1 - (safeSensitivity / 100));
+
+    const leftValues = series.slice(leftStart, i);
+    const rightValues = series.slice(i + 1, rightEnd + 1);
+    if (leftValues.length === 0 || rightValues.length === 0) continue;
+
+    const candidatePeak = current === localMax;
+    const candidateValley = current === localMin;
+
+    if (candidatePeak && (mode === "both" || mode === "peak")) {
+      const leftMin = Math.min(...leftValues);
+      const rightMin = Math.min(...rightValues);
+      const prominence = current - Math.max(leftMin, rightMin);
+      if (prominence >= threshold) {
+        events.push({ index: i, score: prominence });
+      }
+    }
+
+    if (candidateValley && (mode === "both" || mode === "valley")) {
+      const leftMax = Math.max(...leftValues);
+      const rightMax = Math.max(...rightValues);
+      const prominence = Math.min(leftMax, rightMax) - current;
+      if (prominence >= threshold) {
+        events.push({ index: i, score: prominence });
+      }
+    }
+  }
+
+  if (events.length === 0) return new Set();
+  events.sort((a, b) => a.index - b.index);
+  const kept: Array<{ index: number; score: number }> = [];
+  for (const event of events) {
+    const prev = kept[kept.length - 1];
+    if (!prev || event.index - prev.index >= minGap) {
+      kept.push(event);
+      continue;
+    }
+    if (event.score > prev.score) {
+      kept[kept.length - 1] = event;
+    }
+  }
+  return new Set(kept.map((item) => item.index));
+};
+
+const renderGlassLabel = (params: { x: number; y: number; text: string; fontSize?: number }) => {
+  const { x, y, text, fontSize = 10 } = params;
+  const labelWidth = Math.max(28, text.length * 6 + 10);
+  const labelHeight = 16;
+  return (
+    <g>
+      <rect
+        x={x - (labelWidth / 2)}
+        y={y - (labelHeight / 2)}
+        width={labelWidth}
+        height={labelHeight}
+        rx={6}
+        ry={6}
+        fill="rgba(200,200,200,0.75)"
+        stroke="rgba(255,255,255,0.18)"
+      />
+      <text x={x} y={y + 3} fill="hsl(0, 0%, 30%)" fontSize={fontSize} textAnchor="middle">
+        {text}
+      </text>
+    </g>
+  );
+};
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
 type RendererProps = {
   widget: DashboardWidget;
@@ -314,7 +462,70 @@ export const WidgetRenderer = ({
   const metricLabel = useMemo(() => getMetricLabel(widget), [widget]);
   const chartHeight = heightMultiplier === 0.5 ? 110 : 220;
   const lineTargetTicks = heightMultiplier === 0.5 ? 4 : 8;
-  const lineTickInterval = rows.length > lineTargetTicks ? Math.ceil(rows.length / lineTargetTicks) - 1 : 0;
+  const lineMetricKeys = widget.config.widget_type === "line"
+    ? widget.config.metrics.map((_, index) => `m${index}`)
+    : [];
+  const lineMetricLabelByKey = widget.config.widget_type === "line"
+    ? Object.fromEntries(
+      widget.config.metrics.map((metric, index) => {
+        if (metric.op === "count") {
+          return [`m${index}`, metric.column ? `CONTAGEM(${metric.column})` : "CONTAGEM(*)"];
+        }
+        if (metric.op === "distinct_count") {
+          return [`m${index}`, `CONTAGEM ÚNICA(${metric.column || "*"})`];
+        }
+        return [`m${index}`, `${aggLabelMap[metric.op]}(${metric.column || "*"})`];
+      }),
+    )
+    : {};
+  const lineMetricAxisByKey = widget.config.widget_type === "line"
+    ? Object.fromEntries(
+      widget.config.metrics.map((_, index) => [`m${index}`, index === 0 ? "left" : "right"]),
+    )
+    : {};
+  const usesRightAxis = Object.values(lineMetricAxisByKey).some((axis) => axis === "right");
+  const usesLeftAxis = Object.values(lineMetricAxisByKey).some((axis) => axis === "left");
+  const lineRows = useMemo(() => {
+    const normalized = rows.map((row) => {
+      const next = { ...row };
+      lineMetricKeys.forEach((metricKey) => {
+        next[metricKey] = toFiniteNumber(next[metricKey]);
+      });
+      return next;
+    });
+    return normalized.sort((a, b) => {
+      const aDate = parseDateLike(a.time_bucket);
+      const bDate = parseDateLike(b.time_bucket);
+      if (aDate && bDate) return aDate.getTime() - bDate.getTime();
+      return String(a.time_bucket).localeCompare(String(b.time_bucket), "pt-BR");
+    });
+  }, [rows, lineMetricKeys]);
+  const lineSeriesValuesByKey = useMemo(() => {
+    const values: Record<string, number[]> = {};
+    lineMetricKeys.forEach((seriesKey) => {
+      values[seriesKey] = lineRows.map((row) => toFiniteNumber(row[seriesKey]));
+    });
+    return values;
+  }, [lineRows, lineMetricKeys]);
+  const lineLabelEventsBySeries = useMemo(() => {
+    const map: Record<string, Set<number>> = {};
+    if (widget.config.widget_type !== "line") return map;
+    const sensitivity = widget.config.line_data_labels_percent || 60;
+    const windowSize = widget.config.line_label_window || 3;
+    const minGap = widget.config.line_label_min_gap || 2;
+    const mode = widget.config.line_label_mode || "both";
+    lineMetricKeys.forEach((seriesKey) => {
+      map[seriesKey] = computePeakValleyEvents({
+        series: lineSeriesValuesByKey[seriesKey] || [],
+        sensitivityPercent: sensitivity,
+        windowSize,
+        minGap,
+        mode,
+      });
+    });
+    return map;
+  }, [lineMetricKeys, lineSeriesValuesByKey, widget.config]);
+  const lineTickInterval = lineRows.length > lineTargetTicks ? Math.ceil(lineRows.length / lineTargetTicks) - 1 : 0;
 
   if (isTextWidget) {
     const textStyle = widget.config.text_style || { content: "", font_size: 18, align: "left" as const };
@@ -356,22 +567,25 @@ export const WidgetRenderer = ({
 
   if (type === "kpi") {
     const value = Number(rows[0]?.m0 || 0);
+    const showAs = widget.config.kpi_show_as || "number_2";
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 py-4">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {widget.title || "KPI"}
         </span>
-        <span className="text-3xl font-extrabold tracking-tight text-foreground" title={formatFullNumber(value)}>
-          {formatCompactNumber(value)}
+        <span className="text-3xl font-extrabold tracking-tight text-foreground" title={formatKpiValueFull(value, showAs)}>
+          {formatKpiValueCompact(value, showAs)}
         </span>
       </div>
     );
   }
 
   if (type === "line") {
+    const showLineLabels = !!widget.config.line_data_labels_enabled;
+    const lineSeriesKeys = lineMetricKeys.length > 0 ? lineMetricKeys : ["m0"];
     return (
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <ReLineChart data={rows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+        <ReLineChart data={lineRows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
           <XAxis
             dataKey="time_bucket"
@@ -386,10 +600,22 @@ export const WidgetRenderer = ({
             }}
           />
           <YAxis
+            yAxisId="left"
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
             width={50}
+            hide={!usesLeftAxis}
+            tickFormatter={(value) => formatCompactNumber(value)}
+          />
+          <YAxis
+            yAxisId="right"
+            orientation="right"
+            tick={{ fontSize: 10 }}
+            axisLine={false}
+            tickLine={false}
+            width={50}
+            hide={!usesRightAxis}
             tickFormatter={(value) => formatCompactNumber(value)}
           />
           <Tooltip
@@ -398,9 +624,43 @@ export const WidgetRenderer = ({
               const parsed = parseDateLike(label);
               return parsed ? formatDateBR(parsed) : String(label);
             }}
-            formatter={(value) => [formatCompactNumber(value), metricLabel]}
+            formatter={(value, name) => [formatCompactNumber(value), lineMetricLabelByKey[String(name)] || String(name)]}
           />
-          <Line type="monotone" dataKey="m0" stroke="hsl(250, 78%, 75%)" strokeWidth={2} dot={false} />
+          {lineSeriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: 10 }} />}
+          {lineSeriesKeys.map((seriesKey, index) => (
+            <Line
+              key={seriesKey}
+              type="monotone"
+              dataKey={seriesKey}
+              name={lineMetricLabelByKey[seriesKey] || seriesKey}
+              yAxisId={lineMetricAxisByKey[seriesKey] || "left"}
+              stroke={linePalette[index % linePalette.length]}
+              strokeWidth={2}
+              dot={false}
+            >
+              {showLineLabels && (
+                <LabelList
+                  dataKey={seriesKey}
+                  content={(props: Record<string, unknown>) => {
+                    const value = props.value;
+                    const x = Number(props.x || 0);
+                    const y = Number(props.y || 0);
+                    const indexValue = Number(props.index || 0);
+                    const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
+                    if (value === undefined || value === null) return null;
+                    if (!(lineLabelEventsBySeries[seriesKey]?.has(indexValue))) return null;
+                    const axis = lineMetricAxisByKey[seriesKey] || "left";
+                    const yOffset = axis === "left" ? -12 : 12;
+                    const baseY = y + yOffset;
+                    const plotTop = Number(viewBox?.y ?? 0);
+                    const plotBottom = plotTop + Number(viewBox?.height ?? chartHeight);
+                    const safeY = clamp(baseY, plotTop + 10, plotBottom - 10);
+                    return renderGlassLabel({ x, y: safeY, text: formatCompactNumber(value), fontSize: 10 });
+                  }}
+                />
+              )}
+            </Line>
+          ))}
         </ReLineChart>
       </ResponsiveContainer>
     );
@@ -444,10 +704,17 @@ export const WidgetRenderer = ({
             <Bar dataKey="m0" fill="hsl(250, 78%, 75%)" radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
               <LabelList
                 dataKey="m0"
-                position="right"
-                formatter={(value: unknown) => formatCompactNumber(value)}
-                offset={10}
-                style={{ fontSize: 10, fill: "hsl(0, 0%, 25%)" }}
+                content={(props: Record<string, unknown>) => {
+                  const value = props.value;
+                  const x = Number(props.x || 0);
+                  const y = Number(props.y || 0);
+                  const width = Number(props.width || 0);
+                  const height = Number(props.height || 0);
+                  if (value === undefined || value === null) return null;
+                  const labelX = x + width + 18;
+                  const labelY = y + (height / 2);
+                  return renderGlassLabel({ x: labelX, y: labelY, text: formatCompactNumber(value), fontSize: 10 });
+                }}
               />
             </Bar>
           </BarChart>
