@@ -243,12 +243,14 @@ export type ApiAdminUserListResponse = {
 export type ApiWidgetMetric = {
   op: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
   column?: string;
+  line_y_axis?: "left" | "right";
 };
 
 export type ApiWidgetConfig = {
   widget_type: "kpi" | "line" | "bar" | "table" | "text";
   view_name: string;
   show_title?: boolean;
+  kpi_show_as?: "currency_brl" | "number_2" | "integer";
   composite_metric?: {
     type: "avg_per_time_bucket" | "agg_over_time_bucket";
     inner_agg: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
@@ -273,6 +275,11 @@ export type ApiWidgetConfig = {
     column: string;
     granularity: "day" | "week" | "month";
   };
+  line_data_labels_enabled?: boolean;
+  line_data_labels_percent?: number;
+  line_label_window?: number;
+  line_label_min_gap?: number;
+  line_label_mode?: "peak" | "valley" | "both";
   columns?: string[];
   table_column_formats?: Record<string, string>;
   table_page_size?: number;

@@ -52,6 +52,7 @@ def is_categorical_type(raw_type: str) -> bool:
 class MetricConfig(BaseModel):
     op: MetricOp
     column: str | None = None
+    line_y_axis: Literal["left", "right"] = "left"
 
 
 class TimeConfig(BaseModel):
@@ -115,12 +116,18 @@ class WidgetConfig(BaseModel):
     widget_type: WidgetType
     view_name: str
     show_title: bool = True
+    kpi_show_as: Literal["currency_brl", "number_2", "integer"] = "number_2"
     composite_metric: CompositeMetricConfig | None = None
     size: WidgetSizeConfig = Field(default_factory=WidgetSizeConfig)
     text_style: TextStyleConfig | None = None
     metrics: list[MetricConfig] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
     time: TimeConfig | None = None
+    line_data_labels_enabled: bool = False
+    line_data_labels_percent: int = 60
+    line_label_window: Literal[3, 5, 7] = 3
+    line_label_min_gap: int = 2
+    line_label_mode: Literal["peak", "valley", "both"] = "both"
     columns: list[str] | None = None
     table_column_formats: dict[str, str] = Field(default_factory=dict)
     table_page_size: int = 25
@@ -146,8 +153,16 @@ class WidgetConfig(BaseModel):
         elif self.widget_type == "line":
             if self.time is None:
                 raise ValueError("Line widget requires time configuration")
-            if len(self.metrics) != 1:
-                raise ValueError("Line widget requires exactly one metric")
+            if len(self.metrics) < 1:
+                raise ValueError("Line widget requires at least one metric")
+            if len(self.metrics) > 2:
+                raise ValueError("Line widget supports at most two metrics")
+            if self.dimensions:
+                raise ValueError("Line widget does not support dimensions")
+            if not 25 <= int(self.line_data_labels_percent) <= 100:
+                raise ValueError("Line widget line_data_labels_percent must be between 25 and 100")
+            if self.line_label_min_gap < 1:
+                raise ValueError("Line widget line_label_min_gap must be at least 1")
         elif self.widget_type == "bar":
             if len(self.dimensions) != 1:
                 raise ValueError("Bar widget requires exactly one dimension")
@@ -280,6 +295,8 @@ def validate_widget_config_against_columns(
         col_type = require_column_exists(dimension, f"dimensions[{idx}]")
         if config.widget_type == "bar" and col_type and not is_categorical_type(col_type):
             _add_error(errors, f"dimensions[{idx}]", "Bar dimension must be categorical")
+        if config.widget_type == "line" and col_type and not is_categorical_type(col_type):
+            _add_error(errors, f"dimensions[{idx}]", "Line series dimension must be categorical")
 
     if config.time:
         col_type = require_column_exists(config.time.column, "time.column")

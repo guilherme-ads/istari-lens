@@ -35,6 +35,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
         .map((metric) => ({
           op: asString(metric.op, "count") as WidgetConfig["metrics"][number]["op"],
           column: typeof metric.column === "string" ? metric.column : undefined,
+          line_y_axis: (asString(metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
         }))
     : [];
 
@@ -65,6 +66,9 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     widget_type: widgetType as WidgetConfig["widget_type"],
     view_name: asString(raw.view_name),
     show_title: typeof raw.show_title === "boolean" ? raw.show_title : true,
+    kpi_show_as: (["currency_brl", "number_2", "integer"].includes(asString(raw.kpi_show_as, "number_2"))
+      ? asString(raw.kpi_show_as, "number_2")
+      : "number_2") as "currency_brl" | "number_2" | "integer",
     composite_metric: isObject(raw.composite_metric)
       ? {
           type: (asString(raw.composite_metric.type, "agg_over_time_bucket") as "avg_per_time_bucket" | "agg_over_time_bucket"),
@@ -95,6 +99,13 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
       : undefined,
     metrics,
     dimensions,
+    line_data_labels_enabled: typeof raw.line_data_labels_enabled === "boolean" ? raw.line_data_labels_enabled : false,
+    line_data_labels_percent: Math.max(25, Math.min(100, asNumber(raw.line_data_labels_percent, 60))),
+    line_label_window: [3, 5, 7].includes(asNumber(raw.line_label_window, 3)) ? asNumber(raw.line_label_window, 3) : 3,
+    line_label_min_gap: Math.max(1, Math.min(6, asNumber(raw.line_label_min_gap, 2))),
+    line_label_mode: (["peak", "valley", "both"].includes(asString(raw.line_label_mode, "both"))
+      ? asString(raw.line_label_mode, "both")
+      : "both") as "peak" | "valley" | "both",
     filters,
     order_by: orderBy,
     table_column_formats: isObject(raw.table_column_formats)

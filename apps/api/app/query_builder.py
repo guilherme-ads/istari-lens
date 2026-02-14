@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.widget_config import CompositeMetricConfig, FilterConfig, MetricConfig, WidgetConfig
 
@@ -51,6 +52,35 @@ def _date_param_expr() -> str:
     return "((%s::date)::timestamp at time zone 'America/Sao_Paulo')"
 
 
+def _resolve_relative_date_value(value: Any) -> tuple[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    preset = value.get("relative")
+    if not isinstance(preset, str) or not preset:
+        return None
+
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    if preset == "today":
+        day = today.isoformat()
+        return "between", [day, day]
+    if preset == "yesterday":
+        day = (today - timedelta(days=1)).isoformat()
+        return "between", [day, day]
+    if preset == "last_7_days":
+        return "between", [(today - timedelta(days=6)).isoformat(), today.isoformat()]
+    if preset == "last_30_days":
+        return "between", [(today - timedelta(days=29)).isoformat(), today.isoformat()]
+    if preset == "this_month":
+        first = today.replace(day=1).isoformat()
+        return "between", [first, today.isoformat()]
+    if preset == "last_month":
+        first_this = today.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        first_prev = last_prev.replace(day=1)
+        return "between", [first_prev.isoformat(), last_prev.isoformat()]
+    return None
+
+
 def _apply_filter(filters: list[FilterConfig]) -> tuple[list[str], list[Any]]:
     where_parts: list[str] = []
     params: list[Any] = []
@@ -58,55 +88,59 @@ def _apply_filter(filters: list[FilterConfig]) -> tuple[list[str], list[Any]]:
     for item in filters:
         column = _quote_ident(item.column)
         op = item.op
-        use_date_expr = _is_date_filter_value(item.value)
+        value = item.value
+        relative = _resolve_relative_date_value(value)
+        if relative is not None:
+            op, value = relative
+        use_date_expr = _is_date_filter_value(value)
 
         if op == "eq":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} = {rhs}")
-            params.append(item.value)
+            params.append(value)
         elif op == "neq":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} <> {rhs}")
-            params.append(item.value)
+            params.append(value)
         elif op == "gt":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} > {rhs}")
-            params.append(item.value)
+            params.append(value)
         elif op == "lt":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} < {rhs}")
-            params.append(item.value)
+            params.append(value)
         elif op == "gte":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} >= {rhs}")
-            params.append(item.value)
+            params.append(value)
         elif op == "lte":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} <= {rhs}")
-            params.append(item.value)
+            params.append(value)
         elif op == "contains":
             where_parts.append(f"{column}::text ILIKE %s")
-            params.append(f"%{item.value}%")
+            params.append(f"%{value}%")
         elif op == "in":
-            values = item.value if isinstance(item.value, list) else [item.value]
+            values = value if isinstance(value, list) else [value]
             placeholder = _date_param_expr() if use_date_expr else "%s"
             placeholders = ", ".join([placeholder] * len(values))
             where_parts.append(f"{column} IN ({placeholders})")
             params.extend(values)
         elif op == "not_in":
-            values = item.value if isinstance(item.value, list) else [item.value]
+            values = value if isinstance(value, list) else [value]
             placeholder = _date_param_expr() if use_date_expr else "%s"
             placeholders = ", ".join([placeholder] * len(values))
             where_parts.append(f"{column} NOT IN ({placeholders})")
             params.extend(values)
         elif op == "between":
-            if not isinstance(item.value, list) or len(item.value) != 2:
+            if not isinstance(value, list) or len(value) != 2:
                 raise ValueError("between filter requires [start, end]")
             if use_date_expr:
                 where_parts.append(f"{column} BETWEEN {_date_param_expr()} AND {_date_param_expr()}")
             else:
                 where_parts.append(f"{column} BETWEEN %s AND %s")
-            params.extend(item.value)
+            params.extend(value)
         elif op == "is_null":
             where_parts.append(f"{column} IS NULL")
         elif op == "not_null":

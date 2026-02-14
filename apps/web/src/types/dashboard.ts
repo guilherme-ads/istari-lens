@@ -21,6 +21,7 @@ export type FilterOp =
 export interface WidgetMetric {
   op: MetricOp;
   column?: string;
+  line_y_axis?: "left" | "right";
 }
 
 export interface WidgetFilter {
@@ -39,6 +40,7 @@ export interface WidgetConfig {
   widget_type: WidgetType;
   view_name: string;
   show_title?: boolean;
+  kpi_show_as?: "currency_brl" | "number_2" | "integer";
   composite_metric?: {
     type: "avg_per_time_bucket" | "agg_over_time_bucket";
     inner_agg: MetricOp;
@@ -63,6 +65,11 @@ export interface WidgetConfig {
     column: string;
     granularity: TimeGranularity;
   };
+  line_data_labels_enabled?: boolean;
+  line_data_labels_percent?: number;
+  line_label_window?: number;
+  line_label_min_gap?: number;
+  line_label_mode?: "peak" | "valley" | "both";
   columns?: string[];
   table_column_formats?: Record<string, string>;
   table_page_size?: number;
@@ -123,6 +130,7 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: "kpi",
       view_name: viewName,
       show_title: true,
+      kpi_show_as: "number_2",
       size: { width: 1, height: 1 },
       composite_metric: undefined,
       metrics: [{ op: "count", column: numeric?.name || fallback?.name }],
@@ -137,8 +145,13 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: "line",
       view_name: viewName,
       show_title: true,
+      line_data_labels_enabled: false,
+      line_data_labels_percent: 60,
+      line_label_window: 3,
+      line_label_min_gap: 2,
+      line_label_mode: "both",
       size: { width: 1, height: 1 },
-      metrics: [{ op: "count", column: fallback?.name }],
+      metrics: [{ op: "count", column: fallback?.name, line_y_axis: "left" }],
       dimensions: [],
       time: {
         column: temporal?.name || fallback?.name || "",
