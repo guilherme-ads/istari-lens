@@ -477,6 +477,39 @@ class LLMIntegrationResponse(BaseModel):
     updated_by_id: Optional[int] = None
 
 
+class LLMIntegrationItemResponse(BaseModel):
+    id: int
+    provider: Literal["openai"]
+    model: str
+    masked_api_key: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    created_by_id: int
+    updated_by_id: int
+    billing_spent_usd: Optional[float] = None
+    billing_budget_usd: Optional[float] = None
+    billing_estimated_remaining_usd: Optional[float] = None
+    billing_period_start: Optional[datetime] = None
+    billing_period_end: Optional[datetime] = None
+    billing_fetched_at: Optional[datetime] = None
+
+
+class LLMIntegrationListResponse(BaseModel):
+    items: List[LLMIntegrationItemResponse] = Field(default_factory=list)
+
+
+class LLMIntegrationCreateRequest(BaseModel):
+    api_key: str = Field(min_length=20, max_length=512)
+    model: str = Field(default="gpt-4o-mini", min_length=3, max_length=100)
+    is_active: bool = True
+
+
+class LLMIntegrationBillingRefreshResponse(BaseModel):
+    refreshed: int
+    failed: int
+
+
 class OpenAIIntegrationUpsertRequest(BaseModel):
     api_key: str = Field(min_length=20, max_length=512)
     model: str = Field(default="gpt-4o-mini", min_length=3, max_length=100)
@@ -529,6 +562,10 @@ class InsightCalculationResponse(BaseModel):
     params: List[Any] = Field(default_factory=list)
     applied_filters: List[FilterSpec] = Field(default_factory=list)
     cost_estimate: int
+    conversation_cost_estimate_usd: float = 0.0
+    llm_input_tokens: int = 0
+    llm_output_tokens: int = 0
+    llm_total_tokens: int = 0
     execution_time_ms: int
     cache_hit: bool = False
     deduped: bool = False

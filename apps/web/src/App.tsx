@@ -14,7 +14,8 @@ import DashboardsPage from "./pages/DashboardsPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DashboardViewPage from "./pages/DashboardViewPage";
 import BuilderPage from "./pages/BuilderPage";
-import InsightsPage from "./pages/InsightsPage";
+import InsightsChatPage from "./pages/InsightsChatPage";
+import InsightsApisPage from "./pages/InsightsApisPage";
 import SharedAnalysisPage from "./pages/SharedAnalysisPage";
 import NotFound from "./pages/NotFound";
 import AdminUsersPage from "./pages/AdminUsersPage";
@@ -49,8 +50,9 @@ const App = () => (
             <Route path="/datasets/:datasetId/dashboard/:dashboardId" element={<DashboardViewPage />} />
             <Route path="/datasets/:datasetId/builder" element={<BuilderPage />} />
             <Route path="/datasets/:datasetId/builder/:dashboardId" element={<BuilderPage />} />
-            <Route path="/insights" element={<InsightsPage />} />
-            <Route path="/insights/config" element={<InsightsPage initialSection="config" />} />
+            <Route path="/insights" element={<InsightsChatPage />} />
+            <Route path="/insights/apis" element={<InsightsApisPage />} />
+            <Route path="/insights/config" element={<Navigate to="/insights/apis" replace />} />
             <Route path="/admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />
             <Route path="/admin/users" element={<RequireAdmin><AdminUsersPage /></RequireAdmin>} />
           </Route>

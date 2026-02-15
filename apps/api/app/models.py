@@ -232,7 +232,32 @@ class LLMIntegration(Base):
         foreign_keys=[updated_by_id],
         back_populates="llm_integrations_updated",
     )
+    billing_snapshots = relationship(
+        "LLMIntegrationBillingSnapshot",
+        back_populates="integration",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("llm_integrations_provider_idx", "provider"),
+    )
+
+
+class LLMIntegrationBillingSnapshot(Base):
+    __tablename__ = "llm_integration_billing_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("llm_integrations.id", ondelete="CASCADE"), nullable=False, index=True)
+    spent_usd = Column(String(50), nullable=False, default="0")
+    budget_usd = Column(String(50), nullable=True)
+    estimated_remaining_usd = Column(String(50), nullable=True)
+    period_start = Column(DateTime, nullable=False)
+    period_end = Column(DateTime, nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    integration = relationship("LLMIntegration", back_populates="billing_snapshots")
+
+    __table_args__ = (
+        Index("llm_integration_billing_snapshot_integration_idx", "integration_id", "fetched_at"),
     )

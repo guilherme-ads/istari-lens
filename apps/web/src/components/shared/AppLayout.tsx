@@ -29,7 +29,7 @@ const AppLayout = () => {
   const isActiveLink = (to: string) => {
     if (to === "/admin") return location.pathname === "/admin";
     if (to === "/insights") return location.pathname === "/insights";
-    if (to === "/insights/config") return location.pathname === "/insights/config";
+    if (to === "/insights/apis") return location.pathname === "/insights/apis" || location.pathname === "/insights/config";
     return location.pathname === to || (to !== "/home" && location.pathname.startsWith(`${to}/`));
   };
 
@@ -99,18 +99,18 @@ const AppLayout = () => {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Link
-                      to="/insights/config"
+                      to="/insights/apis"
                       className={`hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors md:flex ${
-                        isActiveLink("/insights/config")
+                        isActiveLink("/insights/apis")
                           ? "text-foreground"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
                       <KeyRound className="h-3.5 w-3.5" />
-                      Config LLM
+                      APIs
                     </Link>
                   </TooltipTrigger>
-                  <TooltipContent className="text-xs">Config LLM</TooltipContent>
+                  <TooltipContent className="text-xs">APIs</TooltipContent>
                 </Tooltip>
               </>
             )}
@@ -178,16 +178,16 @@ const AppLayout = () => {
                       Usuarios
                     </Link>
                     <Link
-                      to="/insights/config"
+                      to="/insights/apis"
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
-                        isActiveLink("/insights/config")
+                        isActiveLink("/insights/apis")
                           ? "bg-secondary text-foreground"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
                       <KeyRound className="h-4 w-4" />
-                      Config LLM
+                      APIs
                     </Link>
                   </>
                 )}

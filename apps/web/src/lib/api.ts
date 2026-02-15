@@ -349,6 +349,33 @@ export type ApiLLMIntegrationStatus = {
   updated_by_id?: number | null;
 };
 
+export type ApiLLMIntegrationItem = {
+  id: number;
+  provider: "openai";
+  model: string;
+  masked_api_key: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by_id: number;
+  updated_by_id: number;
+  billing_spent_usd?: number | null;
+  billing_budget_usd?: number | null;
+  billing_estimated_remaining_usd?: number | null;
+  billing_period_start?: string | null;
+  billing_period_end?: string | null;
+  billing_fetched_at?: string | null;
+};
+
+export type ApiLLMIntegrationListResponse = {
+  items: ApiLLMIntegrationItem[];
+};
+
+export type ApiLLMIntegrationBillingRefreshResponse = {
+  refreshed: number;
+  failed: number;
+};
+
 export type ApiOpenAIIntegrationTestResponse = {
   ok: boolean;
   message: string;
@@ -394,6 +421,20 @@ export type ApiInsightChatAnswer = {
   columns: string[];
   rows: Record<string, unknown>[];
   row_count: number;
+  calculation: {
+    sql: string;
+    params: unknown[];
+    applied_filters: Array<{ field: string; op: string; value?: unknown[] | null }>;
+    cost_estimate: number;
+    conversation_cost_estimate_usd: number;
+    llm_input_tokens: number;
+    llm_output_tokens: number;
+    llm_total_tokens: number;
+    execution_time_ms: number;
+    cache_hit: boolean;
+    deduped: boolean;
+    timeout_seconds: number;
+  };
   cache_hit: boolean;
   stages?: Array<"analyzing" | "building_query" | "querying" | "generating">;
   llm_context?: ApiInsightLLMContext | null;
@@ -595,6 +636,35 @@ export const api = {
 
   getInsightsIntegration: () =>
     request<ApiLLMIntegrationStatus>("/insights/integration"),
+
+  listInsightsIntegrations: () =>
+    request<ApiLLMIntegrationListResponse>("/insights/integrations"),
+
+  createOpenAIIntegration: (payload: { api_key: string; model?: string; is_active?: boolean }) =>
+    request<ApiLLMIntegrationItem>("/insights/integrations/openai", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  activateInsightsIntegration: (integrationId: number) =>
+    request<ApiLLMIntegrationItem>(`/insights/integrations/${integrationId}/activate`, {
+      method: "PATCH",
+    }),
+
+  deactivateInsightsIntegration: (integrationId: number) =>
+    request<ApiLLMIntegrationItem>(`/insights/integrations/${integrationId}/deactivate`, {
+      method: "PATCH",
+    }),
+
+  testInsightsIntegration: (integrationId: number) =>
+    request<ApiOpenAIIntegrationTestResponse>(`/insights/integrations/${integrationId}/test`, {
+      method: "POST",
+    }),
+
+  refreshInsightsIntegrationsBilling: () =>
+    request<ApiLLMIntegrationBillingRefreshResponse>("/insights/integrations/billing/refresh", {
+      method: "POST",
+    }),
 
   upsertOpenAIIntegration: (payload: { api_key: string; model?: string }) =>
     request<ApiLLMIntegrationStatus>("/insights/integration/openai", {

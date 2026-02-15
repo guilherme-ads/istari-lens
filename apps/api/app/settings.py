@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     insights_planner_model: str | None = None
     insights_answer_model: str | None = None
     insights_dev_debug_logs: bool = True
+    insights_billing_window_days: int = 30
+    insights_billing_monthly_budget_usd: float = 0.0
     log_external_queries: bool = False
     log_external_query_params: bool = False
 
