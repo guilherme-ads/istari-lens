@@ -11,15 +11,13 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any
 
-from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
-from psycopg import AsyncConnection
 from psycopg.errors import UndefinedTable
 
-from app.crypto import credential_encryptor
 from app.database import get_analytics_connection
-from app.external_query_logging import log_external_query
 from app.models import DashboardWidget, DataSource, User
+from app.modules.query_execution.adapters.postgres import PostgresQueryRunnerAdapter
+from app.modules.query_execution.domain.models import CompiledQuery, QueryExecutionContext
 from app.query_builder import build_kpi_batch_query, build_widget_query
 from app.schemas import DashboardWidgetDataResponse
 from app.settings import get_settings
@@ -199,6 +197,16 @@ def _sql_hash(sql: str) -> str:
     return hashlib.sha256(_normalize_sql_for_fingerprint(sql).encode("utf-8")).hexdigest()
 
 
+def _extract_sql_limit(sql: str, default_limit: int = 1000) -> int:
+    match = re.search(r"\blimit\s+(\d+)\b", sql, re.IGNORECASE)
+    if not match:
+        return default_limit
+    try:
+        return max(1, int(match.group(1)))
+    except (TypeError, ValueError):
+        return default_limit
+
+
 def _fingerprint_key(
     *,
     datasource_id: int | None,
@@ -367,6 +375,7 @@ class DashboardWidgetExecutionCoordinator:
                     datasource=datasource,
                     dashboard_id=dashboard_id,
                     dataset_id=dataset_id,
+                    user=user,
                 )
                 continue
             if cache_entry:
@@ -403,6 +412,7 @@ class DashboardWidgetExecutionCoordinator:
                         datasource=datasource,
                         dashboard_id=dashboard_id,
                         dataset_id=dataset_id,
+                        user=user,
                         stale_fallbacks=stale_fallbacks,
                     )
                     for group in batch_groups
@@ -414,6 +424,7 @@ class DashboardWidgetExecutionCoordinator:
                         datasource=datasource,
                         dashboard_id=dashboard_id,
                         dataset_id=dataset_id,
+                        user=user,
                         stale_fallback=stale_fallbacks.get(plan.widget.id),
                     )
                     for plan in unique_single_plans
@@ -715,6 +726,7 @@ class DashboardWidgetExecutionCoordinator:
         datasource: DataSource | None,
         dashboard_id: int,
         dataset_id: int,
+        user: User,
         stale_fallbacks: dict[int, _CacheEntry],
     ) -> list[WidgetExecutionResult]:
         query_sql, params, aliases = build_kpi_batch_query(
@@ -736,6 +748,8 @@ class DashboardWidgetExecutionCoordinator:
                         dashboard_id=dashboard_id,
                         widget_id=0,
                         dataset_id=dataset_id,
+                        user=user,
+                        timeout_seconds=group.timeout_seconds,
                     ),
                     timeout=group.timeout_seconds,
                 )
@@ -806,6 +820,7 @@ class DashboardWidgetExecutionCoordinator:
         datasource: DataSource | None,
         dashboard_id: int,
         dataset_id: int,
+        user: User,
         stale_fallback: _CacheEntry | None,
     ) -> list[WidgetExecutionResult]:
         async def _producer() -> tuple[DashboardWidgetDataResponse, int]:
@@ -819,6 +834,8 @@ class DashboardWidgetExecutionCoordinator:
                         dashboard_id=dashboard_id,
                         widget_id=plan.widget.id,
                         dataset_id=dataset_id,
+                        user=user,
+                        timeout_seconds=plan.timeout_seconds,
                     ),
                     timeout=plan.timeout_seconds,
                 )
@@ -876,6 +893,7 @@ class DashboardWidgetExecutionCoordinator:
         datasource: DataSource | None,
         dashboard_id: int,
         dataset_id: int,
+        user: User,
     ) -> None:
         async def _refresh() -> None:
             try:
@@ -888,6 +906,8 @@ class DashboardWidgetExecutionCoordinator:
                         dashboard_id=dashboard_id,
                         widget_id=plan.widget.id,
                         dataset_id=dataset_id,
+                        user=user,
+                        timeout_seconds=_timeout_seconds(plan.widget_type),
                     )
                     elapsed = max(0, int((perf_counter() - started) * 1000))
                     payload = DashboardWidgetDataResponse(
@@ -932,49 +952,34 @@ class DashboardWidgetExecutionCoordinator:
         dashboard_id: int,
         widget_id: int,
         dataset_id: int,
+        user: User,
+        timeout_seconds: int,
     ) -> list[dict[str, Any]]:
-        conn: AsyncConnection[Any] | None = None
         try:
-            if datasource and datasource.database_url:
-                try:
-                    decrypted_url = credential_encryptor.decrypt(datasource.database_url)
-                except InvalidToken as exc:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Datasource credentials are invalid for current encryption key. Recreate datasource.",
-                    ) from exc
-                conn = await AsyncConnection.connect(decrypted_url)
-            else:
-                conn = await get_analytics_connection()
-
-            log_external_query(
-                sql=query_sql,
-                params=params,
-                context=f"dashboard_widget:{dashboard_id}:{widget_id}",
-                datasource_id=datasource.id if datasource else None,
+            runner = PostgresQueryRunnerAdapter(analytics_connection_factory=get_analytics_connection)
+            result_set = await runner.run(
+                compiled=CompiledQuery(
+                    sql=query_sql,
+                    params=params,
+                    row_limit=_extract_sql_limit(query_sql, default_limit=1000),
+                ),
+                datasource=datasource,
+                context=QueryExecutionContext(
+                    operation=f"dashboard_widget:{dashboard_id}:{widget_id}",
+                    user_id=user.id,
+                    tenant_id=getattr(user, "tenant_id", None),
+                    dataset_id=dataset_id,
+                    datasource_id=datasource.id if datasource else None,
+                ),
+                timeout_seconds=timeout_seconds,
             )
-            result = await conn.execute(query_sql, params)
-            rows = await result.fetchall()
-            columns = [desc[0] for desc in result.description]
-
-            row_dicts: list[dict[str, Any]] = []
-            for row in rows:
-                row_dict = {}
-                for index, col in enumerate(columns):
-                    row_dict[col] = row[index]
-                row_dicts.append(row_dict)
-            return row_dicts
-        except asyncio.TimeoutError as exc:
-            raise HTTPException(status_code=504, detail="Widget query timed out") from exc
+            return result_set.rows
         except UndefinedTable as exc:
             raise HTTPException(status_code=400, detail=f"Dataset view was not found: {repr(exc)}") from exc
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Widget query execution failed: {repr(exc)}") from exc
-        finally:
-            if conn:
-                await conn.close()
 
     def _result_from_cache(self, widget_id: int, entry: _CacheEntry, stale: bool) -> WidgetExecutionResult:
         metadata = WidgetExecutionMetadata(

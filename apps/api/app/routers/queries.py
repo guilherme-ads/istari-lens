@@ -7,8 +7,10 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.database import get_db, get_analytics_connection
+from app.database import get_db
 from app.models import User, View, Dataset
+from app.modules.query_execution import PostgresQueryCompilerAdapter, PostgresQueryRunnerAdapter, QueryExecutionService
+from app.modules.query_execution.domain.models import QueryExecutionContext
 from app.schemas import (
     QuerySpec,
     QueryPreviewResponse,
@@ -18,12 +20,12 @@ from app.schemas import (
 )
 from app.dependencies import get_current_user
 from app.settings import get_settings
-from app.external_query_logging import log_external_query
 
 router = APIRouter(prefix="/query", tags=["query"])
 settings = get_settings()
 CACHE_TTL_SECONDS = int(getattr(settings, "query_preview_cache_ttl_seconds", 60))
 MAX_CACHE_ENTRIES = int(getattr(settings, "query_preview_cache_max_entries", 500))
+_query_execution = QueryExecutionService(PostgresQueryCompilerAdapter(), PostgresQueryRunnerAdapter())
 
 
 @dataclass
@@ -89,17 +91,14 @@ async def validate_query_spec(spec: QuerySpec, view: View, db: Session) -> None:
 
 
 def build_query_sql(spec: QuerySpec, view: View) -> tuple:
-    """Build parameterized SQL from query spec"""
-    
-    # Build SELECT clause
+    """Build parameterized SQL from query spec."""
+
     select_parts = []
     params = []
-    
-    # Add dimension columns
+
     for dimension in spec.dimensions:
         select_parts.append(dimension)
-    
-    # Add aggregated metrics
+
     for metric in spec.metrics:
         agg_func = metric.agg.upper()
         if agg_func == "DISTINCT_COUNT":
@@ -108,14 +107,10 @@ def build_query_sql(spec: QuerySpec, view: View) -> tuple:
             select_parts.append("COUNT(*)")
         else:
             select_parts.append(f"{agg_func}({metric.field})")
-    
-    # Build SELECT clause string
+
     select_clause = ", ".join(select_parts)
-    
-    # Build FROM clause
     from_clause = f"{view.schema_name}.{view.view_name}"
-    
-    # Build WHERE clause from filters
+
     where_parts = []
     for filter_spec in spec.filters:
         if filter_spec.op == "eq":
@@ -146,34 +141,31 @@ def build_query_sql(spec: QuerySpec, view: View) -> tuple:
             where_parts.append(f"{filter_spec.field} IS NULL")
         elif filter_spec.op == "not_null":
             where_parts.append(f"{filter_spec.field} IS NOT NULL")
-    
-    # Build complete query
+
     query_parts = [f"SELECT {select_clause}", f"FROM {from_clause}"]
-    
+
     if where_parts:
         query_parts.append("WHERE " + " AND ".join(where_parts))
-    
+
     if spec.dimensions:
         group_by = ", ".join(spec.dimensions)
         query_parts.append(f"GROUP BY {group_by}")
-    
-    # Add ORDER BY
+
     if spec.sort:
         order_parts = []
         for sort_spec in spec.sort:
             direction = "ASC" if sort_spec.dir.lower() == "asc" else "DESC"
             order_parts.append(f"{sort_spec.field} {direction}")
         query_parts.append("ORDER BY " + ", ".join(order_parts))
-    
-    # Add LIMIT
-    limit = min(spec.limit, 5000)  # Hard limit of 5000
+
+    limit = min(spec.limit, 5000)
     query_parts.append(f"LIMIT {limit}")
-    
+
     if spec.offset and spec.offset > 0:
         query_parts.append(f"OFFSET {spec.offset}")
-    
+
     query_sql = " ".join(query_parts)
-    
+
     return query_sql, params
 
 
@@ -232,44 +224,36 @@ def _validate_dataset_and_view(spec: QuerySpec, db: Session) -> View:
     return view
 
 
-async def execute_preview_query(spec: QuerySpec, db: Session) -> QueryPreviewResponse:
+async def execute_preview_query(spec: QuerySpec, db: Session, current_user: User) -> QueryPreviewResponse:
     view = _validate_dataset_and_view(spec, db)
     await validate_query_spec(spec, view, db)
     dataset = db.query(Dataset).filter(Dataset.id == spec.datasetId).first()
-
-    conn = None
     try:
-        conn = await get_analytics_connection()
         query_sql, params = build_query_sql(spec, view)
-        log_external_query(
+        result_set = await _query_execution.execute_compiled(
             sql=query_sql,
             params=params,
-            context=f"query_preview:dataset:{spec.datasetId}",
-            datasource_id=dataset.datasource_id if dataset else None,
+            datasource=dataset.datasource if dataset else None,
+            context=QueryExecutionContext(
+                operation=f"query_preview:dataset:{spec.datasetId}",
+                user_id=current_user.id,
+                tenant_id=getattr(current_user, "tenant_id", None),
+                dataset_id=spec.datasetId,
+                datasource_id=dataset.datasource_id if dataset else None,
+            ),
+            timeout_seconds=int(getattr(settings, "insights_query_timeout_seconds", 20)),
+            row_limit=min(spec.limit, 5000),
         )
-
-        result = await conn.execute(query_sql, params)
-        rows = await result.fetchall()
-        columns = [desc[0] for desc in result.description]
-
-        row_dicts: list[dict] = []
-        for row in rows:
-            row_dict = {}
-            for i, col in enumerate(columns):
-                row_dict[col] = row[i]
-            row_dicts.append(row_dict)
-
         return QueryPreviewResponse(
-            columns=columns,
-            rows=row_dicts,
-            row_count=len(row_dicts),
+            columns=result_set.columns,
+            rows=result_set.rows,
+            row_count=result_set.row_count,
         )
-    finally:
-        if conn:
-            await conn.close()
+    except HTTPException:
+        raise
 
 
-async def _get_or_execute_preview(spec: QuerySpec, db: Session) -> tuple[QueryPreviewResponse, bool]:
+async def _get_or_execute_preview(spec: QuerySpec, db: Session, current_user: User) -> tuple[QueryPreviewResponse, bool]:
     cache_key = _cache_key_for_spec(spec)
     cached = await _cache_get(cache_key)
     if cached:
@@ -282,7 +266,7 @@ async def _get_or_execute_preview(spec: QuerySpec, db: Session) -> tuple[QueryPr
             True,
         )
 
-    payload = await execute_preview_query(spec, db)
+    payload = await execute_preview_query(spec, db, current_user)
     await _cache_set(cache_key, payload)
     return payload, False
 
@@ -295,7 +279,7 @@ async def preview_query(
 ):
     """Execute query and return preview data"""
     try:
-        payload, _cache_hit = await _get_or_execute_preview(spec, db)
+        payload, _cache_hit = await _get_or_execute_preview(spec, db, current_user)
         return payload
     except HTTPException:
         raise
@@ -327,7 +311,7 @@ async def preview_query_batch(
                 continue
 
             try:
-                payload, cache_hit = await _get_or_execute_preview(item.spec, db)
+                payload, cache_hit = await _get_or_execute_preview(item.spec, db, current_user)
                 dedup_payloads[cache_key] = (payload, cache_hit)
             except HTTPException as exc:
                 dedup_errors[cache_key] = exc
