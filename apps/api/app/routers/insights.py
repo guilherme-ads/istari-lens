@@ -11,15 +11,14 @@ from typing import Any, Union
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from psycopg import AsyncConnection
-from cryptography.fernet import InvalidToken
 from sqlalchemy.orm import Session
 
 from app.crypto import credential_encryptor
-from app.database import get_analytics_connection, get_db
+from app.database import get_db
 from app.dependencies import get_current_admin_user, get_current_user
-from app.external_query_logging import log_external_query
 from app.models import Dataset, LLMIntegration, LLMIntegrationBillingSnapshot, User
+from app.modules.query_execution import PostgresQueryCompilerAdapter, PostgresQueryRunnerAdapter, QueryExecutionService
+from app.modules.query_execution.domain.models import QueryExecutionContext
 from app.query_builder import build_widget_query
 from app.schemas import (
     InsightAnswerResponse,
@@ -48,6 +47,10 @@ router = APIRouter(prefix="/insights", tags=["insights"])
 settings = get_settings()
 logger = logging.getLogger("uvicorn.error")
 OPENAI_BASE_URL = "https://api.openai.com/v1"
+_query_execution_service = QueryExecutionService(
+    compiler=PostgresQueryCompilerAdapter(),
+    runner=PostgresQueryRunnerAdapter(),
+)
 
 MAX_PLAN_LIMIT = int(getattr(settings, "insights_plan_limit_max", 500))
 MAX_RESULT_ROWS = int(getattr(settings, "insights_result_rows_max", 1000))
@@ -1238,55 +1241,42 @@ def _compile_widget_config(plan: InsightQueryPlan, view_name: str) -> WidgetConf
     return None
 
 
-async def _run_query(dataset: Dataset, sql: str, params: list[Any]) -> QueryExecutionResult:
+async def _run_query(dataset: Dataset, sql: str, params: list[Any], current_user: User | None = None) -> QueryExecutionResult:
     start = perf_counter()
-    conn: AsyncConnection[Any] | None = None
     try:
-        datasource = dataset.datasource
-        if datasource and datasource.database_url:
-            try:
-                decrypted_url = credential_encryptor.decrypt(datasource.database_url)
-            except InvalidToken as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Datasource credentials are invalid for current encryption key. Recreate datasource.",
-                ) from exc
-            conn = await AsyncConnection.connect(decrypted_url)
-            _log_dev_step("query_connection_resolved", source="datasource", datasource_id=datasource.id)
-        else:
-            conn = await get_analytics_connection()
-            _log_dev_step("query_connection_resolved", source="analytics_fallback", datasource_id=dataset.datasource_id)
-
-        log_external_query(
+        result_set = await _query_execution_service.execute_compiled(
             sql=sql,
             params=params,
-            context=f"insights:dataset:{dataset.id}",
-            datasource_id=dataset.datasource_id,
+            datasource=dataset.datasource,
+            context=QueryExecutionContext(
+                operation=f"insights:dataset:{dataset.id}",
+                user_id=current_user.id if current_user else None,
+                tenant_id=getattr(current_user, "tenant_id", None) if current_user else None,
+                dataset_id=dataset.id,
+                datasource_id=dataset.datasource_id,
+            ),
+            timeout_seconds=QUERY_TIMEOUT_SECONDS,
+            row_limit=MAX_RESULT_ROWS,
         )
-        result = await conn.execute(sql, params)
-        rows = await result.fetchall()
-        columns = [desc[0] for desc in result.description]
-        row_dicts: list[dict[str, Any]] = []
-        for row in rows[:MAX_RESULT_ROWS]:
-            row_dict = {}
-            for i, col in enumerate(columns):
-                row_dict[col] = row[i]
-            row_dicts.append(row_dict)
         elapsed = int((perf_counter() - start) * 1000)
         return QueryExecutionResult(
-            payload=QueryPreviewResponse(columns=columns, rows=row_dicts, row_count=len(row_dicts)),
+            payload=QueryPreviewResponse(columns=result_set.columns, rows=result_set.rows, row_count=result_set.row_count),
             sql=sql,
             params=params,
             execution_time_ms=elapsed,
             cache_hit=False,
             deduped=False,
         )
-    finally:
-        if conn:
-            await conn.close()
+    except HTTPException:
+        raise
 
 
-async def _execute_query_with_optimizations(dataset: Dataset, sql: str, params: list[Any]) -> QueryExecutionResult:
+async def _execute_query_with_optimizations(
+    dataset: Dataset,
+    sql: str,
+    params: list[Any],
+    current_user: User | None = None,
+) -> QueryExecutionResult:
     key = _query_cache_key(dataset.id, sql, params)
     cached = await _query_cache_get(key)
     if cached:
@@ -1326,7 +1316,10 @@ async def _execute_query_with_optimizations(dataset: Dataset, sql: str, params: 
 
     try:
         _log_dev_step("query_execute_start", dataset_id=dataset.id, timeout_seconds=QUERY_TIMEOUT_SECONDS)
-        executed = await asyncio.wait_for(_run_query(dataset, sql, params), timeout=QUERY_TIMEOUT_SECONDS)
+        executed = await asyncio.wait_for(
+            _run_query(dataset, sql, params, current_user),
+            timeout=QUERY_TIMEOUT_SECONDS,
+        )
         await _query_cache_set(key, executed)
         future.set_result(executed)
         _log_dev_step(
