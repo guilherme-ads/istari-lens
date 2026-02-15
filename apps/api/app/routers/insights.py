@@ -19,7 +19,7 @@ from app.crypto import credential_encryptor
 from app.database import get_analytics_connection, get_db
 from app.dependencies import get_current_admin_user, get_current_user
 from app.external_query_logging import log_external_query
-from app.models import Dataset, LLMIntegration, User
+from app.models import Dataset, LLMIntegration, LLMIntegrationBillingSnapshot, User
 from app.query_builder import build_widget_query
 from app.schemas import (
     InsightAnswerResponse,
@@ -30,6 +30,10 @@ from app.schemas import (
     InsightLLMContext,
     InsightPlanPeriod,
     InsightQueryPlan,
+    LLMIntegrationCreateRequest,
+    LLMIntegrationBillingRefreshResponse,
+    LLMIntegrationItemResponse,
+    LLMIntegrationListResponse,
     LLMIntegrationResponse,
     OpenAIIntegrationTestRequest,
     OpenAIIntegrationTestResponse,
@@ -52,6 +56,14 @@ QUERY_CACHE_TTL_SECONDS = int(getattr(settings, "insights_query_cache_ttl_second
 QUERY_CACHE_MAX_ENTRIES = int(getattr(settings, "insights_query_cache_max_entries", 300))
 QUERY_TIMEOUT_SECONDS = int(getattr(settings, "insights_query_timeout_seconds", 20))
 DEFAULT_TIMEZONE = str(getattr(settings, "insights_default_timezone", "America/Sao_Paulo"))
+BILLING_WINDOW_DAYS = max(1, int(getattr(settings, "insights_billing_window_days", 30)))
+BILLING_MONTHLY_BUDGET_USD = float(getattr(settings, "insights_billing_monthly_budget_usd", 0.0))
+LLM_MODEL_PRICING_PER_1M_TOKENS_USD: dict[str, tuple[float, float]] = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1": (2.00, 8.00),
+}
 
 
 @dataclass
@@ -86,6 +98,18 @@ class PlannerResult:
     clarification_question: str
     query_plan_raw: dict[str, Any] | None
     response_id: str | None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
+class AnswerResult:
+    answer: str
+    response_id: str | None
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
 
 
 _chat_cache: dict[str, CachedInsightResponse] = {}
@@ -121,6 +145,36 @@ def _mask_api_key(api_key: str) -> str:
     if len(api_key) <= 8:
         return "********"
     return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def _extract_usage_tokens(data: dict[str, Any]) -> tuple[int, int, int]:
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return 0, 0, 0
+
+    def _as_int(value: Any) -> int:
+        try:
+            parsed = int(value)
+            return parsed if parsed > 0 else 0
+        except Exception:
+            return 0
+
+    input_tokens = _as_int(usage.get("input_tokens"))
+    output_tokens = _as_int(usage.get("output_tokens"))
+    total_tokens = _as_int(usage.get("total_tokens"))
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+    return input_tokens, output_tokens, total_tokens
+
+
+def _estimate_llm_cost_usd(model: str, *, input_tokens: int, output_tokens: int) -> float:
+    if input_tokens <= 0 and output_tokens <= 0:
+        return 0.0
+
+    model_key = (model or "").strip().lower()
+    input_price, output_price = LLM_MODEL_PRICING_PER_1M_TOKENS_USD.get(model_key, (0.15, 0.60))
+    estimated = (input_tokens / 1_000_000.0) * input_price + (output_tokens / 1_000_000.0) * output_price
+    return round(estimated, 8)
 
 
 def _normalize_question(question: str) -> str:
@@ -204,6 +258,112 @@ def _get_openai_integration(db: Session) -> LLMIntegration | None:
         .order_by(LLMIntegration.updated_at.desc())
         .first()
     )
+
+
+def _list_openai_integrations(db: Session) -> list[LLMIntegration]:
+    return (
+        db.query(LLMIntegration)
+        .filter(LLMIntegration.provider == "openai")
+        .order_by(LLMIntegration.is_active.desc(), LLMIntegration.updated_at.desc(), LLMIntegration.id.desc())
+        .all()
+    )
+
+
+def _extract_billing_total_usd(payload: Any) -> float:
+    total = 0.0
+    buckets: list[Any] = []
+
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            buckets = data
+    elif isinstance(payload, list):
+        buckets = payload
+
+    if buckets:
+        for bucket in buckets:
+            if not isinstance(bucket, dict):
+                continue
+            results = bucket.get("results")
+            if not isinstance(results, list):
+                continue
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                amount = result.get("amount")
+                if not isinstance(amount, dict):
+                    continue
+                value = amount.get("value")
+                if isinstance(value, (int, float)):
+                    total += float(value)
+        return round(total, 6)
+
+    # Backward-compatible fallback for unexpected payloads.
+    def walk(node: Any) -> None:
+        nonlocal total
+        if isinstance(node, dict):
+            amount = node.get("amount")
+            if isinstance(amount, dict):
+                value = amount.get("value")
+                if isinstance(value, (int, float)):
+                    total += float(value)
+            for value in node.values():
+                walk(value)
+            return
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    return round(total, 6)
+
+
+def _latest_billing_snapshot(integration: LLMIntegration) -> LLMIntegrationBillingSnapshot | None:
+    snapshots = integration.billing_snapshots or []
+    if not snapshots:
+        return None
+    return max(snapshots, key=lambda item: item.fetched_at)
+
+
+def _integration_to_item_response(integration: LLMIntegration) -> LLMIntegrationItemResponse:
+    try:
+        api_key = credential_encryptor.decrypt(integration.encrypted_api_key)
+        masked_key = _mask_api_key(api_key)
+    except Exception:
+        masked_key = "********"
+
+    snapshot = _latest_billing_snapshot(integration)
+    spent_usd = float(snapshot.spent_usd) if snapshot and snapshot.spent_usd is not None else None
+    budget_usd = float(snapshot.budget_usd) if snapshot and snapshot.budget_usd is not None else None
+    remaining_usd = float(snapshot.estimated_remaining_usd) if snapshot and snapshot.estimated_remaining_usd is not None else None
+
+    return LLMIntegrationItemResponse(
+        id=integration.id,
+        provider="openai",
+        model=integration.model,
+        masked_api_key=masked_key,
+        is_active=bool(integration.is_active),
+        created_at=integration.created_at,
+        updated_at=integration.updated_at,
+        created_by_id=integration.created_by_id,
+        updated_by_id=integration.updated_by_id,
+        billing_spent_usd=spent_usd,
+        billing_budget_usd=budget_usd,
+        billing_estimated_remaining_usd=remaining_usd,
+        billing_period_start=snapshot.period_start if snapshot else None,
+        billing_period_end=snapshot.period_end if snapshot else None,
+        billing_fetched_at=snapshot.fetched_at if snapshot else None,
+    )
+
+
+def _activate_integration(db: Session, target: LLMIntegration, actor_user_id: int) -> None:
+    db.query(LLMIntegration).filter(
+        LLMIntegration.provider == target.provider,
+        LLMIntegration.id != target.id,
+        LLMIntegration.is_active == True,
+    ).update({"is_active": False, "updated_by_id": actor_user_id}, synchronize_session=False)
+    target.is_active = True
+    target.updated_by_id = actor_user_id
 
 
 def _build_column_suggestions(missing_column: str, available_columns: list[str]) -> list[str]:
@@ -324,7 +484,77 @@ async def _openai_chat_completion(
     if not content:
         raise HTTPException(status_code=400, detail="Resposta sem conteudo da OpenAI")
     response_id = data.get("id")
-    return {"content": content.strip(), "response_id": response_id if isinstance(response_id, str) else None}
+    input_tokens, output_tokens, total_tokens = _extract_usage_tokens(data)
+    return {
+        "content": content.strip(),
+        "response_id": response_id if isinstance(response_id, str) else None,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+async def _fetch_openai_costs(*, api_key: str, start_time: datetime, end_time: datetime) -> float:
+    base_params = {
+        "start_time": int(start_time.timestamp()),
+        "end_time": int(end_time.timestamp()),
+        "bucket_width": "1d",
+        "limit": 180,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    total_spent = 0.0
+    next_page: str | None = None
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        while True:
+            params = dict(base_params)
+            if next_page:
+                params["page"] = next_page
+            response = await client.get(f"{OPENAI_BASE_URL}/organization/costs", headers=headers, params=params)
+            if response.status_code >= 400:
+                if response.status_code in {401, 403}:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Chave OpenAI sem permissao para consultar custos de organizacao (use uma Admin Key).",
+                    )
+                raise HTTPException(status_code=400, detail="Falha ao consultar custos da OpenAI para a integracao")
+            data = response.json()
+            total_spent += _extract_billing_total_usd(data)
+            if not bool(data.get("has_more")):
+                break
+            raw_next_page = data.get("next_page")
+            if not isinstance(raw_next_page, str) or not raw_next_page.strip():
+                break
+            next_page = raw_next_page
+    return round(total_spent, 6)
+
+
+async def _refresh_integration_billing_snapshot(
+    *,
+    db: Session,
+    integration: LLMIntegration,
+    actor_user_id: int,
+    now_utc: datetime,
+) -> None:
+    api_key = credential_encryptor.decrypt(integration.encrypted_api_key)
+    period_end = now_utc
+    period_start = now_utc - timedelta(days=BILLING_WINDOW_DAYS)
+    spent_usd = await _fetch_openai_costs(api_key=api_key, start_time=period_start, end_time=period_end)
+    budget_usd = BILLING_MONTHLY_BUDGET_USD if BILLING_MONTHLY_BUDGET_USD > 0 else None
+    remaining_usd = max(budget_usd - spent_usd, 0.0) if budget_usd is not None else None
+    snapshot = LLMIntegrationBillingSnapshot(
+        integration_id=integration.id,
+        spent_usd=f"{spent_usd:.6f}",
+        budget_usd=(f"{budget_usd:.6f}" if budget_usd is not None else None),
+        estimated_remaining_usd=(f"{remaining_usd:.6f}" if remaining_usd is not None else None),
+        period_start=period_start,
+        period_end=period_end,
+        fetched_at=now_utc,
+        created_by_id=actor_user_id,
+    )
+    db.add(snapshot)
 
 def _dataset_context(dataset: Dataset) -> dict[str, Any]:
     view = dataset.view
@@ -754,6 +984,9 @@ async def _run_planner_llm(
         clarification_question=str(planner_response.get("clarification_question", "")).strip(),
         query_plan_raw=planner_response.get("query_plan") if isinstance(planner_response.get("query_plan"), dict) else None,
         response_id=raw_planner.get("response_id"),
+        input_tokens=int(raw_planner.get("input_tokens") or 0),
+        output_tokens=int(raw_planner.get("output_tokens") or 0),
+        total_tokens=int(raw_planner.get("total_tokens") or 0),
     )
     _log_dev_step(
         "planner_request_done",
@@ -775,7 +1008,7 @@ async def _run_answer_llm(
     result_payload: QueryPreviewResponse,
     plan: InsightQueryPlan,
     previous_response_id: str | None = None,
-) -> tuple[str, str | None]:
+) -> AnswerResult:
     semantic_context = _result_semantic_context(plan, result_payload)
     _log_dev_step(
         "answer_request_start",
@@ -802,6 +1035,9 @@ async def _run_answer_llm(
     answer_completion = await _openai_chat_completion(**answer_request)
     answer = _sanitize_answer(answer_completion["content"])
     answer_response_id = answer_completion.get("response_id")
+    input_tokens = int(answer_completion.get("input_tokens") or 0)
+    output_tokens = int(answer_completion.get("output_tokens") or 0)
+    total_tokens = int(answer_completion.get("total_tokens") or 0)
     if _answer_indicates_missing_data(answer) and _has_metric_data(
         result_payload,
         semantic_context.get("metric_columns_detected", []),
@@ -817,8 +1053,17 @@ async def _run_answer_llm(
         corrected = await _openai_chat_completion(**correction_request)
         answer = _sanitize_answer(corrected["content"])
         answer_response_id = corrected.get("response_id")
+        input_tokens += int(corrected.get("input_tokens") or 0)
+        output_tokens += int(corrected.get("output_tokens") or 0)
+        total_tokens += int(corrected.get("total_tokens") or 0)
     _log_dev_step("answer_request_done", model=model, answer_len=len(answer))
-    return answer, answer_response_id
+    return AnswerResult(
+        answer=answer,
+        response_id=answer_response_id,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
 
 
 def _plan_cost(plan: InsightQueryPlan) -> int:
@@ -1134,38 +1379,113 @@ async def get_integration_status(
     )
 
 
+@router.get("/integrations", response_model=LLMIntegrationListResponse)
+async def list_integrations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+    integrations = _list_openai_integrations(db)
+    return LLMIntegrationListResponse(items=[_integration_to_item_response(item) for item in integrations])
+
+
+@router.post("/integrations/billing/refresh", response_model=LLMIntegrationBillingRefreshResponse)
+async def refresh_integrations_billing(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    integrations = _list_openai_integrations(db)
+    now_utc = datetime.now(timezone.utc)
+    refreshed = 0
+    failed = 0
+    for integration in integrations:
+        try:
+            await _refresh_integration_billing_snapshot(
+                db=db,
+                integration=integration,
+                actor_user_id=current_user.id,
+                now_utc=now_utc,
+            )
+            refreshed += 1
+        except Exception:
+            failed += 1
+    db.commit()
+    return LLMIntegrationBillingRefreshResponse(refreshed=refreshed, failed=failed)
+
+
+@router.post("/integrations/openai", response_model=LLMIntegrationItemResponse)
+async def create_openai_integration(
+    request: LLMIntegrationCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    encrypted_key = credential_encryptor.encrypt(request.api_key.strip())
+    integration = LLMIntegration(
+        provider="openai",
+        encrypted_api_key=encrypted_key,
+        model=request.model,
+        is_active=False,
+        created_by_id=current_user.id,
+        updated_by_id=current_user.id,
+    )
+    db.add(integration)
+    db.flush()
+    if request.is_active:
+        _activate_integration(db, integration, current_user.id)
+    db.commit()
+    db.refresh(integration)
+    return _integration_to_item_response(integration)
+
+
+@router.patch("/integrations/{integration_id}/activate", response_model=LLMIntegrationItemResponse)
+async def activate_integration(
+    integration_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    integration = db.query(LLMIntegration).filter(LLMIntegration.id == integration_id, LLMIntegration.provider == "openai").first()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integracao nao encontrada")
+    _activate_integration(db, integration, current_user.id)
+    db.commit()
+    db.refresh(integration)
+    return _integration_to_item_response(integration)
+
+
+@router.patch("/integrations/{integration_id}/deactivate", response_model=LLMIntegrationItemResponse)
+async def deactivate_integration(
+    integration_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    integration = db.query(LLMIntegration).filter(LLMIntegration.id == integration_id, LLMIntegration.provider == "openai").first()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integracao nao encontrada")
+    integration.is_active = False
+    integration.updated_by_id = current_user.id
+    db.commit()
+    db.refresh(integration)
+    return _integration_to_item_response(integration)
+
+
 @router.put("/integration/openai", response_model=LLMIntegrationResponse)
 async def upsert_openai_integration(
     request: OpenAIIntegrationUpsertRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    encrypted_key = credential_encryptor.encrypt(request.api_key.strip())
-    integration = _get_openai_integration(db)
-    if integration:
-        integration.encrypted_api_key = encrypted_key
-        integration.model = request.model
-        integration.updated_by_id = current_user.id
-    else:
-        integration = LLMIntegration(
-            provider="openai",
-            encrypted_api_key=encrypted_key,
-            model=request.model,
-            is_active=True,
-            created_by_id=current_user.id,
-            updated_by_id=current_user.id,
-        )
-        db.add(integration)
-
-    db.commit()
-    db.refresh(integration)
+    created = await create_openai_integration(
+        LLMIntegrationCreateRequest(api_key=request.api_key, model=request.model, is_active=True),
+        db=db,
+        current_user=current_user,
+    )
     return LLMIntegrationResponse(
         provider="openai",
         configured=True,
-        model=integration.model,
+        model=created.model,
         masked_api_key=_mask_api_key(request.api_key.strip()),
-        updated_at=integration.updated_at,
-        updated_by_id=integration.updated_by_id,
+        updated_at=created.updated_at,
+        updated_by_id=created.updated_by_id,
     )
 
 @router.post("/integration/openai/test", response_model=OpenAIIntegrationTestResponse)
@@ -1196,6 +1516,54 @@ async def test_openai_integration(
         ok=True,
         message="Conexao com OpenAI validada",
         model=request.model,
+    )
+
+
+@router.post("/integrations/{integration_id}/test", response_model=OpenAIIntegrationTestResponse)
+async def test_stored_integration(
+    integration_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    _ = current_user
+    integration = db.query(LLMIntegration).filter(LLMIntegration.id == integration_id, LLMIntegration.provider == "openai").first()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integracao nao encontrada")
+    try:
+        api_key = credential_encryptor.decrypt(integration.encrypted_api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Chave OpenAI configurada esta invalida") from exc
+
+    await _openai_chat_completion(
+        api_key=api_key,
+        model=integration.model,
+        messages=[
+            {"role": "system", "content": "Responda apenas: ok"},
+            {"role": "user", "content": "ping"},
+        ],
+    )
+    billing_updated = False
+    try:
+        now_utc = datetime.now(timezone.utc)
+        await _refresh_integration_billing_snapshot(
+            db=db,
+            integration=integration,
+            actor_user_id=current_user.id,
+            now_utc=now_utc,
+        )
+        db.commit()
+        billing_updated = True
+    except Exception as exc:
+        db.rollback()
+        _log_dev_step(
+            "integration_test_billing_refresh_failed",
+            integration_id=integration.id,
+            error=repr(exc),
+        )
+    return OpenAIIntegrationTestResponse(
+        ok=True,
+        message="Conexao com OpenAI validada e saldo atualizado" if billing_updated else "Conexao com OpenAI validada (saldo nao atualizado)",
+        model=integration.model,
     )
 
 
@@ -1245,7 +1613,7 @@ async def chat_with_data(
         return InsightErrorResponse(
             error_code="llm_not_configured",
             message="LLM nao configurada. Peca para um admin cadastrar a chave OpenAI.",
-            suggestions=["Acesse Fontes e configure a integracao OpenAI."],
+            suggestions=["Acesse APIs e configure a integracao OpenAI."],
             stages=stages,
             llm_context=llm_context_payload(),
         )
@@ -1258,7 +1626,7 @@ async def chat_with_data(
         return InsightErrorResponse(
             error_code="llm_not_configured",
             message="A chave OpenAI configurada esta invalida. Peca para um admin atualizar.",
-            suggestions=["Atualize a chave OpenAI em Fontes."],
+            suggestions=["Atualize a chave OpenAI em APIs."],
             stages=stages,
             llm_context=llm_context_payload(),
         )
@@ -1476,8 +1844,9 @@ async def chat_with_data(
         )
 
     _push_stage(stages, "generating")
+    answer_result: AnswerResult | None = None
     try:
-        answer, latest_answer_context_id = await _run_answer_llm(
+        answer_result = await _run_answer_llm(
             api_key=decrypted_api_key,
             model=answer_model,
             question=normalized_question,
@@ -1486,7 +1855,7 @@ async def chat_with_data(
             plan=plan,
             previous_response_id=answer_context_id,
         )
-        answer_context_id = latest_answer_context_id or answer_context_id
+        answer_context_id = answer_result.response_id or answer_context_id
     except HTTPException:
         _log_dev_step("chat_answer_http_error", dataset_id=request.dataset_id)
         return InsightErrorResponse(
@@ -1508,8 +1877,21 @@ async def chat_with_data(
 
     query_spec = _to_query_spec(plan, request.dataset_id)
     applied_filters = [_to_widget_filter(item) for item in plan.filters] + _period_filters(plan.period)
+    llm_input_tokens = planner_result.input_tokens + (answer_result.input_tokens if answer_result else 0)
+    llm_output_tokens = planner_result.output_tokens + (answer_result.output_tokens if answer_result else 0)
+    llm_total_tokens = planner_result.total_tokens + (answer_result.total_tokens if answer_result else 0)
+    conversation_cost_estimate_usd = _estimate_llm_cost_usd(
+        planner_model,
+        input_tokens=planner_result.input_tokens,
+        output_tokens=planner_result.output_tokens,
+    ) + _estimate_llm_cost_usd(
+        answer_model,
+        input_tokens=answer_result.input_tokens if answer_result else 0,
+        output_tokens=answer_result.output_tokens if answer_result else 0,
+    )
+
     payload = InsightAnswerResponse(
-        answer=answer,
+        answer=answer_result.answer if answer_result else "",
         interpreted_question=interpreted_question,
         query_plan=plan,
         query_config=query_spec,
@@ -1521,6 +1903,10 @@ async def chat_with_data(
             params=params,
             applied_filters=[_to_filter_spec_payload(item) for item in applied_filters],
             cost_estimate=cost_estimate,
+            conversation_cost_estimate_usd=round(conversation_cost_estimate_usd, 8),
+            llm_input_tokens=llm_input_tokens,
+            llm_output_tokens=llm_output_tokens,
+            llm_total_tokens=llm_total_tokens,
             execution_time_ms=execution.execution_time_ms,
             cache_hit=execution.cache_hit,
             deduped=execution.deduped,
