@@ -68,6 +68,18 @@ def _date_param_expr() -> str:
     return "((%s::date)::timestamp at time zone 'America/Sao_Paulo')"
 
 
+def _next_date_value(value: Any) -> Any:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return (value + timedelta(days=1))
+    if isinstance(value, str):
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d").date()
+            return (parsed + timedelta(days=1)).isoformat()
+        except ValueError:
+            return value
+    return value
+
+
 def _resolve_relative_date_value(value: Any) -> tuple[str, Any] | None:
     if not isinstance(value, dict):
         return None
@@ -133,7 +145,7 @@ def _apply_filter(filters: list[Any]) -> tuple[list[str], list[Any]]:
         elif op == "lte":
             rhs = _date_param_expr() if use_date_expr else "%s"
             where_parts.append(f"{column} <= {rhs}")
-            params.append(value)
+            params.append(_next_date_value(value) if use_date_expr else value)
         elif op == "contains":
             where_parts.append(f"{column}::text ILIKE %s")
             params.append(f"%{value}%")
@@ -154,9 +166,10 @@ def _apply_filter(filters: list[Any]) -> tuple[list[str], list[Any]]:
                 raise ValueError("between filter requires [start, end]")
             if use_date_expr:
                 where_parts.append(f"{column} BETWEEN {_date_param_expr()} AND {_date_param_expr()}")
+                params.extend([value[0], _next_date_value(value[1])])
             else:
                 where_parts.append(f"{column} BETWEEN %s AND %s")
-            params.extend(value)
+                params.extend(value)
         elif op == "is_null":
             where_parts.append(f"{column} IS NULL")
         elif op == "not_null":

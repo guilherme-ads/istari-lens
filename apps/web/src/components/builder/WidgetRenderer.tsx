@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart as ReLineChart, Line, LabelList, Legend,
+  LineChart as ReLineChart, Line, LabelList, Legend, PieChart as RePieChart, Pie, Cell,
 } from "recharts";
 import { ArrowUpDown, Download, ChevronLeft, ChevronRight } from "lucide-react";
 import type { DashboardWidget } from "@/types/dashboard";
@@ -34,6 +34,16 @@ const linePalette = [
   "hsl(330, 72%, 62%)",
   "hsl(45, 92%, 54%)",
 ];
+const categoricalPalette = [
+  "hsl(250, 78%, 75%)",
+  "hsl(17, 84%, 63%)",
+  "hsl(142, 50%, 46%)",
+  "hsl(205, 78%, 60%)",
+  "hsl(330, 72%, 62%)",
+  "hsl(45, 92%, 54%)",
+  "hsl(188, 72%, 46%)",
+  "hsl(12, 72%, 54%)",
+];
 
 const formatFullNumber = (value: unknown): string => {
   const number = typeof value === "number" ? value : Number(value);
@@ -58,6 +68,11 @@ const formatCompactNumber = (value: unknown): string => {
   if (abs >= 1_000) return formatShort(1_000, "Mil");
 
   return formatFullNumber(number);
+};
+
+const formatPercent = (value: number): string => {
+  const safe = Number.isFinite(value) ? value : 0;
+  return `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(safe)}%`;
 };
 
 const toFiniteNumber = (value: unknown): number => {
@@ -133,6 +148,15 @@ const formatKpiValueCompact = (
     return formatCompactNumber(Math.trunc(value));
   }
   return formatCompactNumber(value);
+};
+
+const formatCurrencyBRL = (value: number): string =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+
+const formatPercentOfTotal = (value: number, total: number): string => {
+  if (!Number.isFinite(total) || total === 0) return "0,0%";
+  const percent = (value / total) * 100;
+  return `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(percent)}%`;
 };
 
 const computePeakValleyEvents = (params: {
@@ -493,12 +517,13 @@ export const WidgetRenderer = ({
       });
       return next;
     });
-    return normalized.sort((a, b) => {
+    const sorted = normalized.sort((a, b) => {
       const aDate = parseDateLike(a.time_bucket);
       const bDate = parseDateLike(b.time_bucket);
       if (aDate && bDate) return aDate.getTime() - bDate.getTime();
       return String(a.time_bucket).localeCompare(String(b.time_bucket), "pt-BR");
     });
+    return sorted;
   }, [rows, lineMetricKeys]);
   const lineSeriesValuesByKey = useMemo(() => {
     const values: Record<string, number[]> = {};
@@ -565,6 +590,75 @@ export const WidgetRenderer = ({
     return <MiniTable rows={rows} widget={widget} />;
   }
 
+  if (type === "dre") {
+    const dreRowsCfg = widget.config.dre_rows || [];
+    const firstRow = rows[0] || {};
+    const renderedRows = dreRowsCfg.map((item, index) => {
+      const raw = toFiniteNumber(firstRow[`m${index}`]);
+      const effective = item.row_type === "deduction" ? -raw : raw;
+      return {
+        ...item,
+        raw,
+        effective,
+      };
+    });
+    const configuredBaseIndex = widget.config.dre_percent_base_row_index;
+    const configuredBaseRow = typeof configuredBaseIndex === "number"
+      ? renderedRows[configuredBaseIndex]
+      : undefined;
+    const baseRow = configuredBaseRow?.row_type === "result"
+      ? configuredBaseRow
+      : renderedRows.find((row) => row.row_type === "result");
+    const fallbackTotal = renderedRows
+      .filter((row) => row.row_type === "result")
+      .reduce((sum, row) => sum + Math.abs(row.effective), 0);
+    const totalBase = Math.abs(baseRow?.effective || 0) || fallbackTotal || 1;
+    const percentColumnLabel = `% do ${(baseRow?.title || "total").replace(/"/g, "'")}`;
+
+    return (
+      <div className="h-full w-full overflow-auto rounded-lg border border-border">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 z-10 bg-muted/50 backdrop-blur-sm">
+            <tr className="border-b border-border">
+              <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Conta</th>
+              <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Valor (R$)</th>
+              <th className="px-3 py-2 text-right font-semibold text-muted-foreground">{percentColumnLabel}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {renderedRows.map((row, index) => {
+              const isResult = row.row_type === "result";
+              const isDeduction = row.row_type === "deduction";
+              const isDetail = row.row_type === "detail";
+              const rowTextColorClass = isDetail ? "text-muted-foreground" : "text-foreground";
+              const accountLabel = isDeduction
+                ? `(-) ${row.title.replace(/^\(-\)\s*/i, "")}`
+                : row.title;
+              const valueText = isDeduction
+                ? `(${formatCurrencyBRL(Math.abs(row.effective))})`
+                : formatCurrencyBRL(row.effective);
+              return (
+                <tr key={`dre-${index}`} className="border-b border-border/60 last:border-b-0 transition-colors hover:bg-muted/30">
+                  <td
+                    className={`px-3 py-2 text-left ${isResult ? "font-semibold" : ""} ${isDetail ? "pl-7" : ""} ${rowTextColorClass}`}
+                  >
+                    {accountLabel}
+                  </td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isDeduction ? "text-rose-500" : rowTextColorClass}`}>
+                    {valueText}
+                  </td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isDeduction ? "text-rose-500" : rowTextColorClass}`}>
+                    {formatPercentOfTotal(row.effective, totalBase)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   if (type === "kpi") {
     const value = Number(rows[0]?.m0 || 0);
     const showAs = widget.config.kpi_show_as || "number_2";
@@ -584,142 +678,288 @@ export const WidgetRenderer = ({
     const showLineLabels = !!widget.config.line_data_labels_enabled;
     const lineSeriesKeys = lineMetricKeys.length > 0 ? lineMetricKeys : ["m0"];
     return (
+      <div className="relative h-full w-full">
+        <ResponsiveContainer width="100%" height={chartHeight}>
+          <ReLineChart data={lineRows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
+            <XAxis
+              dataKey="time_bucket"
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              interval={lineTickInterval}
+              minTickGap={20}
+              tickFormatter={(value) => {
+                const parsed = parseDateLike(value);
+                return parsed ? formatDateBR(parsed) : String(value);
+              }}
+            />
+            <YAxis
+              yAxisId="left"
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              width={50}
+              hide={!usesLeftAxis}
+              tickFormatter={(value) => formatCompactNumber(value)}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              width={50}
+              hide={!usesRightAxis}
+              tickFormatter={(value) => formatCompactNumber(value)}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              labelFormatter={(label) => {
+                const parsed = parseDateLike(label);
+                return parsed ? formatDateBR(parsed) : String(label);
+              }}
+              formatter={(value, name) => [formatCompactNumber(value), lineMetricLabelByKey[String(name)] || String(name)]}
+            />
+            {lineSeriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: 10 }} />}
+            {lineSeriesKeys.map((seriesKey, index) => (
+              <Line
+                key={seriesKey}
+                type="monotone"
+                dataKey={seriesKey}
+                name={lineMetricLabelByKey[seriesKey] || seriesKey}
+                yAxisId={lineMetricAxisByKey[seriesKey] || "left"}
+                stroke={linePalette[index % linePalette.length]}
+                strokeWidth={2}
+                dot={false}
+              >
+                {showLineLabels && (
+                  <LabelList
+                    dataKey={seriesKey}
+                    content={(props: Record<string, unknown>) => {
+                      const value = props.value;
+                      const x = Number(props.x || 0);
+                      const y = Number(props.y || 0);
+                      const indexValue = Number(props.index || 0);
+                      const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
+                      if (value === undefined || value === null) return null;
+                      if (!(lineLabelEventsBySeries[seriesKey]?.has(indexValue))) return null;
+                      const axis = lineMetricAxisByKey[seriesKey] || "left";
+                      const yOffset = axis === "left" ? -12 : 12;
+                      const baseY = y + yOffset;
+                      const plotTop = Number(viewBox?.y ?? 0);
+                      const plotBottom = plotTop + Number(viewBox?.height ?? chartHeight);
+                      const safeY = clamp(baseY, plotTop + 10, plotBottom - 10);
+                      return renderGlassLabel({ x, y: safeY, text: formatCompactNumber(value), fontSize: 10 });
+                    }}
+                  />
+                )}
+              </Line>
+            ))}
+          </ReLineChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  const dim = widget.config.dimensions[0];
+  const dimKey = dim || "__dim";
+  const chartRows = rows.map((row) => ({ ...row, m0: toFiniteNumber(row.m0) }));
+
+  if (type === "bar") {
+    const fixedBarHeight = 22;
+    const barGap = 8;
+    const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row.m0)), 0);
+    const barAxisMax = barDataMax > 0 ? barDataMax * 1.18 : 1;
+    const barChartHeight = Math.max(chartHeight, rows.length * (fixedBarHeight + barGap) + 24);
+    return (
+      <div className="w-full overflow-y-auto" style={{ maxHeight: `${chartHeight}px` }}>
+        <div style={{ height: `${barChartHeight}px` }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartRows} margin={{ top: 8, right: 64, bottom: 8, left: 8 }} layout="vertical" barCategoryGap={barGap}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                domain={[0, barAxisMax]}
+                allowDataOverflow={false}
+                tickFormatter={(value) => formatCompactNumber(value)}
+              />
+              <YAxis
+                type="category"
+                dataKey={dimKey}
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                width={90}
+                tickFormatter={(value) => {
+                  const parsed = parseDateLike(value);
+                  return parsed ? formatDateBR(parsed) : String(value);
+                }}
+              />
+              <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCompactNumber(value), metricLabel]} />
+              <Bar dataKey="m0" fill="hsl(250, 78%, 75%)" radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
+                <LabelList
+                  dataKey="m0"
+                  content={(props: Record<string, unknown>) => {
+                    const value = props.value;
+                    const x = Number(props.x || 0);
+                    const y = Number(props.y || 0);
+                    const width = Number(props.width || 0);
+                    const height = Number(props.height || 0);
+                    if (value === undefined || value === null) return null;
+                    const labelX = x + width + 18;
+                    const labelY = y + (height / 2);
+                    return renderGlassLabel({ x: labelX, y: labelY, text: formatCompactNumber(value), fontSize: 10 });
+                  }}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "column") {
+    return (
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <ReLineChart data={lineRows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+        <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
           <XAxis
-            dataKey="time_bucket"
+            dataKey={dimKey}
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
-            interval={lineTickInterval}
-            minTickGap={20}
             tickFormatter={(value) => {
               const parsed = parseDateLike(value);
               return parsed ? formatDateBR(parsed) : String(value);
             }}
           />
           <YAxis
-            yAxisId="left"
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
-            width={50}
-            hide={!usesLeftAxis}
             tickFormatter={(value) => formatCompactNumber(value)}
           />
-          <YAxis
-            yAxisId="right"
-            orientation="right"
-            tick={{ fontSize: 10 }}
-            axisLine={false}
-            tickLine={false}
-            width={50}
-            hide={!usesRightAxis}
-            tickFormatter={(value) => formatCompactNumber(value)}
-          />
-          <Tooltip
-            contentStyle={tooltipStyle}
-            labelFormatter={(label) => {
-              const parsed = parseDateLike(label);
-              return parsed ? formatDateBR(parsed) : String(label);
-            }}
-            formatter={(value, name) => [formatCompactNumber(value), lineMetricLabelByKey[String(name)] || String(name)]}
-          />
-          {lineSeriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: 10 }} />}
-          {lineSeriesKeys.map((seriesKey, index) => (
-            <Line
-              key={seriesKey}
-              type="monotone"
-              dataKey={seriesKey}
-              name={lineMetricLabelByKey[seriesKey] || seriesKey}
-              yAxisId={lineMetricAxisByKey[seriesKey] || "left"}
-              stroke={linePalette[index % linePalette.length]}
-              strokeWidth={2}
-              dot={false}
-            >
-              {showLineLabels && (
-                <LabelList
-                  dataKey={seriesKey}
-                  content={(props: Record<string, unknown>) => {
-                    const value = props.value;
-                    const x = Number(props.x || 0);
-                    const y = Number(props.y || 0);
-                    const indexValue = Number(props.index || 0);
-                    const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
-                    if (value === undefined || value === null) return null;
-                    if (!(lineLabelEventsBySeries[seriesKey]?.has(indexValue))) return null;
-                    const axis = lineMetricAxisByKey[seriesKey] || "left";
-                    const yOffset = axis === "left" ? -12 : 12;
-                    const baseY = y + yOffset;
-                    const plotTop = Number(viewBox?.y ?? 0);
-                    const plotBottom = plotTop + Number(viewBox?.height ?? chartHeight);
-                    const safeY = clamp(baseY, plotTop + 10, plotBottom - 10);
-                    return renderGlassLabel({ x, y: safeY, text: formatCompactNumber(value), fontSize: 10 });
-                  }}
-                />
-              )}
-            </Line>
-          ))}
-        </ReLineChart>
+          <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCompactNumber(value), metricLabel]} />
+          <Bar dataKey="m0" fill="hsl(250, 78%, 75%)" radius={[6, 6, 0, 0]}>
+            <LabelList
+              dataKey="m0"
+              content={(props: Record<string, unknown>) => {
+                const value = props.value;
+                const x = Number(props.x || 0);
+                const y = Number(props.y || 0);
+                const width = Number(props.width || 0);
+                const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
+                if (value === undefined || value === null) return null;
+                const plotTop = Number(viewBox?.y ?? 0);
+                const safeY = Math.max(plotTop + 10, y - 8);
+                return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatCompactNumber(value), fontSize: 10 });
+              }}
+            />
+          </Bar>
+        </BarChart>
       </ResponsiveContainer>
     );
   }
 
-  const dim = widget.config.dimensions[0];
-  const fixedBarHeight = 22;
-  const barGap = 8;
-  const barRows = rows.map((row) => ({ ...row, m0: toFiniteNumber(row.m0) }));
-  const barDataMax = barRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row.m0)), 0);
-  const barAxisMax = barDataMax > 0 ? barDataMax * 1.18 : 1;
-  const barChartHeight = Math.max(chartHeight, rows.length * (fixedBarHeight + barGap) + 24);
+  const donutShowLegend = widget.config.donut_show_legend !== false;
+  const donutDataLabelsEnabled = !!widget.config.donut_data_labels_enabled;
+  const donutLabelMinPercent = Math.max(1, Math.min(100, widget.config.donut_data_labels_min_percent || 6));
+  const donutMetricDisplay = widget.config.donut_metric_display === "percent" ? "percent" : "value";
+  const donutCanvasHeight = Math.max(160, chartHeight);
+  const donutLegendReservedHeight = donutShowLegend ? 34 : 0;
+  const donutLabelTopPadding = 12;
+  const donutLabelBottomPadding = 10 + donutLegendReservedHeight;
+  const donutRows = chartRows.length > 5
+    ? (() => {
+        const sorted = [...chartRows].sort((a, b) => toFiniteNumber(b.m0) - toFiniteNumber(a.m0));
+        const top3 = sorted.slice(0, 3);
+        const remaining = sorted.slice(3);
+        const othersValue = remaining.reduce((sum, row) => sum + toFiniteNumber(row.m0), 0);
+        return othersValue > 0 ? [...top3, { [dimKey]: "Outros", m0: othersValue }] : top3;
+      })()
+    : chartRows;
+  const donutTotal = donutRows.reduce((sum, row) => sum + toFiniteNumber(row.m0), 0);
+  const shouldShowDonutLabel = (entry: { percent?: number }) =>
+    Number(entry?.percent || 0) * 100 >= donutLabelMinPercent;
+
   return (
-    <div className="w-full overflow-y-auto" style={{ maxHeight: `${chartHeight}px` }}>
-      <div style={{ height: `${barChartHeight}px` }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={barRows} margin={{ top: 8, right: 64, bottom: 8, left: 8 }} layout="vertical" barCategoryGap={barGap}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />
-            <XAxis
-              type="number"
-              tick={{ fontSize: 10 }}
-              axisLine={false}
-              tickLine={false}
-              domain={[0, barAxisMax]}
-              allowDataOverflow={false}
-              tickFormatter={(value) => formatCompactNumber(value)}
+    <ResponsiveContainer width="100%" height={donutCanvasHeight}>
+      <RePieChart>
+        <Tooltip
+          contentStyle={tooltipStyle}
+          formatter={(value, _name, item) => {
+            const numericValue = toFiniteNumber(value);
+            const percent = donutTotal > 0 ? (numericValue / donutTotal) * 100 : 0;
+            const formatted = donutMetricDisplay === "percent" ? formatPercent(percent) : formatCompactNumber(numericValue);
+            return [formatted, String(item?.payload?.[dimKey] ?? "")];
+          }}
+        />
+        {donutShowLegend && <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10 }} />}
+        <Pie
+          data={donutRows}
+          dataKey="m0"
+          nameKey={dimKey}
+          cy={donutShowLegend ? "44%" : "50%"}
+          innerRadius="56%"
+          outerRadius={donutShowLegend ? "76%" : "82%"}
+          paddingAngle={2}
+          strokeWidth={1}
+          stroke="hsl(var(--background))"
+          label={donutDataLabelsEnabled
+            ? (entry: {
+                percent?: number;
+                value?: unknown;
+                x?: number;
+                y?: number;
+                cx?: number;
+                cy?: number;
+                midAngle?: number;
+                outerRadius?: number;
+              }) => {
+                if (!shouldShowDonutLabel(entry)) return null;
+                const x = Number(entry.x || 0);
+                const y = Number(entry.y || 0);
+                const cx = Number(entry.cx || 0);
+                const cy = Number(entry.cy || 0);
+                const midAngle = Number(entry.midAngle || 0);
+                const outerRadius = Number(entry.outerRadius || 0);
+                const rad = -midAngle * (Math.PI / 180);
+                const lineStartX = cx + (outerRadius + 2) * Math.cos(rad);
+                const lineStartY = cy + (outerRadius + 2) * Math.sin(rad);
+                const safeY = clamp(y, donutLabelTopPadding, donutCanvasHeight - donutLabelBottomPadding);
+                const numericValue = toFiniteNumber(entry.value);
+                const percent = donutTotal > 0 ? (numericValue / donutTotal) * 100 : 0;
+                const text = donutMetricDisplay === "percent" ? formatPercent(percent) : formatCompactNumber(numericValue);
+                return (
+                  <g>
+                    <line
+                      x1={lineStartX}
+                      y1={lineStartY}
+                      x2={x}
+                      y2={safeY}
+                      stroke="rgba(148,163,184,0.75)"
+                      strokeWidth={1}
+                    />
+                    {renderGlassLabel({ x, y: safeY, text, fontSize: 10 })}
+                  </g>
+                );
+              }
+            : false}
+          labelLine={false}
+        >
+          {donutRows.map((entry, index) => (
+            <Cell
+              key={`${String(entry[dimKey] ?? index)}`}
+              fill={String(entry[dimKey]) === "Outros" ? "hsl(0, 0%, 62%)" : categoricalPalette[index % categoricalPalette.length]}
             />
-            <YAxis
-              type="category"
-              dataKey={dim}
-              tick={{ fontSize: 10 }}
-              axisLine={false}
-              tickLine={false}
-              width={90}
-              tickFormatter={(value) => {
-                const parsed = parseDateLike(value);
-                return parsed ? formatDateBR(parsed) : String(value);
-              }}
-            />
-            <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCompactNumber(value), metricLabel]} />
-            <Bar dataKey="m0" fill="hsl(250, 78%, 75%)" radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
-              <LabelList
-                dataKey="m0"
-                content={(props: Record<string, unknown>) => {
-                  const value = props.value;
-                  const x = Number(props.x || 0);
-                  const y = Number(props.y || 0);
-                  const width = Number(props.width || 0);
-                  const height = Number(props.height || 0);
-                  if (value === undefined || value === null) return null;
-                  const labelX = x + width + 18;
-                  const labelY = y + (height / 2);
-                  return renderGlassLabel({ x: labelX, y: labelY, text: formatCompactNumber(value), fontSize: 10 });
-                }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+          ))}
+        </Pie>
+      </RePieChart>
+    </ResponsiveContainer>
   );
 };

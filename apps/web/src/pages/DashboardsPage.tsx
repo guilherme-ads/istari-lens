@@ -322,9 +322,14 @@ const DashboardGridCard = ({
     className="group glass-card p-5 text-left transition-all hover:shadow-card-hover flex flex-col gap-3"
   >
     <div className="flex items-start justify-between">
-      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors"
+        aria-label={`Abrir dashboard ${item.name}`}
+      >
         <LayoutDashboard className="h-4 w-4" />
-      </div>
+      </button>
       <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${loadBadgeClass(item.load_score)}`}>
         Carga {item.load_score.toFixed(0)}
       </span>
@@ -378,9 +383,14 @@ const DashboardListItem = ({
     transition={{ delay, duration: 0.3 }}
     className="group glass-card w-full p-4 text-left flex items-center gap-4 transition-all hover:shadow-card-hover"
   >
-    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors"
+      aria-label={`Abrir dashboard ${item.name}`}
+    >
       <LayoutDashboard className="h-4 w-4" />
-    </div>
+    </button>
     <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2">
         <h3 className="font-semibold text-foreground truncate">{item.name}</h3>

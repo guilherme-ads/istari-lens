@@ -253,9 +253,9 @@ def _widget_ttl_seconds(widget_type: str, config: WidgetConfig) -> int:
 
     if widget_type == "kpi":
         return int(getattr(settings, "dashboard_widget_cache_ttl_kpi_seconds", 60))
-    if widget_type in {"line", "bar"}:
+    if widget_type in {"line", "bar", "column", "donut"}:
         return int(getattr(settings, "dashboard_widget_cache_ttl_chart_seconds", 120))
-    if widget_type == "table":
+    if widget_type in {"table", "dre"}:
         return int(getattr(settings, "dashboard_widget_cache_ttl_table_seconds", 30))
     return int(getattr(settings, "dashboard_widget_cache_ttl_kpi_seconds", 60))
 
@@ -263,9 +263,9 @@ def _widget_ttl_seconds(widget_type: str, config: WidgetConfig) -> int:
 def _timeout_seconds(widget_type: str) -> int:
     if widget_type == "kpi":
         return int(getattr(settings, "dashboard_widget_timeout_kpi_seconds", 8))
-    if widget_type in {"line", "bar"}:
+    if widget_type in {"line", "bar", "column", "donut"}:
         return int(getattr(settings, "dashboard_widget_timeout_chart_seconds", 15))
-    if widget_type == "table":
+    if widget_type in {"table", "dre"}:
         return int(getattr(settings, "dashboard_widget_timeout_table_seconds", 20))
     return int(getattr(settings, "dashboard_widget_timeout_kpi_seconds", 8))
 

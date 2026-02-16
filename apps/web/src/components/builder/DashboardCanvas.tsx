@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Settings2, GripVertical, MoreHorizontal, Trash2, Columns2, Columns3,
@@ -79,22 +79,7 @@ const getMaxWidthAtIndex = (widgets: DashboardWidget[], index: number, sectionCo
   return sectionColumns;
 };
 
-const WidgetCard = ({
-  dashboardId,
-  sectionColumns,
-  widget,
-  canDrag = false,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop,
-  onResizeStart,
-  onEdit,
-  onDelete,
-  onDuplicate,
-  onToggleTitle,
-  readOnly = false,
-}: {
+type WidgetCardProps = {
   dashboardId?: string;
   sectionColumns: 1 | 2 | 3 | 4;
   widget: DashboardWidget;
@@ -109,8 +94,26 @@ const WidgetCard = ({
   onDuplicate: () => void;
   onToggleTitle: () => void;
   readOnly?: boolean;
-}) => (
+};
+
+const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
+  dashboardId,
+  sectionColumns,
+  widget,
+  canDrag = false,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
+  onResizeStart,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onToggleTitle,
+  readOnly = false,
+}, ref) => (
   <motion.div
+    ref={ref}
     layout
     draggable={canDrag}
     onDragStart={() => onDragStart?.()}
@@ -232,7 +235,8 @@ const WidgetCard = ({
       <WidgetRenderer widget={widget} dashboardId={dashboardId} heightMultiplier={widget.config.size?.height || 1} />
     </div>
   </motion.div>
-);
+));
+WidgetCard.displayName = "WidgetCard";
 
 const SectionBlock = ({
   dashboardId,

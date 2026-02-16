@@ -28,7 +28,7 @@ const normalizeColumnType = (rawType: string): "numeric" | "temporal" | "text" |
 const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
   if (!isObject(raw)) return null;
   const widgetType = asString(raw.widget_type, "table");
-  if (!["kpi", "line", "bar", "table", "text"].includes(widgetType)) return null;
+  if (!["kpi", "line", "bar", "column", "donut", "table", "text", "dre"].includes(widgetType)) return null;
   const metrics = Array.isArray(raw.metrics)
     ? raw.metrics
         .filter(isObject)
@@ -79,7 +79,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
           outer_agg: asString(raw.composite_metric.outer_agg, "avg") as "count" | "sum" | "avg" | "min" | "max" | "distinct_count",
           value_column: asString(raw.composite_metric.value_column) || undefined,
           time_column: asString(raw.composite_metric.time_column),
-          granularity: asString(raw.composite_metric.granularity, "day") as "day" | "week" | "month",
+          granularity: asString(raw.composite_metric.granularity, "day") as "day" | "week" | "month" | "hour",
         }
       : undefined,
     size: {
@@ -106,6 +106,38 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     line_label_mode: (["peak", "valley", "both"].includes(asString(raw.line_label_mode, "both"))
       ? asString(raw.line_label_mode, "both")
       : "both") as "peak" | "valley" | "both",
+    donut_show_legend: typeof raw.donut_show_legend === "boolean" ? raw.donut_show_legend : true,
+    donut_data_labels_enabled: typeof raw.donut_data_labels_enabled === "boolean" ? raw.donut_data_labels_enabled : false,
+    donut_data_labels_min_percent: Math.max(1, Math.min(100, asNumber(raw.donut_data_labels_min_percent, 6))),
+    donut_metric_display: asString(raw.donut_metric_display, "value") === "percent" ? "percent" : "value",
+    dre_rows: Array.isArray(raw.dre_rows)
+      ? raw.dre_rows
+          .filter(isObject)
+          .map((item) => ({
+            title: asString(item.title),
+            row_type: (["result", "deduction", "detail"].includes(asString(item.row_type, "result"))
+              ? asString(item.row_type, "result")
+              : "result") as "result" | "deduction" | "detail",
+            metrics: Array.isArray(item.metrics)
+              ? item.metrics
+                  .filter(isObject)
+                  .map((metric) => ({
+                    op: asString(metric.op, "count") as WidgetConfig["metrics"][number]["op"],
+                    column: typeof metric.column === "string" ? metric.column : undefined,
+                    line_y_axis: (asString(metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
+                  }))
+              : isObject(item.metric)
+                ? [{
+                    op: asString(item.metric.op, "count") as WidgetConfig["metrics"][number]["op"],
+                    column: typeof item.metric.column === "string" ? item.metric.column : undefined,
+                    line_y_axis: (asString(item.metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
+                  }]
+                : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }],
+          }))
+      : undefined,
+    dre_percent_base_row_index: typeof raw.dre_percent_base_row_index === "number"
+      ? Math.max(0, Math.trunc(raw.dre_percent_base_row_index))
+      : undefined,
     filters,
     order_by: orderBy,
     table_column_formats: isObject(raw.table_column_formats)
@@ -120,7 +152,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
   if (isObject(raw.time) && typeof raw.time.column === "string" && typeof raw.time.granularity === "string") {
     parsed.time = {
       column: raw.time.column,
-      granularity: raw.time.granularity as "day" | "week" | "month",
+      granularity: raw.time.granularity as "day" | "week" | "month" | "hour",
     };
   }
   if (columns) {

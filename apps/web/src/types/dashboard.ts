@@ -1,6 +1,6 @@
-export type WidgetType = "kpi" | "line" | "bar" | "table" | "text";
+export type WidgetType = "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
 export type MetricOp = "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
-export type TimeGranularity = "day" | "week" | "month";
+export type TimeGranularity = "day" | "week" | "month" | "hour";
 export type WidgetWidth = 1 | 2 | 3 | 4;
 export type WidgetHeight = 0.5 | 1;
 export type TextAlign = "left" | "center" | "right";
@@ -70,6 +70,16 @@ export interface WidgetConfig {
   line_label_window?: number;
   line_label_min_gap?: number;
   line_label_mode?: "peak" | "valley" | "both";
+  donut_show_legend?: boolean;
+  donut_data_labels_enabled?: boolean;
+  donut_data_labels_min_percent?: number;
+  donut_metric_display?: "value" | "percent";
+  dre_rows?: Array<{
+    title: string;
+    row_type: "result" | "deduction" | "detail";
+    metrics: WidgetMetric[];
+  }>;
+  dre_percent_base_row_index?: number;
   columns?: string[];
   table_column_formats?: Record<string, string>;
   table_page_size?: number;
@@ -162,11 +172,15 @@ export const createDefaultWidgetConfig = (params: {
     };
   }
 
-  if (type === "bar") {
+  if (type === "bar" || type === "column" || type === "donut") {
     return {
-      widget_type: "bar",
+      widget_type: type,
       view_name: viewName,
       show_title: true,
+      donut_show_legend: type === "donut" ? true : undefined,
+      donut_data_labels_enabled: type === "donut" ? false : undefined,
+      donut_data_labels_min_percent: type === "donut" ? 6 : undefined,
+      donut_metric_display: type === "donut" ? "value" : undefined,
       size: { width: 1, height: 1 },
       metrics: [{ op: "count", column: fallback?.name }],
       dimensions: [categorical?.name || fallback?.name || ""],
@@ -188,6 +202,27 @@ export const createDefaultWidgetConfig = (params: {
       },
       metrics: [],
       dimensions: [],
+      filters: [],
+      order_by: [],
+    };
+  }
+
+  if (type === "dre") {
+    return {
+      widget_type: "dre",
+      view_name: viewName,
+      show_title: true,
+      size: { width: 1, height: 1 },
+      metrics: [],
+      dimensions: [],
+      dre_rows: [
+        {
+          title: "Faturamento",
+          row_type: "result",
+          metrics: [{ op: "sum", column: numeric?.name || fallback?.name }],
+        },
+      ],
+      dre_percent_base_row_index: 0,
       filters: [],
       order_by: [],
     };

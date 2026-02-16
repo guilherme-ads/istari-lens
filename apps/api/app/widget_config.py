@@ -5,9 +5,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-WidgetType = Literal["kpi", "line", "bar", "table", "text"]
+WidgetType = Literal["kpi", "line", "bar", "column", "donut", "table", "text", "dre"]
 MetricOp = Literal["count", "sum", "avg", "min", "max", "distinct_count"]
-TimeGranularity = Literal["day", "week", "month"]
+TimeGranularity = Literal["day", "week", "month", "hour"]
+TemporalDimensionGranularity = Literal["month", "week", "weekday", "hour"]
+DreRowType = Literal["result", "deduction", "detail"]
 OrderDirection = Literal["asc", "desc"]
 TextAlign = Literal["left", "center", "right"]
 FilterOp = Literal[
@@ -24,6 +26,23 @@ FilterOp = Literal[
     "not_null",
     "between",
 ]
+
+TEMPORAL_DIMENSION_PREFIXES: dict[str, TemporalDimensionGranularity] = {
+    "__time_month__": "month",
+    "__time_week__": "week",
+    "__time_weekday__": "weekday",
+    "__time_hour__": "hour",
+}
+
+
+def parse_temporal_dimension(value: str) -> tuple[TemporalDimensionGranularity, str] | None:
+    for prefix, granularity in TEMPORAL_DIMENSION_PREFIXES.items():
+        token = f"{prefix}:"
+        if value.startswith(token):
+            column = value[len(token) :].strip()
+            if column:
+                return granularity, column
+    return None
 
 
 def normalize_column_type(raw_type: str) -> str:
@@ -112,6 +131,28 @@ class CompositeMetricConfig(BaseModel):
         return next_values
 
 
+class DreRowConfig(BaseModel):
+    title: str
+    row_type: DreRowType
+    metrics: list[MetricConfig] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def adapt_legacy_metric(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        next_values = dict(values)
+        if "metrics" not in next_values and "metric" in next_values:
+            next_values["metrics"] = [next_values["metric"]]
+        return next_values
+
+    @model_validator(mode="after")
+    def validate_metrics(self) -> "DreRowConfig":
+        if len(self.metrics) < 1:
+            raise ValueError("DRE row requires at least one metric")
+        return self
+
+
 class WidgetConfig(BaseModel):
     widget_type: WidgetType
     view_name: str
@@ -128,6 +169,12 @@ class WidgetConfig(BaseModel):
     line_label_window: Literal[3, 5, 7] = 3
     line_label_min_gap: int = 2
     line_label_mode: Literal["peak", "valley", "both"] = "both"
+    donut_show_legend: bool = True
+    donut_data_labels_enabled: bool = False
+    donut_data_labels_min_percent: int = 6
+    donut_metric_display: Literal["value", "percent"] = "value"
+    dre_rows: list[DreRowConfig] = Field(default_factory=list)
+    dre_percent_base_row_index: int | None = None
     columns: list[str] | None = None
     table_column_formats: dict[str, str] = Field(default_factory=dict)
     table_page_size: int = 25
@@ -163,15 +210,15 @@ class WidgetConfig(BaseModel):
                 raise ValueError("Line widget line_data_labels_percent must be between 25 and 100")
             if self.line_label_min_gap < 1:
                 raise ValueError("Line widget line_label_min_gap must be at least 1")
-        elif self.widget_type == "bar":
+        elif self.widget_type in {"bar", "column", "donut"}:
             if len(self.dimensions) != 1:
-                raise ValueError("Bar widget requires exactly one dimension")
+                raise ValueError("Categorical widget requires exactly one dimension")
             if len(self.metrics) != 1:
-                raise ValueError("Bar widget requires exactly one metric")
+                raise ValueError("Categorical widget requires exactly one metric")
             if self.time is not None:
-                raise ValueError("Bar widget does not support time")
+                raise ValueError("Categorical widget does not support time")
             if self.top_n is not None and self.top_n <= 0:
-                raise ValueError("Bar widget top_n must be greater than zero")
+                raise ValueError("Categorical widget top_n must be greater than zero")
         elif self.widget_type == "table":
             if not self.columns:
                 raise ValueError("Table widget requires at least one selected column")
@@ -198,6 +245,30 @@ class WidgetConfig(BaseModel):
                 raise ValueError("Text widget requires text_style")
             if self.top_n is not None:
                 raise ValueError("Text widget does not support top_n")
+        elif self.widget_type == "dre":
+            if not self.dre_rows:
+                raise ValueError("DRE widget requires at least one row")
+            if not any(row.row_type == "result" for row in self.dre_rows):
+                raise ValueError("DRE widget requires at least one level 1 row")
+            if self.metrics:
+                raise ValueError("DRE widget does not support top-level metrics")
+            if self.dimensions:
+                raise ValueError("DRE widget does not support dimensions")
+            if self.time is not None:
+                raise ValueError("DRE widget does not support time")
+            if self.columns:
+                raise ValueError("DRE widget does not support columns")
+            if self.order_by:
+                raise ValueError("DRE widget does not support order_by")
+            if self.top_n is not None:
+                raise ValueError("DRE widget does not support top_n")
+            if self.dre_percent_base_row_index is not None:
+                if self.dre_percent_base_row_index < 0 or self.dre_percent_base_row_index >= len(self.dre_rows):
+                    raise ValueError("DRE widget dre_percent_base_row_index is out of bounds")
+                if self.dre_rows[self.dre_percent_base_row_index].row_type != "result":
+                    raise ValueError("DRE widget dre_percent_base_row_index must reference a level 1 row")
+        if not 1 <= int(self.donut_data_labels_min_percent) <= 100:
+            raise ValueError("donut_data_labels_min_percent must be between 1 and 100")
         return self
 
 
@@ -291,10 +362,51 @@ def validate_widget_config_against_columns(
         if col_type and not is_numeric_type(col_type):
             _add_error(errors, f"{key}.column", f"Aggregation '{metric.op}' requires a numeric column")
 
+    for idx, row in enumerate(config.dre_rows):
+        if not row.title.strip():
+            _add_error(errors, f"dre_rows[{idx}].title", "DRE row title is required")
+        if not row.metrics:
+            _add_error(errors, f"dre_rows[{idx}].metrics", "DRE row requires at least one metric")
+            continue
+        for metric_idx, metric in enumerate(row.metrics):
+            key = f"dre_rows[{idx}].metrics[{metric_idx}]"
+            if metric.op == "count":
+                if metric.column:
+                    require_column_exists(metric.column, f"{key}.column")
+                continue
+            if metric.op == "distinct_count":
+                if not metric.column:
+                    _add_error(errors, f"{key}.column", "Aggregation 'distinct_count' requires a column")
+                    continue
+                require_column_exists(metric.column, f"{key}.column")
+                continue
+            if not metric.column:
+                _add_error(errors, f"{key}.column", f"Aggregation '{metric.op}' requires a numeric column")
+                continue
+            col_type = require_column_exists(metric.column, f"{key}.column")
+            if col_type and not is_numeric_type(col_type):
+                _add_error(errors, f"{key}.column", f"Aggregation '{metric.op}' requires a numeric column")
+
+    if config.widget_type == "dre" and config.dre_percent_base_row_index is not None:
+        if config.dre_percent_base_row_index < 0 or config.dre_percent_base_row_index >= len(config.dre_rows):
+            _add_error(errors, "dre_percent_base_row_index", "Percent base must reference an existing DRE row")
+        elif config.dre_rows[config.dre_percent_base_row_index].row_type != "result":
+            _add_error(errors, "dre_percent_base_row_index", "Percent base must reference a level 1 row")
+    if config.widget_type == "dre" and not any(row.row_type == "result" for row in config.dre_rows):
+        _add_error(errors, "dre_rows", "DRE widget requires at least one level 1 row")
+
     for idx, dimension in enumerate(config.dimensions):
+        temporal_dimension = parse_temporal_dimension(dimension)
+        if temporal_dimension and config.widget_type in {"bar", "column"}:
+            _, base_column = temporal_dimension
+            col_type = require_column_exists(base_column, f"dimensions[{idx}]")
+            if col_type and not is_temporal_type(col_type):
+                _add_error(errors, f"dimensions[{idx}]", "Temporal derived dimension requires a temporal column")
+            continue
+
         col_type = require_column_exists(dimension, f"dimensions[{idx}]")
-        if config.widget_type == "bar" and col_type and not is_categorical_type(col_type):
-            _add_error(errors, f"dimensions[{idx}]", "Bar dimension must be categorical")
+        if config.widget_type in {"bar", "column", "donut"} and col_type and not is_categorical_type(col_type):
+            _add_error(errors, f"dimensions[{idx}]", "Categorical dimension must be categorical")
         if config.widget_type == "line" and col_type and not is_categorical_type(col_type):
             _add_error(errors, f"dimensions[{idx}]", "Line series dimension must be categorical")
 
@@ -317,7 +429,8 @@ def validate_widget_config_against_columns(
     metric_refs = {f"m{i}" for i in range(len(config.metrics))}
     for idx, order in enumerate(config.order_by):
         if order.column:
-            require_column_exists(order.column, f"order_by[{idx}].column")
+            if order.column not in config.dimensions:
+                require_column_exists(order.column, f"order_by[{idx}].column")
         if order.metric_ref and order.metric_ref not in metric_refs:
             _add_error(errors, f"order_by[{idx}].metric_ref", f"Unknown metric_ref '{order.metric_ref}'")
 
@@ -328,7 +441,7 @@ def validate_widget_config_against_columns(
             _add_error(errors, "offset", "offset cannot be negative")
         if config.table_page_size <= 0:
             _add_error(errors, "table_page_size", "table_page_size must be greater than zero")
-    if config.widget_type == "bar" and config.top_n is not None and config.top_n <= 0:
+    if config.widget_type in {"bar", "column", "donut"} and config.top_n is not None and config.top_n <= 0:
         _add_error(errors, "top_n", "top_n must be greater than zero")
 
     if errors:

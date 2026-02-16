@@ -1,16 +1,20 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { BarChartHorizontal, LineChart, Table2, Hash, TextCursorInput } from "lucide-react";
+import { BarChartHorizontal, LineChart, Table2, Hash, TextCursorInput, BarChart3, PieChart } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { WidgetType } from "@/types/dashboard";
 
-const widgetTypes: { value: WidgetType; label: string; icon: typeof BarChartHorizontal; desc: string }[] = [
-  { value: "kpi", label: "KPI", icon: Hash, desc: "Metrica agregada unica" },
-  { value: "bar", label: "Barra", icon: BarChartHorizontal, desc: "Categoria x metrica agregada" },
-  { value: "line", label: "Linha", icon: LineChart, desc: "Serie temporal agregada" },
-  { value: "table", label: "Tabela", icon: Table2, desc: "Linhas detalhadas com colunas selecionadas" },
-  { value: "text", label: "Texto", icon: TextCursorInput, desc: "Bloco de texto livre para titulo ou anotacoes" },
+const widgetTypes: { value: WidgetType; label: string; icon: typeof BarChartHorizontal; desc: string; whenToUse: string }[] = [
+  { value: "kpi", label: "KPI", icon: Hash, desc: "Metrica agregada unica", whenToUse: "Quando quiser destacar um unico numero-chave (meta, total, media)." },
+  { value: "bar", label: "Barra", icon: BarChartHorizontal, desc: "Categoria x metrica agregada", whenToUse: "Quando comparar poucas categorias em barras horizontais." },
+  { value: "column", label: "Coluna", icon: BarChart3, desc: "Categoria x metrica agregada em barras verticais", whenToUse: "Quando comparar categorias em barras verticais." },
+  { value: "donut", label: "Rosca", icon: PieChart, desc: "Distribuicao percentual por categoria", whenToUse: "Quando mostrar composicao/participacao percentual entre categorias." },
+  { value: "dre", label: "DRE", icon: Table2, desc: "Tabela de demonstrativo com Totais, Contas Redutoras e Contas Analiticas", whenToUse: "Quando montar um demonstrativo financeiro com totais, contas redutoras e contas analiticas." },
+  { value: "line", label: "Linha", icon: LineChart, desc: "Serie temporal agregada", whenToUse: "Quando analisar tendencia ao longo do tempo." },
+  { value: "table", label: "Tabela", icon: Table2, desc: "Linhas detalhadas com colunas selecionadas", whenToUse: "Quando precisar ver detalhes linha a linha e exportar dados." },
+  { value: "text", label: "Texto", icon: TextCursorInput, desc: "Bloco de texto livre para titulo ou anotacoes", whenToUse: "Quando incluir contexto, explicacoes ou instrucoes no dashboard." },
 ];
 
 interface AddWidgetDialogProps {
@@ -41,22 +45,28 @@ export const AddWidgetDialog = ({ open, onOpenChange, onAdd, viewLabel }: AddWid
         </DialogHeader>
 
         <div className="space-y-5 pt-2">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {widgetTypes.map((wt) => (
-              <motion.button
-                key={wt.value}
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.96 }}
-                onClick={() => setSelectedType(wt.value)}
-                className={`flex flex-col items-center gap-1.5 rounded-xl p-3 text-xs font-medium transition-all border ${
-                  selectedType === wt.value
-                    ? "bg-accent text-accent-foreground border-accent shadow-sm"
-                    : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
-                }`}
-              >
-                <wt.icon className="h-5 w-5" />
-                {wt.label}
-              </motion.button>
+              <Tooltip key={wt.value}>
+                <TooltipTrigger asChild>
+                  <motion.button
+                    whileHover={{ scale: 1.04 }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => setSelectedType(wt.value)}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl p-3 text-xs font-medium transition-all border ${
+                      selectedType === wt.value
+                        ? "bg-accent text-accent-foreground border-accent shadow-sm"
+                        : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
+                    }`}
+                  >
+                    <wt.icon className="h-5 w-5" />
+                    {wt.label}
+                  </motion.button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[280px] text-xs">
+                  {wt.whenToUse}
+                </TooltipContent>
+              </Tooltip>
             ))}
           </div>
           {selectedType && (

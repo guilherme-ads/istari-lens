@@ -39,7 +39,10 @@ def _widget_load_cost(widget: DashboardWidget) -> float:
         "kpi": 16.0,
         "line": 22.0,
         "bar": 24.0,
+        "column": 24.0,
+        "donut": 24.0,
         "table": 34.0,
+        "dre": 32.0,
     }.get(str(widget_type), 18.0)
 
     metrics = len(payload.get("metrics") or [])
@@ -60,7 +63,7 @@ def _widget_load_cost(widget: DashboardWidget) -> float:
     order_score = min(4.0, order_by * 1.5)
 
     table_score = 0.0
-    if widget_type == "table":
+    if widget_type in {"table", "dre"}:
         columns = len(payload.get("columns") or [])
         page_size_raw = payload.get("table_page_size") or payload.get("limit") or 25
         try:
@@ -70,7 +73,7 @@ def _widget_load_cost(widget: DashboardWidget) -> float:
         table_score = min(18.0, columns * 1.5 + (page_size / 15.0))
 
     bar_score = 0.0
-    if widget_type == "bar":
+    if widget_type in {"bar", "column", "donut"}:
         top_n_raw = payload.get("top_n")
         if top_n_raw is None:
             bar_score += 7.0

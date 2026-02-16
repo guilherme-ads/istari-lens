@@ -90,6 +90,157 @@ def test_bar_top_n_must_be_positive() -> None:
         )
 
 
+def test_bar_allows_temporal_week_dimension_token() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "bar",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["__time_week__:data"],
+            "filters": [],
+            "order_by": [{"column": "__time_week__:data", "direction": "asc"}],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+
+
+def test_column_allows_temporal_weekday_dimension_token() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "column",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["__time_weekday__:data"],
+            "filters": [],
+            "order_by": [{"column": "__time_weekday__:data", "direction": "asc"}],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+
+
+def test_column_temporal_dimension_requires_temporal_column() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "column",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["__time_month__:estacao"],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    with pytest.raises(WidgetConfigValidationError) as exc:
+        validate_widget_config_against_columns(config, COLUMN_TYPES)
+    assert "dimensions[0]" in exc.value.field_errors
+
+
+def test_column_requires_categorical_dimension() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "column",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["kwh"],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    with pytest.raises(WidgetConfigValidationError) as exc:
+        validate_widget_config_against_columns(config, COLUMN_TYPES)
+    assert "dimensions[0]" in exc.value.field_errors
+
+
+def test_donut_top_n_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "donut",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": ["estacao"],
+                "filters": [],
+                "order_by": [{"metric_ref": "m0", "direction": "desc"}],
+                "top_n": 0,
+            }
+        )
+
+
+def test_dre_requires_rows() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "dre",
+                "view_name": "public.vw_recargas",
+                "metrics": [],
+                "dimensions": [],
+                "dre_rows": [],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+
+
+def test_dre_metric_requires_numeric_column() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "dre",
+            "view_name": "public.vw_recargas",
+            "metrics": [],
+            "dimensions": [],
+            "dre_rows": [
+                {
+                    "title": "Faturamento",
+                    "row_type": "result",
+                    "metrics": [{"op": "sum", "column": "estacao"}],
+                }
+            ],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    with pytest.raises(WidgetConfigValidationError) as exc:
+        validate_widget_config_against_columns(config, COLUMN_TYPES)
+    assert "dre_rows[0].metrics[0].column" in exc.value.field_errors
+
+
+def test_dre_percent_base_row_must_reference_level_1_row() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "dre",
+                "view_name": "public.vw_recargas",
+                "metrics": [],
+                "dimensions": [],
+                "dre_percent_base_row_index": 1,
+                "dre_rows": [
+                    {"title": "Faturamento", "row_type": "result", "metrics": [{"op": "sum", "column": "valor"}]},
+                    {"title": "Marketing", "row_type": "detail", "metrics": [{"op": "sum", "column": "valor"}]},
+                ],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+
+
+def test_dre_percent_base_row_is_valid_for_level_1_row() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "dre",
+            "view_name": "public.vw_recargas",
+            "metrics": [],
+            "dimensions": [],
+            "dre_percent_base_row_index": 0,
+            "dre_rows": [
+                {"title": "Faturamento", "row_type": "result", "metrics": [{"op": "sum", "column": "valor"}]},
+                {"title": "(-) Deducoes", "row_type": "deduction", "metrics": [{"op": "sum", "column": "valor"}]},
+            ],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+
+
 def test_table_columns_must_exist() -> None:
     config = WidgetConfig.model_validate(
         {
