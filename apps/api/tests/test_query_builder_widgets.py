@@ -1,4 +1,6 @@
 import pytest
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.query_builder import build_kpi_batch_query, build_widget_query
 from app.widget_config import WidgetConfig
@@ -210,6 +212,134 @@ def test_bar_top_n_applies_limit() -> None:
     assert "LIMIT 5" in sql
 
 
+def test_column_top_n_applies_limit() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "column",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "sum", "column": "valor"}],
+                "dimensions": ["estacao"],
+                "filters": [],
+                "order_by": [{"metric_ref": "m0", "direction": "desc"}],
+                "top_n": 7,
+            }
+        )
+    )
+    assert "LIMIT 7" in sql
+
+
+def test_donut_query_with_dimension_and_metric() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "donut",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": ["estacao"],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+    )
+    assert 'SELECT "estacao", COUNT("id_recarga") AS "m0"' in sql
+    assert 'GROUP BY "estacao"' in sql
+
+
+def test_dre_query_builds_metric_columns() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "dre",
+                "view_name": "public.vw_recargas",
+                "metrics": [],
+                "dimensions": [],
+                "dre_rows": [
+                    {
+                        "title": "Faturamento",
+                        "row_type": "result",
+                        "metrics": [{"op": "sum", "column": "valor"}, {"op": "sum", "column": "kwh"}],
+                    },
+                    {"title": "Deducoes", "row_type": "deduction", "metrics": [{"op": "sum", "column": "kwh"}]},
+                ],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+    )
+    assert 'SELECT (COALESCE(SUM("valor"), 0) + COALESCE(SUM("kwh"), 0)) AS "m0", (COALESCE(SUM("kwh"), 0)) AS "m1"' in sql
+    assert 'FROM "public"."vw_recargas"' in sql
+    assert "LIMIT 1" in sql
+
+
+def test_bar_week_dimension_token_query() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "bar",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": ["__time_week__:data"],
+                "filters": [],
+                "order_by": [{"column": "__time_week__:data", "direction": "asc"}],
+            }
+        )
+    )
+    assert "EXTRACT(WEEK FROM \"data\")" in sql
+    assert '"__time_week__:data"' in sql
+    assert 'ORDER BY MIN(EXTRACT(WEEK FROM "data")) ASC' in sql
+
+
+def test_column_month_dimension_token_query() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "column",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "sum", "column": "valor"}],
+                "dimensions": ["__time_month__:data"],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+    )
+    assert "TO_CHAR(DATE_TRUNC('month', \"data\"), 'YYYY-MM')" in sql
+    assert '"__time_month__:data"' in sql
+
+
+def test_bar_weekday_dimension_default_orders_by_isodow() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "bar",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": ["__time_weekday__:data"],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+    )
+    assert "EXTRACT(ISODOW FROM \"data\")::int" in sql
+    assert "ORDER BY MIN(EXTRACT(ISODOW FROM \"data\")) ASC" in sql
+
+
+def test_column_month_dimension_order_uses_group_safe_expression() -> None:
+    sql, _ = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "column",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "sum", "column": "valor"}],
+                "dimensions": ["__time_month__:data"],
+                "filters": [],
+                "order_by": [{"column": "__time_month__:data", "direction": "asc"}],
+            }
+        )
+    )
+    assert "ORDER BY MIN(DATE_TRUNC('month', \"data\")) ASC" in sql
+
+
 def test_table_query_with_columns_limit_offset() -> None:
     sql, _ = build_widget_query(
         _cfg(
@@ -247,6 +377,45 @@ def test_text_widget_has_no_query_builder_support() -> None:
                 }
             )
         )
+
+
+def test_relative_filter_this_year_resolves_to_between_dates() -> None:
+    sql, params = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "line",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "time": {"column": "data", "granularity": "day"},
+                "filters": [{"column": "data", "op": "between", "value": {"relative": "this_year"}}],
+                "order_by": [],
+            }
+        )
+    )
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    assert "BETWEEN" in sql
+    assert len(params) == 2
+    assert params[0] == today.replace(month=1, day=1).isoformat()
+    assert params[1] == (today + timedelta(days=1)).isoformat()
+
+
+def test_lte_date_filter_increments_day_by_one() -> None:
+    sql, params = build_widget_query(
+        _cfg(
+            {
+                "widget_type": "line",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "time": {"column": "data", "granularity": "day"},
+                "filters": [{"column": "data", "op": "lte", "value": "2026-02-10"}],
+                "order_by": [],
+            }
+        )
+    )
+    assert '"data" <=' in sql
+    assert params == ["2026-02-11"]
 
 
 def test_kpi_batch_query_builds_multiple_metrics() -> None:

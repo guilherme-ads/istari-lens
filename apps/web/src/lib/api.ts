@@ -247,7 +247,7 @@ export type ApiWidgetMetric = {
 };
 
 export type ApiWidgetConfig = {
-  widget_type: "kpi" | "line" | "bar" | "table" | "text";
+  widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
   view_name: string;
   show_title?: boolean;
   kpi_show_as?: "currency_brl" | "number_2" | "integer";
@@ -258,7 +258,7 @@ export type ApiWidgetConfig = {
     agg?: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
     value_column?: string;
     time_column: string;
-    granularity: "day" | "week" | "month";
+    granularity: "day" | "week" | "month" | "hour";
   };
   size?: {
     width: 1 | 2 | 3 | 4;
@@ -273,13 +273,23 @@ export type ApiWidgetConfig = {
   dimensions: string[];
   time?: {
     column: string;
-    granularity: "day" | "week" | "month";
+    granularity: "day" | "week" | "month" | "hour";
   };
   line_data_labels_enabled?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;
   line_label_mode?: "peak" | "valley" | "both";
+  donut_show_legend?: boolean;
+  donut_data_labels_enabled?: boolean;
+  donut_data_labels_min_percent?: number;
+  donut_metric_display?: "value" | "percent";
+  dre_rows?: Array<{
+    title: string;
+    row_type: "result" | "deduction" | "detail";
+    metrics: ApiWidgetMetric[];
+  }>;
+  dre_percent_base_row_index?: number;
   columns?: string[];
   table_column_formats?: Record<string, string>;
   table_page_size?: number;
@@ -495,7 +505,7 @@ export const api = {
   createDashboardWidget: (
     dashboardId: number,
     payload: {
-      widget_type: "kpi" | "line" | "bar" | "table" | "text";
+      widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
       title?: string;
       position?: number;
       config: ApiWidgetConfig;
@@ -508,7 +518,7 @@ export const api = {
     dashboardId: number,
     widgetId: number,
     payload: Partial<{
-      widget_type: "kpi" | "line" | "bar" | "table" | "text";
+      widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
       title: string;
       position: number;
       config: ApiWidgetConfig;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,17 +29,106 @@ const relativeDateOptions = [
   { value: "yesterday", label: "Ontem" },
   { value: "last_7_days", label: "Ultimos 7 dias" },
   { value: "last_30_days", label: "Ultimos 30 dias" },
+  { value: "this_year", label: "Este ano" },
   { value: "this_month", label: "Este mes" },
   { value: "last_month", label: "Mes passado" },
 ] as const;
 const aggLabelMap = {
   count: "CONTAGEM",
-  distinct_count: "CONTAGEM ÚNICA",
+  distinct_count: "CONTAGEM ÃšNICA",
   sum: "SOMA",
-  avg: "MÉDIA",
-  max: "MÁXIMO",
-  min: "MÍNIMO",
+  avg: "MÃ‰DIA",
+  max: "MÃXIMO",
+  min: "MÃNIMO",
 } as const;
+const dreRowTypeMeta = {
+  result: {
+    label: "Total (N1)",
+    containerClass: "border-l-4 border-l-foreground/60 bg-background",
+    titleClass: "font-semibold",
+    indentClass: "",
+  },
+  deduction: {
+    label: "Conta Redutora (N2)",
+    containerClass: "border-l-4 border-l-red-300/70 bg-red-50/20",
+    titleClass: "font-normal",
+    indentClass: "",
+  },
+  detail: {
+    label: "Conta Analitica (N3)",
+    containerClass: "border-l-4 border-l-muted-foreground/30 bg-muted/20",
+    titleClass: "font-normal text-muted-foreground",
+    indentClass: "pl-4",
+  },
+} as const;
+
+const buildTemporalDimensionValue = (column: string, granularity: "month" | "week" | "weekday" | "hour"): string =>
+  `__time_${granularity}__:${column}`;
+
+const parseTemporalDimensionValue = (value: string): { granularity: "month" | "week" | "weekday" | "hour"; column: string } | null => {
+  if (value.startsWith("__time_month__:")) {
+    const column = value.slice("__time_month__:".length).trim();
+    return column ? { granularity: "month", column } : null;
+  }
+  if (value.startsWith("__time_week__:")) {
+    const column = value.slice("__time_week__:".length).trim();
+    return column ? { granularity: "week", column } : null;
+  }
+  if (value.startsWith("__time_weekday__:")) {
+    const column = value.slice("__time_weekday__:".length).trim();
+    return column ? { granularity: "weekday", column } : null;
+  }
+  if (value.startsWith("__time_hour__:")) {
+    const column = value.slice("__time_hour__:".length).trim();
+    return column ? { granularity: "hour", column } : null;
+  }
+  return null;
+};
+
+const resolveDrePercentBaseRowIndex = (
+  rows: Array<{ row_type: "result" | "deduction" | "detail" }>,
+  current?: number,
+): number | undefined => {
+  if (typeof current === "number" && current >= 0 && current < rows.length && rows[current]?.row_type === "result") {
+    return current;
+  }
+  const firstResultIndex = rows.findIndex((row) => row.row_type === "result");
+  return firstResultIndex >= 0 ? firstResultIndex : undefined;
+};
+
+const DreTitleInput = memo(({
+  value,
+  className,
+  onCommit,
+}: {
+  value: string;
+  className?: string;
+  onCommit: (value: string) => void;
+}) => {
+  const [localValue, setLocalValue] = useState(value);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  return (
+    <Input
+      className={className}
+      value={localValue}
+      placeholder="Titulo da conta"
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={() => {
+        if (localValue !== value) onCommit(localValue);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+});
+DreTitleInput.displayName = "DreTitleInput";
 
 export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onClose, onSave, onDelete }: WidgetConfigPanelProps) => {
   const [draft, setDraft] = useState<DashboardWidget | null>(widget);
@@ -55,10 +144,38 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
   const numericColumns = useMemo(() => columns.filter((column) => column.type === "numeric"), [columns]);
   const temporalColumns = useMemo(() => columns.filter((column) => column.type === "temporal"), [columns]);
   const categoricalColumns = useMemo(() => columns.filter((column) => column.type === "text" || column.type === "boolean"), [columns]);
-
-  if (!draft) return null;
+  const columnTypeByName = useMemo(
+    () => Object.fromEntries(columns.map((column) => [column.name, column.type])),
+    [columns],
+  );
+  const categoricalDimensionOptions = useMemo(
+    () => categoricalColumns.map((column) => ({ value: column.name, label: column.name })),
+    [categoricalColumns],
+  );
+  const temporalDimensionOptions = useMemo(
+    () => temporalColumns.flatMap((column) => ([
+      {
+        value: buildTemporalDimensionValue(column.name, "month"),
+        label: `${column.name} (mes)`,
+      },
+      {
+        value: buildTemporalDimensionValue(column.name, "week"),
+        label: `${column.name} (semana)`,
+      },
+      {
+        value: buildTemporalDimensionValue(column.name, "weekday"),
+        label: `${column.name} (dia da semana)`,
+      },
+      {
+        value: buildTemporalDimensionValue(column.name, "hour"),
+        label: `${column.name} (hora do dia)`,
+      },
+    ])),
+    [temporalColumns],
+  );
 
   const update = (patch: Partial<DashboardWidget>) => {
+    if (!draft) return;
     setDraft({ ...draft, ...patch });
   };
 
@@ -102,12 +219,20 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
       if ((config.line_label_min_gap || 0) < 1) messages.push("Distancia minima entre eventos deve ser >= 1.");
     }
 
-    if (config.widget_type === "bar") {
-      if (config.dimensions.length !== 1) messages.push("Grafico de barras requer exatamente 1 dimensao.");
-      if (config.dimensions[0] && !categoricalColumns.some((column) => column.name === config.dimensions[0])) {
-        messages.push("A dimensao precisa ser categorica.");
+    if (config.widget_type === "bar" || config.widget_type === "column" || config.widget_type === "donut") {
+      if (config.dimensions.length !== 1) messages.push("Grafico categorico requer exatamente 1 dimensao.");
+      const dimension = config.dimensions[0];
+      if (dimension) {
+        const temporalDimension = parseTemporalDimensionValue(dimension);
+        if (temporalDimension && (config.widget_type === "bar" || config.widget_type === "column")) {
+          if (!temporalColumns.some((column) => column.name === temporalDimension.column)) {
+            messages.push("A dimensao temporal requer coluna de tempo valida.");
+          }
+        } else if (!categoricalColumns.some((column) => column.name === dimension)) {
+          messages.push("A dimensao precisa ser categorica.");
+        }
       }
-      if (config.metrics.length !== 1) messages.push("Grafico de barras requer exatamente 1 metrica.");
+      if (config.metrics.length !== 1) messages.push("Grafico categorico requer exatamente 1 metrica.");
     }
 
     if (config.widget_type === "table") {
@@ -120,16 +245,78 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     if (config.widget_type === "text") {
       if (!config.text_style?.content?.trim()) messages.push("Widget de texto requer conteudo.");
     }
+    if (config.widget_type === "dre") {
+      if (!config.dre_rows || config.dre_rows.length === 0) {
+        messages.push("Widget DRE requer ao menos 1 linha.");
+      } else {
+        const baseRowIndex = resolveDrePercentBaseRowIndex(config.dre_rows, config.dre_percent_base_row_index);
+        if (typeof baseRowIndex !== "number") messages.push("Widget DRE requer ao menos uma conta N1 para base de percentual.");
+        config.dre_rows.forEach((row, index) => {
+          if (!row.title.trim()) messages.push(`Linha ${index + 1}: titulo obrigatorio.`);
+          if (!row.metrics || row.metrics.length === 0) {
+            messages.push(`Linha ${index + 1}: requer ao menos 1 metrica.`);
+            return;
+          }
+          row.metrics.forEach((metricItem) => {
+            if (numOps.includes(metricItem.op) && (!metricItem.column || !numericColumns.some((column) => column.name === metricItem.column))) {
+              messages.push(`Linha ${index + 1}: agregacao ${metricItem.op} requer coluna numerica.`);
+            }
+            if (metricItem.op === "distinct_count" && !metricItem.column) {
+              messages.push(`Linha ${index + 1}: distinct_count requer coluna.`);
+            }
+          });
+        });
+      }
+    }
 
     return messages;
   };
 
   const handleSave = async () => {
-    let normalizedDraft = draft.config.widget_type === "table"
-      ? { ...draft, config: { ...draft.config, limit: undefined, top_n: undefined } }
-      : draft.config.widget_type === "bar"
-        ? draft
-        : { ...draft, config: { ...draft.config, top_n: undefined } };
+    let normalizedDraft: DashboardWidget = { ...draft };
+    if (draft.config.widget_type === "table") {
+      normalizedDraft = {
+        ...draft,
+        config: {
+          ...draft.config,
+          limit: undefined,
+          top_n: undefined,
+          time: undefined,
+        },
+      };
+    } else if (draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") {
+      normalizedDraft = {
+        ...draft,
+        config: {
+          ...draft.config,
+          time: undefined,
+          columns: undefined,
+        },
+      };
+    } else if (draft.config.widget_type === "dre") {
+      const baseRowIndex = resolveDrePercentBaseRowIndex(draft.config.dre_rows || [], draft.config.dre_percent_base_row_index);
+      normalizedDraft = {
+        ...draft,
+        config: {
+          ...draft.config,
+          metrics: [],
+          dimensions: [],
+          time: undefined,
+          columns: undefined,
+          top_n: undefined,
+          order_by: [],
+          dre_percent_base_row_index: baseRowIndex,
+        },
+      };
+    } else {
+      normalizedDraft = {
+        ...draft,
+        config: {
+          ...draft.config,
+          top_n: undefined,
+        },
+      };
+    }
 
     if (normalizedDraft.config.widget_type === "kpi") {
       const draftMetric = normalizedDraft.config.metrics[0]
@@ -198,6 +385,8 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     }
   };
 
+  if (!draft) return null;
+
   const metric = (
     draft.config.metrics[0]
     || (draft.config.widget_type === "kpi" && draft.config.composite_metric
@@ -213,17 +402,25 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
   const textStyle = draft.config.text_style || { content: "", font_size: 18, align: "left" as const };
   const compositeMetric = draft.config.widget_type === "kpi" ? draft.config.composite_metric : undefined;
   const compositeEnabled = draft.config.widget_type === "kpi" && !!draft.config.composite_metric;
-  const periodLabelMap: Record<"day" | "week" | "month", string> = { day: "dia", week: "semana", month: "mes" };
+  const periodLabelMap: Record<"day" | "week" | "month" | "hour", string> = { day: "dia", week: "semana", month: "mes", hour: "hora" };
   const compositeDescription = compositeMetric
     ? `${aggLabelMap[compositeMetric.outer_agg]} da ${aggLabelMap[metric.op]}(${metric.column || "*"}) por ${periodLabelMap[compositeMetric.granularity]}`
     : "";
+  const categoricalWidgetDimensionOptions = draft.config.widget_type === "bar" || draft.config.widget_type === "column"
+    ? [...categoricalDimensionOptions, ...temporalDimensionOptions]
+    : categoricalDimensionOptions;
   const barDim = draft.config.dimensions[0] || "";
   const selectedTableColumns = draft.config.columns || [];
-  const getColumnType = (name: string) => columns.find((column) => column.name === name)?.type || "text";
+  const getColumnType = (name: string) => columnTypeByName[name] || "text";
   const activeFilterColumn = draft.config.filters[0]?.column;
   const isTemporalFilterColumn = !!activeFilterColumn && getColumnType(activeFilterColumn) === "temporal";
   const activeFilter = draft.config.filters[0];
   const activeFilterValue = activeFilter?.value;
+  const dreRows = draft.config.dre_rows || [];
+  const dreResultRowOptions = dreRows
+    .map((row, index) => ({ row, index }))
+    .filter((item) => item.row.row_type === "result");
+  const effectiveDrePercentBaseRowIndex = resolveDrePercentBaseRowIndex(dreRows, draft.config.dre_percent_base_row_index);
   const isRelativeTemporalFilter = isTemporalFilterColumn
     && activeFilter?.op === "between"
     && typeof activeFilterValue === "object"
@@ -234,7 +431,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
 
   return (
     <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
-      <SheetContent className="w-[92vw] sm:w-[33vw] sm:max-w-none sm:min-w-[520px] overflow-y-auto">
+      <SheetContent className="w-[95vw] sm:w-[46vw] sm:max-w-none sm:min-w-[700px] overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="text-base">Configurar Widget</SheetTitle>
           <SheetDescription className="text-xs">
@@ -278,6 +475,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                       columns: undefined,
                       time: undefined,
                       top_n: undefined,
+                      dre_rows: undefined,
                     },
                   });
                   return;
@@ -296,6 +494,31 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                       columns: undefined,
                       top_n: undefined,
                       metrics: draft.config.metrics.length > 0 ? draft.config.metrics : [{ op: "count" }],
+                      dre_rows: undefined,
+                    },
+                  });
+                  return;
+                }
+                if (nextType === "dre") {
+                  const existingRows = draft.config.dre_rows && draft.config.dre_rows.length > 0
+                    ? draft.config.dre_rows
+                    : [{
+                        title: "Faturamento",
+                        row_type: "result" as const,
+                        metrics: [{ op: "sum" as const, column: numericColumns[0]?.name || columns[0]?.name }],
+                      }];
+                  update({
+                    config: {
+                      ...draft.config,
+                      widget_type: "dre",
+                      metrics: [],
+                      dimensions: [],
+                      time: undefined,
+                      columns: undefined,
+                      top_n: undefined,
+                      order_by: [],
+                      dre_rows: existingRows,
+                      dre_percent_base_row_index: resolveDrePercentBaseRowIndex(existingRows, draft.config.dre_percent_base_row_index),
                     },
                   });
                   return;
@@ -306,12 +529,23 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     ...draft.config,
                     widget_type: nextType,
                     composite_metric: undefined,
-                    top_n: nextType === "bar" ? draft.config.top_n : undefined,
-                    dimensions: nextType === "bar" ? draft.config.dimensions : [],
+                    top_n: nextType === "bar" || nextType === "column" || nextType === "donut" ? draft.config.top_n : undefined,
+                    dimensions: nextType === "bar" || nextType === "column" || nextType === "donut" ? draft.config.dimensions : [],
+                    time: nextType === "line" ? draft.config.time : undefined,
                     line_data_labels_enabled: nextType === "line" ? !!draft.config.line_data_labels_enabled : undefined,
                     line_data_labels_percent: nextType === "line"
                       ? Math.max(1, Math.min(100, draft.config.line_data_labels_percent || 100))
                       : undefined,
+                    donut_show_legend: nextType === "donut" ? draft.config.donut_show_legend !== false : undefined,
+                    donut_data_labels_enabled: nextType === "donut" ? !!draft.config.donut_data_labels_enabled : undefined,
+                    donut_data_labels_min_percent: nextType === "donut"
+                      ? Math.max(1, Math.min(100, draft.config.donut_data_labels_min_percent || 6))
+                      : undefined,
+                    donut_metric_display: nextType === "donut"
+                      ? (draft.config.donut_metric_display === "percent" ? "percent" : "value")
+                      : undefined,
+                    dre_rows: undefined,
+                    dre_percent_base_row_index: undefined,
                   },
                 });
               }}
@@ -321,6 +555,9 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                 <SelectItem value="kpi">KPI</SelectItem>
                 <SelectItem value="line">Linha</SelectItem>
                 <SelectItem value="bar">Barras</SelectItem>
+                <SelectItem value="column">Colunas</SelectItem>
+                <SelectItem value="donut">Rosca</SelectItem>
+                <SelectItem value="dre">DRE</SelectItem>
                 <SelectItem value="table">Tabela</SelectItem>
                 <SelectItem value="text">Texto</SelectItem>
               </SelectContent>
@@ -389,7 +626,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             </div>
           )}
 
-          {draft.config.widget_type !== "table" && draft.config.widget_type !== "text" && draft.config.widget_type !== "line" && (
+          {draft.config.widget_type !== "table" && draft.config.widget_type !== "text" && draft.config.widget_type !== "line" && draft.config.widget_type !== "dre" && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Hash className="h-3 w-3" /> Metrica
@@ -424,11 +661,11 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                   <SelectTrigger className="w-[130px] h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="count">CONTAGEM</SelectItem>
-                    <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
+                    <SelectItem value="distinct_count">CONTAGEM ÃšNICA</SelectItem>
                     <SelectItem value="sum">SOMA</SelectItem>
-                    <SelectItem value="avg">MÉDIA</SelectItem>
-                    <SelectItem value="min">MÍNIMO</SelectItem>
-                    <SelectItem value="max">MÁXIMO</SelectItem>
+                    <SelectItem value="avg">MÃ‰DIA</SelectItem>
+                    <SelectItem value="min">MÃNIMO</SelectItem>
+                    <SelectItem value="max">MÃXIMO</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select
@@ -457,6 +694,24 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     ))}
                   </SelectContent>
                 </Select>
+                {draft.config.widget_type === "donut" && (
+                  <Select
+                    value={draft.config.donut_metric_display || "value"}
+                    onValueChange={(value) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          donut_metric_display: value === "percent" ? "percent" : "value",
+                        },
+                      })}
+                  >
+                    <SelectTrigger className="w-[84px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="value">Valor</SelectItem>
+                      <SelectItem value="percent">%</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </div>
           )}
@@ -505,12 +760,12 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="avg">MÉDIA</SelectItem>
+                        <SelectItem value="avg">MÃ‰DIA</SelectItem>
                         <SelectItem value="sum">SOMA</SelectItem>
                         <SelectItem value="count">CONTAGEM</SelectItem>
-                        <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
-                        <SelectItem value="min">MÍNIMO</SelectItem>
-                        <SelectItem value="max">MÁXIMO</SelectItem>
+                        <SelectItem value="distinct_count">CONTAGEM ÃšNICA</SelectItem>
+                        <SelectItem value="min">MÃNIMO</SelectItem>
+                        <SelectItem value="max">MÃXIMO</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -524,7 +779,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                             ...draft.config,
                             composite_metric: {
                               ...draft.config.composite_metric!,
-                              granularity: value as "day" | "week" | "month",
+                              granularity: value as "day" | "week" | "month" | "hour",
                             },
                           },
                         })}
@@ -534,6 +789,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                         <SelectItem value="day">Dia</SelectItem>
                         <SelectItem value="week">Semana</SelectItem>
                         <SelectItem value="month">Mes</SelectItem>
+                        <SelectItem value="hour">Hora</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -615,11 +871,11 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                       <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="count">CONTAGEM</SelectItem>
-                        <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
+                        <SelectItem value="distinct_count">CONTAGEM ÃšNICA</SelectItem>
                         <SelectItem value="sum">SOMA</SelectItem>
-                        <SelectItem value="avg">MÉDIA</SelectItem>
-                        <SelectItem value="min">MÍNIMO</SelectItem>
-                        <SelectItem value="max">MÁXIMO</SelectItem>
+                        <SelectItem value="avg">MÃ‰DIA</SelectItem>
+                        <SelectItem value="min">MÃNIMO</SelectItem>
+                        <SelectItem value="max">MÃXIMO</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select
@@ -702,7 +958,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                         ...draft.config,
                         time: {
                           column: draft.config.time?.column || "",
-                          granularity: value as "day" | "week" | "month",
+                          granularity: value as "day" | "week" | "month" | "hour",
                         },
                       },
                     })}
@@ -712,6 +968,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     <SelectItem value="day">Dia</SelectItem>
                     <SelectItem value="week">Semana</SelectItem>
                     <SelectItem value="month">Mes</SelectItem>
+                    <SelectItem value="hour">Hora</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -761,7 +1018,251 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             </div>
           )}
 
-          {draft.config.widget_type === "bar" && (
+          {draft.config.widget_type === "donut" && (
+            <div className="space-y-2 rounded-md border border-border p-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Mostrar legenda</span>
+                <Switch
+                  checked={draft.config.donut_show_legend !== false}
+                  onCheckedChange={(checked) =>
+                    update({
+                      config: {
+                        ...draft.config,
+                        donut_show_legend: checked,
+                      },
+                    })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Mostrar rotulos de dados</span>
+                <Switch
+                  checked={!!draft.config.donut_data_labels_enabled}
+                  onCheckedChange={(checked) =>
+                    update({
+                      config: {
+                        ...draft.config,
+                        donut_data_labels_enabled: checked,
+                      },
+                    })}
+                />
+              </div>
+              {draft.config.donut_data_labels_enabled && (
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground w-[180px]">Percentual minimo da fatia</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className="w-[90px] h-8 text-xs"
+                    value={draft.config.donut_data_labels_min_percent ?? 6}
+                    onChange={(e) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          donut_data_labels_min_percent: Math.max(1, Math.min(100, Number(e.target.value) || 6)),
+                        },
+                      })}
+                  />
+                  <span className="text-xs text-muted-foreground">%</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {draft.config.widget_type === "dre" && (
+            <div className="space-y-2 rounded-md border border-border p-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-muted-foreground">Linhas do DRE</Label>
+              </div>
+
+              <div className="space-y-2">
+                {dreRows.map((row, index) => (
+                  <div key={`dre-row-${index}`} className="space-y-2">
+                    <div
+                      className={`space-y-2 rounded-md border border-border/60 p-2 transition-colors hover:bg-muted/35 hover:border-border ${dreRowTypeMeta[row.row_type || "detail"].containerClass}`}
+                    >
+                      <div className="grid grid-cols-[1fr_188px_32px] gap-2 items-center">
+                        <DreTitleInput
+                          className={`h-8 text-xs ${dreRowTypeMeta[row.row_type || "detail"].titleClass} ${dreRowTypeMeta[row.row_type || "detail"].indentClass}`}
+                          value={row.title}
+                          onCommit={(nextTitle) => {
+                            const nextRows = [...dreRows];
+                            nextRows[index] = { ...row, title: nextTitle };
+                            update({ config: { ...draft.config, dre_rows: nextRows } });
+                          }}
+                        />
+                        <Select
+                          value={row.row_type}
+                          onValueChange={(value) => {
+                            const nextType = value as "result" | "deduction" | "detail";
+                            const nextRows = [...dreRows];
+                            nextRows[index] = { ...row, row_type: nextType };
+                            update({ config: { ...draft.config, dre_rows: nextRows } });
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue>
+                              {((row.row_type && dreRowTypeMeta[row.row_type]) ? dreRowTypeMeta[row.row_type].label : dreRowTypeMeta.result.label).trim()}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="result">{dreRowTypeMeta.result.label.trim()}</SelectItem>
+                            <SelectItem value="deduction">{dreRowTypeMeta.deduction.label.trim()}</SelectItem>
+                            <SelectItem value="detail">{dreRowTypeMeta.detail.label.trim()}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          disabled={dreRows.length <= 1}
+                          onClick={() => {
+                            const nextRows = dreRows.filter((_, rowIndex) => rowIndex !== index);
+                            update({ config: { ...draft.config, dre_rows: nextRows } });
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      <div className={`text-[11px] text-muted-foreground ${dreRowTypeMeta[row.row_type || "detail"].indentClass}`}>
+                        {row.row_type === "result" ? "N1: conta principal de total." : row.row_type === "deduction" ? "N2: conta redutora do total." : "N3: conta analitica de detalhamento."}
+                      </div>
+
+                      <div className={`space-y-1.5 ${dreRowTypeMeta[row.row_type || "detail"].indentClass}`}>
+                        {(row.metrics || []).map((metricItem, metricIndex) => (
+                          <div key={`dre-row-${index}-metric-${metricIndex}`} className="grid grid-cols-[140px_1fr_68px] gap-2">
+                            <Select
+                              value={metricItem.op}
+                              onValueChange={(value) => {
+                                const nextOp = value as typeof metricItem.op;
+                                const isCountLikeOp = countLikeOps.includes(nextOp);
+                                const nextColumn =
+                                  isCountLikeOp
+                                    ? metricItem.column
+                                    : metricItem.column && numericColumns.some((column) => column.name === metricItem.column)
+                                      ? metricItem.column
+                                      : numericColumns[0]?.name;
+                                const nextRows = [...dreRows];
+                                const nextMetrics = [...(row.metrics || [])];
+                                nextMetrics[metricIndex] = { ...metricItem, op: nextOp, column: nextColumn };
+                                nextRows[index] = { ...row, metrics: nextMetrics };
+                                update({ config: { ...draft.config, dre_rows: nextRows } });
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="count">CONTAGEM</SelectItem>
+                                <SelectItem value="distinct_count">CONTAGEM UNICA</SelectItem>
+                                <SelectItem value="sum">SOMA</SelectItem>
+                                <SelectItem value="avg">MEDIA</SelectItem>
+                                <SelectItem value="min">MINIMO</SelectItem>
+                                <SelectItem value="max">MAXIMO</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Select
+                              value={metricItem.column || "__none__"}
+                              onValueChange={(value) => {
+                                const nextRows = [...dreRows];
+                                const nextMetrics = [...(row.metrics || [])];
+                                nextMetrics[metricIndex] = { ...metricItem, column: value === "__none__" ? undefined : value };
+                                nextRows[index] = { ...row, metrics: nextMetrics };
+                                update({ config: { ...draft.config, dre_rows: nextRows } });
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
+                              <SelectContent>
+                                {metricItem.op === "count" && <SelectItem value="__none__">count(*)</SelectItem>}
+                                {(countLikeOps.includes(metricItem.op) ? columns : numericColumns).map((column) => (
+                                  <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <div className="flex items-center gap-1">
+                              {metricIndex === (row.metrics || []).length - 1 && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => {
+                                    const nextRows = [...dreRows];
+                                    const nextMetrics = [...(row.metrics || []), { op: "sum" as const, column: numericColumns[0]?.name || columns[0]?.name }];
+                                    nextRows[index] = { ...row, metrics: nextMetrics };
+                                    update({ config: { ...draft.config, dre_rows: nextRows } });
+                                  }}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8"
+                                disabled={(row.metrics || []).length <= 1}
+                                onClick={() => {
+                                  const nextRows = [...dreRows];
+                                  const nextMetrics = (row.metrics || []).filter((_, idx) => idx !== metricIndex);
+                                  nextRows[index] = { ...row, metrics: nextMetrics };
+                                  update({ config: { ...draft.config, dre_rows: nextRows } });
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-center gap-2 rounded-xl border border-dashed border-border/50 text-muted-foreground hover:border-border hover:text-foreground h-9"
+                      onClick={() => {
+                        const nextRows = [...dreRows];
+                        nextRows.splice(index + 1, 0, {
+                          title: "",
+                          row_type: "detail",
+                          metrics: [{ op: "sum", column: numericColumns[0]?.name || columns[0]?.name }],
+                        });
+                        update({ config: { ...draft.config, dre_rows: nextRows } });
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Adicionar conta
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-1.5 rounded-md border border-border/60 p-2">
+                <Label className="text-[11px] text-muted-foreground">Base do percentual (100%)</Label>
+                <Select
+                  value={typeof effectiveDrePercentBaseRowIndex === "number" ? String(effectiveDrePercentBaseRowIndex) : "__none__"}
+                  onValueChange={(value) =>
+                    update({
+                      config: {
+                        ...draft.config,
+                        dre_percent_base_row_index: value === "__none__" ? undefined : Number(value),
+                      },
+                    })}
+                >
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione uma conta N1" /></SelectTrigger>
+                  <SelectContent>
+                    {dreResultRowOptions.length === 0 && <SelectItem value="__none__">Nenhuma conta N1 disponivel</SelectItem>}
+                    {dreResultRowOptions.map(({ row, index }) => (
+                      <SelectItem key={`dre-percent-base-${index}`} value={String(index)}>
+                        {row.title.trim() || `Conta N1 ${index + 1}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          {(draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Columns3 className="h-3 w-3" /> Dimensao
@@ -772,8 +1273,8 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
               >
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione a dimensao" /></SelectTrigger>
                 <SelectContent>
-                  {categoricalColumns.map((column) => (
-                    <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
+                  {categoricalWidgetDimensionOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1126,9 +1627,9 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             </div>
           </div>}
 
-          {draft.config.widget_type === "bar" && <div className="space-y-2">
+          {(draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && <div className="space-y-2">
             <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <ArrowUpDown className="h-3 w-3" /> Ordenacao (bar)
+              <ArrowUpDown className="h-3 w-3" /> Ordenacao (categorico)
             </Label>
             <div className="flex items-center gap-2">
               <Select
@@ -1198,7 +1699,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             </div>
           </div>}
 
-          {draft.config.widget_type !== "text" && draft.config.widget_type !== "kpi" && draft.config.widget_type !== "bar" && <div className="space-y-2">
+          {draft.config.widget_type !== "text" && draft.config.widget_type !== "kpi" && draft.config.widget_type !== "bar" && draft.config.widget_type !== "column" && draft.config.widget_type !== "donut" && draft.config.widget_type !== "dre" && <div className="space-y-2">
             <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
               <ArrowUpDown className="h-3 w-3" /> Ordenacao simples
             </Label>
@@ -1330,3 +1831,4 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     </Sheet>
   );
 };
+

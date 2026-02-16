@@ -224,6 +224,8 @@ def sync_views(
         decrypted_url = credential_encryptor.decrypt(datasource.database_url)
 
         synced_count = 0
+        created_count = 0
+        updated_count = 0
         pattern = re.compile(datasource.schema_pattern) if datasource.schema_pattern else None
 
         # Connect to remote database
@@ -260,9 +262,6 @@ def sync_views(
                         models.View.view_name == view_name,
                     ).first()
 
-                    if existing_view:
-                        continue
-
                     # Get columns for this view
                     sql_list_columns = """
                         SELECT 
@@ -284,21 +283,26 @@ def sync_views(
 
                     columns = cursor.fetchall()
 
-                    # Create View record
-                    view = models.View(
-                        datasource_id=datasource_id,
-                        schema_name=schema_name,
-                        view_name=view_name,
-                        is_active=True,
-                    )
-                    db.add(view)
-                    db.flush()  # Get the view ID
+                    if existing_view:
+                        view = existing_view
+                        db.query(models.ViewColumn).filter(models.ViewColumn.view_id == view.id).delete()
+                        updated_count += 1
+                    else:
+                        view = models.View(
+                            datasource_id=datasource_id,
+                            schema_name=schema_name,
+                            view_name=view_name,
+                            is_active=True,
+                        )
+                        db.add(view)
+                        db.flush()  # Get the view ID
+                        created_count += 1
 
-                    # Create ViewColumn records
+                    # Rebuild ViewColumn records based on current remote metadata.
                     for col_name, col_type, col_default, is_nullable in columns:
-                        # Determine if column is aggregatable or groupable
-                        is_numeric = any(t in col_type.lower() for t in ["int", "decimal", "numeric", "float", "double"])
-                        is_date = "date" in col_type.lower() or "time" in col_type.lower()
+                        col_type_norm = (col_type or "").lower()
+                        is_numeric = any(t in col_type_norm for t in ["int", "decimal", "numeric", "float", "double"])
+                        is_date = "date" in col_type_norm or "time" in col_type_norm
 
                         view_column = models.ViewColumn(
                             view_id=view.id,
@@ -320,6 +324,8 @@ def sync_views(
         return {
             "status": "success",
             "synced_views": synced_count,
+            "created_views": created_count,
+            "updated_views": updated_count,
             "datasource_id": datasource_id,
             "last_synced_at": datasource.last_synced_at,
         }

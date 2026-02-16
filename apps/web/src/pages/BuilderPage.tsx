@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 
 type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative";
-type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_month" | "last_month";
+type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_year" | "this_month" | "last_month";
 type DraftNativeFilter = {
   id: string;
   column: string;
@@ -74,6 +74,7 @@ const relativeDateOptions: Array<{ value: RelativeDatePreset; label: string }> =
   { value: "yesterday", label: "Ontem" },
   { value: "last_7_days", label: "Ultimos 7 dias" },
   { value: "last_30_days", label: "Ultimos 30 dias" },
+  { value: "this_year", label: "Este ano" },
   { value: "this_month", label: "Este mes" },
   { value: "last_month", label: "Mes passado" },
 ];
