@@ -241,7 +241,7 @@ async def execute_preview_query(spec: QuerySpec, db: Session, current_user: User
                 dataset_id=spec.datasetId,
                 datasource_id=dataset.datasource_id if dataset else None,
             ),
-            timeout_seconds=int(getattr(settings, "insights_query_timeout_seconds", 20)),
+            timeout_seconds=int(getattr(settings, "query_timeout_seconds", 20)),
             row_limit=min(spec.limit, 5000),
         )
         return QueryPreviewResponse(

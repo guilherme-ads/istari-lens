@@ -19,7 +19,7 @@ from app.routers import (
     dashboards,
     view_schema,
     admin_users,
-    insights,
+    api_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -374,7 +374,7 @@ app.include_router(datasets.router)
 app.include_router(dashboards.router)
 app.include_router(admin_users.router)
 app.include_router(queries.router)
-app.include_router(insights.router)
+app.include_router(api_config.router)
 app.include_router(analyses.router)
 app.include_router(shares.router)
 

@@ -28,7 +28,7 @@ const features = [
   {
     icon: Share2,
     title: "Compartilhamento",
-    desc: "Compartilhe insights com sua equipe por links públicos.",
+    desc: "Compartilhe analises com sua equipe por links publicos.",
   },
 ];
 
@@ -195,7 +195,7 @@ const HomePage = () => {
             className="text-center mb-12"
           >
             <h2 className="text-2xl md:text-3xl font-bold text-foreground">Como funciona</h2>
-            <p className="text-muted-foreground mt-2">Três passos para seus insights</p>
+            <p className="text-muted-foreground mt-2">Tres passos para suas analises</p>
           </motion.div>
 
           <div className="grid gap-8 md:grid-cols-3 max-w-4xl mx-auto">

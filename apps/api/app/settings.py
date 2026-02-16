@@ -22,13 +22,10 @@ class Settings(BaseSettings):
     analytics_db_url: str = "postgresql://postgres:postgres@localhost:5432/istari_product"
     query_preview_cache_ttl_seconds: int = 60
     query_preview_cache_max_entries: int = 500
-    insights_chat_cache_ttl_seconds: int = 45
-    insights_chat_cache_max_entries: int = 300
-    insights_planner_model: str | None = None
-    insights_answer_model: str | None = None
-    insights_dev_debug_logs: bool = True
-    insights_billing_window_days: int = 30
-    insights_billing_monthly_budget_usd: float = 0.0
+    query_timeout_seconds: int = 20
+    query_result_rows_max: int = 1000
+    api_config_billing_window_days: int = 30
+    api_config_billing_monthly_budget_usd: float = 0.0
     log_external_queries: bool = False
     log_external_query_params: bool = False
 

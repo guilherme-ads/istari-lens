@@ -1,6 +1,6 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
-  Layers, Settings, LogOut, Home, Users, LayoutDashboard, MessageSquare,
+  Layers, Settings, LogOut, Home, Users, LayoutDashboard, KeyRound,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import BrandLogo from "@/components/shared/BrandLogo";
@@ -30,11 +30,11 @@ export function AppSidebar() {
     { title: "Home", url: "/home", icon: Home },
     { title: "Datasets", url: "/datasets", icon: Layers },
     { title: "Dashboards", url: "/dashboards", icon: LayoutDashboard },
-    { title: "Insights", url: "/insights", icon: MessageSquare },
     ...(user?.is_admin
       ? [
         { title: "Fontes", url: "/admin", icon: Settings },
         { title: "Usuarios", url: "/admin/users", icon: Users },
+        { title: "APIs", url: "/api-config", icon: KeyRound },
       ]
       : []),
   ];
