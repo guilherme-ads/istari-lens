@@ -382,85 +382,6 @@ export type ApiOpenAIIntegrationTestResponse = {
   model: string;
 };
 
-export type ApiInsightChatRequest = {
-  dataset_id: number;
-  question: string;
-  history?: Array<{
-    role: "user" | "assistant" | "clarification" | "error";
-    content: string;
-  }>;
-  planner_previous_response_id?: string;
-  answer_previous_response_id?: string;
-};
-
-export type ApiInsightLLMContext = {
-  planner_response_id?: string | null;
-  answer_response_id?: string | null;
-};
-
-export type ApiInsightChatAnswer = {
-  type: "answer";
-  answer: string;
-  interpreted_question: string;
-  query_plan: {
-    metrics: Array<{ field: string; agg: string }>;
-    dimensions: string[];
-    filters: Array<{ field: string; op: string; value?: unknown[] | null }>;
-    period?: {
-      field?: string | null;
-      start?: string | null;
-      end?: string | null;
-      granularity?: "day" | "week" | "month" | null;
-      preset?: string | null;
-    } | null;
-    sort: Array<{ field: string; dir: "asc" | "desc" }>;
-    limit: number;
-    assumptions: string[];
-  };
-  query_config: ApiQuerySpec;
-  columns: string[];
-  rows: Record<string, unknown>[];
-  row_count: number;
-  calculation: {
-    sql: string;
-    params: unknown[];
-    applied_filters: Array<{ field: string; op: string; value?: unknown[] | null }>;
-    cost_estimate: number;
-    conversation_cost_estimate_usd: number;
-    llm_input_tokens: number;
-    llm_output_tokens: number;
-    llm_total_tokens: number;
-    execution_time_ms: number;
-    cache_hit: boolean;
-    deduped: boolean;
-    timeout_seconds: number;
-  };
-  cache_hit: boolean;
-  stages?: Array<"analyzing" | "building_query" | "querying" | "generating">;
-  llm_context?: ApiInsightLLMContext | null;
-};
-
-export type ApiInsightChatClarification = {
-  type: "clarification";
-  clarification_question: string;
-  stages?: Array<"analyzing" | "building_query" | "querying" | "generating">;
-  llm_context?: ApiInsightLLMContext | null;
-};
-
-export type ApiInsightChatError = {
-  type: "error";
-  error_code: string;
-  message: string;
-  suggestions: string[];
-  stages?: Array<"analyzing" | "building_query" | "querying" | "generating">;
-  llm_context?: ApiInsightLLMContext | null;
-};
-
-export type ApiInsightChatResponse =
-  | ApiInsightChatAnswer
-  | ApiInsightChatClarification
-  | ApiInsightChatError;
-
 export const api = {
   login: (email: string, password: string) =>
     request<AuthLoginResponse>("/auth/login", {
@@ -634,52 +555,46 @@ export const api = {
   getSharedAnalysis: (token: string) =>
     request<ApiSharedAnalysisResponse>(`/analyses/shared/${token}`, undefined, false),
 
-  getInsightsIntegration: () =>
-    request<ApiLLMIntegrationStatus>("/insights/integration"),
+  getApiIntegration: () =>
+    request<ApiLLMIntegrationStatus>("/api-config/integration"),
 
-  listInsightsIntegrations: () =>
-    request<ApiLLMIntegrationListResponse>("/insights/integrations"),
+  listApiIntegrations: () =>
+    request<ApiLLMIntegrationListResponse>("/api-config/integrations"),
 
   createOpenAIIntegration: (payload: { api_key: string; model?: string; is_active?: boolean }) =>
-    request<ApiLLMIntegrationItem>("/insights/integrations/openai", {
+    request<ApiLLMIntegrationItem>("/api-config/integrations/openai", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
-  activateInsightsIntegration: (integrationId: number) =>
-    request<ApiLLMIntegrationItem>(`/insights/integrations/${integrationId}/activate`, {
+  activateApiIntegration: (integrationId: number) =>
+    request<ApiLLMIntegrationItem>(`/api-config/integrations/${integrationId}/activate`, {
       method: "PATCH",
     }),
 
-  deactivateInsightsIntegration: (integrationId: number) =>
-    request<ApiLLMIntegrationItem>(`/insights/integrations/${integrationId}/deactivate`, {
+  deactivateApiIntegration: (integrationId: number) =>
+    request<ApiLLMIntegrationItem>(`/api-config/integrations/${integrationId}/deactivate`, {
       method: "PATCH",
     }),
 
-  testInsightsIntegration: (integrationId: number) =>
-    request<ApiOpenAIIntegrationTestResponse>(`/insights/integrations/${integrationId}/test`, {
+  testApiIntegration: (integrationId: number) =>
+    request<ApiOpenAIIntegrationTestResponse>(`/api-config/integrations/${integrationId}/test`, {
       method: "POST",
     }),
 
-  refreshInsightsIntegrationsBilling: () =>
-    request<ApiLLMIntegrationBillingRefreshResponse>("/insights/integrations/billing/refresh", {
+  refreshApiIntegrationsBilling: () =>
+    request<ApiLLMIntegrationBillingRefreshResponse>("/api-config/integrations/billing/refresh", {
       method: "POST",
     }),
 
   upsertOpenAIIntegration: (payload: { api_key: string; model?: string }) =>
-    request<ApiLLMIntegrationStatus>("/insights/integration/openai", {
+    request<ApiLLMIntegrationStatus>("/api-config/integration/openai", {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
 
   testOpenAIIntegration: (payload: { api_key?: string; model?: string }) =>
-    request<ApiOpenAIIntegrationTestResponse>("/insights/integration/openai/test", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  askInsight: (payload: ApiInsightChatRequest) =>
-    request<ApiInsightChatResponse>("/insights/chat", {
+    request<ApiOpenAIIntegrationTestResponse>("/api-config/integration/openai/test", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

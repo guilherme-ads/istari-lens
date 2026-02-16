@@ -5,18 +5,18 @@
 - `Core`:
   - `routers/auth.py`, `routers/admin_users.py`
   - `routers/datasets.py`, `routers/datasources.py`, `routers/dashboards.py`
-  - `routers/queries.py`, `routers/insights.py`
+  - `routers/queries.py`, `routers/api_config.py`
 - `Integration/Infra`:
   - `database.py` (SQLAlchemy + analytics connection)
   - `crypto.py` (credential encryption)
   - `external_query_logging.py` (query telemetry logging)
-  - OpenAI HTTP calls inside `routers/insights.py`
+  - OpenAI HTTP calls inside `routers/api_config.py`
 - `Legacy compatibility`:
   - Runtime schema patches in `main.py`
   - Legacy widget payload adaptation in `routers/dashboards.py::_adapt_legacy_query_config`
   - `query_builder.py` public helper signatures preserved
 - `Duplicated logic`:
-  - SQL build and execution duplicated across `dashboard_execution.py`, `routers/queries.py`, `routers/insights.py`
+  - SQL build and execution duplicated across `dashboard_execution.py`, `routers/queries.py`, `routers/api_config.py`
 
 ## Refactor status
 
@@ -35,11 +35,11 @@
 1. Widgets/query execution (done in this iteration):
    - Dashboard widget SQL compilation now uses shared `query_builder` façade backed by `QueryExecution` module.
    - Dashboard query execution path now routes through `PostgresQueryRunnerAdapter` with read-only guardrails.
-2. Insights query pipeline (done in this iteration):
-   - Insights query execution now routes through `QueryExecutionService` runner.
+2. API configuration pipeline (current):
+   - API credential and billing management is isolated in `routers/api_config.py`.
    - Same compiler source is used via shared widget builder façade.
 3. Remaining migration (next iterations):
-   - Move route-level orchestration into module-level use-cases per context (`dashboards`, `datasets`, `datasources`, `insights`).
+   - Move route-level orchestration into module-level use-cases per context (`dashboards`, `datasets`, `datasources`, `api_config`).
    - Extract repository ports for metadata persistence and tenancy/RBAC enforcement.
    - Isolate OpenAI orchestration under explicit `LLMPort` + adapter.
    - Move schema bootstrap patches from `main.py` to explicit migration lifecycle.

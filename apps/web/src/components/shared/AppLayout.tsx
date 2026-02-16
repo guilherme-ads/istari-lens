@@ -1,6 +1,6 @@
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useState } from "react";
-import { LogOut, Settings, Layers, Home, Menu, X, BarChart3, LayoutDashboard, Users, MessageSquare, KeyRound } from "lucide-react";
+import { LogOut, Settings, Layers, Home, Menu, X, BarChart3, LayoutDashboard, Users, KeyRound } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import BrandLogo from "@/components/shared/BrandLogo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -15,7 +15,6 @@ const AppLayout = () => {
     { to: "/home", label: "Home", icon: Home },
     { to: "/datasets", label: "Datasets", icon: Layers },
     { to: "/dashboards", label: "Dashboards", icon: LayoutDashboard },
-    { to: "/insights", label: "Insights", icon: MessageSquare },
     ...(user?.is_admin
       ? [
         { to: "/admin", label: "Fontes", icon: Settings },
@@ -28,8 +27,7 @@ const AppLayout = () => {
   };
   const isActiveLink = (to: string) => {
     if (to === "/admin") return location.pathname === "/admin";
-    if (to === "/insights") return location.pathname === "/insights";
-    if (to === "/insights/apis") return location.pathname === "/insights/apis" || location.pathname === "/insights/config";
+    if (to === "/api-config") return location.pathname === "/api-config";
     return location.pathname === to || (to !== "/home" && location.pathname.startsWith(`${to}/`));
   };
 
@@ -37,7 +35,6 @@ const AppLayout = () => {
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur-md">
         <div className="container flex h-14 items-center justify-between">
-          {/* Logo + nav */}
           <div className="flex items-center gap-6">
             <Link to="/home" className="flex items-center gap-2.5 group">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent shadow-sm group-hover:shadow-md transition-shadow">
@@ -76,7 +73,6 @@ const AppLayout = () => {
             </nav>
           </div>
 
-          {/* Right side */}
           <div className="flex items-center gap-1">
             {user?.is_admin && (
               <>
@@ -99,9 +95,9 @@ const AppLayout = () => {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Link
-                      to="/insights/apis"
+                      to="/api-config"
                       className={`hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors md:flex ${
-                        isActiveLink("/insights/apis")
+                        isActiveLink("/api-config")
                           ? "text-foreground"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
@@ -124,7 +120,7 @@ const AppLayout = () => {
                   Sair
                 </button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Encerrar sessão</TooltipContent>
+              <TooltipContent className="text-xs">Encerrar sessao</TooltipContent>
             </Tooltip>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -136,7 +132,6 @@ const AppLayout = () => {
           </div>
         </div>
 
-        {/* Mobile menu */}
         <AnimatePresence>
           {mobileMenuOpen && (
             <motion.div
@@ -178,10 +173,10 @@ const AppLayout = () => {
                       Usuarios
                     </Link>
                     <Link
-                      to="/insights/apis"
+                      to="/api-config"
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
-                        isActiveLink("/insights/apis")
+                        isActiveLink("/api-config")
                           ? "bg-secondary text-foreground"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}

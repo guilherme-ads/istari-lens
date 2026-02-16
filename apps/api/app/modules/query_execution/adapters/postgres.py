@@ -174,7 +174,7 @@ def _normalized_sql_hash(sql: str) -> str:
 
 class PostgresQueryCompilerAdapter:
     def __init__(self, *, max_result_rows: int | None = None) -> None:
-        self._max_result_rows = max_result_rows or int(getattr(settings, "insights_result_rows_max", 1000))
+        self._max_result_rows = max_result_rows or int(getattr(settings, "query_result_rows_max", 1000))
 
     def compile(self, spec: InternalQuerySpec) -> CompiledQuery:
         if spec.widget_type == "text":
@@ -342,7 +342,7 @@ class PostgresQueryRunnerAdapter:
     ) -> None:
         self._analytics_connection_factory = analytics_connection_factory or get_analytics_connection
         self._datasource_connection_factory = datasource_connection_factory or AsyncConnection.connect
-        self._max_result_rows = int(getattr(settings, "insights_result_rows_max", 1000))
+        self._max_result_rows = int(getattr(settings, "query_result_rows_max", 1000))
         self._secrets_vault = secrets_vault or FernetSecretsVaultAdapter()
 
     def _assert_safe_read_only(self, sql: str) -> None:

@@ -1,6 +1,6 @@
 # Istari Lens API
 
-FastAPI backend para Istari Lens - plataforma analítica low-code.
+FastAPI backend para Istari Lens - plataforma analitica low-code.
 
 ## Desenvolvimento
 
@@ -10,10 +10,10 @@ FastAPI backend para Istari Lens - plataforma analítica low-code.
 # Instalar Poetry
 pip install poetry
 
-# Instalar dependências
+# Instalar dependencias
 poetry install
 
-# Configurar variáveis de ambiente
+# Configurar variaveis de ambiente
 cp .env.example .env
 
 # Executar migrations
@@ -23,43 +23,53 @@ poetry run alembic upgrade head
 poetry run uvicorn main:app --reload
 ```
 
-A API estará disponível em http://localhost:8000
+A API estara disponivel em `http://localhost:8000`.
 
-### Documentação
+### Documentacao
 
-Swagger UI: http://localhost:8000/docs
-ReDoc: http://localhost:8000/redoc
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
 ## Estrutura
 
-```
+```text
 app/
-├── models.py        # Modelos SQLAlchemy
-├── schemas.py       # Schemas Pydantic
-├── settings.py      # Configurações
-├── database.py      # Configuração de banco
-├── auth.py          # Utilitários de autenticação
-├── dependencies.py  # Dependências (middleware)
-└── routers/
-    ├── auth.py      # Rotas de autenticação
-    ├── views.py     # Admin: gerenciar views
-    ├── datasets.py  # Usuário: listar datasets
-    ├── queries.py   # Usuário: executar queries
-    ├── analyses.py  # Usuário: gerenciar análises
-    ├── shares.py    # Usuário: compartilhar análises
-    └── health.py    # Health check
+|- models.py        # Modelos SQLAlchemy
+|- schemas.py       # Schemas Pydantic
+|- settings.py      # Configuracoes
+|- database.py      # Configuracao de banco
+|- auth.py          # Utilitarios de autenticacao
+|- dependencies.py  # Dependencias (middleware)
+'- routers/
+   |- auth.py       # Rotas de autenticacao
+   |- views.py      # Admin: gerenciar views
+   |- datasets.py   # Usuario: listar datasets
+   |- queries.py    # Usuario: executar queries
+   |- analyses.py   # Usuario: gerenciar analises
+   |- shares.py     # Usuario: compartilhar analises
+   |- api_config.py # Configuracao de provider/API
+   '- health.py     # Health check
+```
+
+## API Configuration
+
+```http
+GET  /api-config/integration
+GET  /api-config/integrations
+POST /api-config/integrations/openai
+PATCH /api-config/integrations/{integration_id}/activate
+PATCH /api-config/integrations/{integration_id}/deactivate
+POST /api-config/integrations/{integration_id}/test
+POST /api-config/integrations/billing/refresh
+PUT  /api-config/integration/openai
+POST /api-config/integration/openai/test
 ```
 
 ## Lint & Format
 
 ```bash
-# Format com black
 poetry run black .
-
-# Lint com ruff
 poetry run ruff check --fix
-
-# Type checking
 poetry run mypy .
 ```
 
@@ -71,7 +81,7 @@ poetry run pytest
 
 ## Environment Variables
 
-```
+```env
 DATABASE_URL=postgresql://...
 APP_DB_URL=postgresql://...
 ANALYTICS_DB_URL=postgresql://...

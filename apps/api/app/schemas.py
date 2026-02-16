@@ -466,7 +466,7 @@ class SharedAnalysisResponse(BaseModel):
     data: QueryPreviewResponse
 
 
-# ==================== INSIGHTS / LLM ====================
+# ==================== API CONFIG / LLM ====================
 
 class LLMIntegrationResponse(BaseModel):
     provider: Literal["openai"]
@@ -524,80 +524,3 @@ class OpenAIIntegrationTestResponse(BaseModel):
     ok: bool
     message: str
     model: str
-
-
-class InsightChatRequest(BaseModel):
-    dataset_id: int
-    question: str = Field(max_length=2000)
-    history: List[dict] = Field(default_factory=list)
-    planner_previous_response_id: Optional[str] = Field(default=None, max_length=200)
-    answer_previous_response_id: Optional[str] = Field(default=None, max_length=200)
-
-
-class InsightLLMContext(BaseModel):
-    planner_response_id: Optional[str] = None
-    answer_response_id: Optional[str] = None
-
-
-class InsightPlanPeriod(BaseModel):
-    field: Optional[str] = None
-    start: Optional[str] = None
-    end: Optional[str] = None
-    granularity: Optional[Literal["day", "week", "month"]] = None
-    preset: Optional[str] = None
-
-
-class InsightQueryPlan(BaseModel):
-    metrics: List[MetricSpec] = Field(default_factory=list)
-    dimensions: List[str] = Field(default_factory=list)
-    filters: List[FilterSpec] = Field(default_factory=list)
-    period: Optional[InsightPlanPeriod] = None
-    sort: List[SortSpec] = Field(default_factory=list)
-    limit: int = 100
-    assumptions: List[str] = Field(default_factory=list)
-
-
-class InsightCalculationResponse(BaseModel):
-    sql: str
-    params: List[Any] = Field(default_factory=list)
-    applied_filters: List[FilterSpec] = Field(default_factory=list)
-    cost_estimate: int
-    conversation_cost_estimate_usd: float = 0.0
-    llm_input_tokens: int = 0
-    llm_output_tokens: int = 0
-    llm_total_tokens: int = 0
-    execution_time_ms: int
-    cache_hit: bool = False
-    deduped: bool = False
-    timeout_seconds: int
-
-
-class InsightClarificationResponse(BaseModel):
-    type: Literal["clarification"] = "clarification"
-    clarification_question: str
-    stages: List[Literal["analyzing", "building_query", "querying", "generating"]] = Field(default_factory=list)
-    llm_context: Optional[InsightLLMContext] = None
-
-
-class InsightAnswerResponse(BaseModel):
-    type: Literal["answer"] = "answer"
-    answer: str
-    interpreted_question: str
-    query_plan: InsightQueryPlan
-    query_config: QuerySpec
-    columns: List[str]
-    rows: List[dict]
-    row_count: int
-    calculation: InsightCalculationResponse
-    cache_hit: bool = False
-    stages: List[Literal["analyzing", "building_query", "querying", "generating"]] = Field(default_factory=list)
-    llm_context: Optional[InsightLLMContext] = None
-
-
-class InsightErrorResponse(BaseModel):
-    type: Literal["error"] = "error"
-    error_code: str
-    message: str
-    suggestions: List[str] = Field(default_factory=list)
-    stages: List[Literal["analyzing", "building_query", "querying", "generating"]] = Field(default_factory=list)
-    llm_context: Optional[InsightLLMContext] = None

@@ -27,7 +27,9 @@ RUN pip install --no-cache-dir \
     python-multipart \
     python-jose[cryptography] \
     cryptography \
-    argon2-cffi
+    argon2-cffi \
+    pytest \
+    pytest-asyncio
 
 # Copy application code
 COPY apps/api ./
