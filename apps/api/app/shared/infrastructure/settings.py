@@ -4,32 +4,46 @@ from typing import Annotated, Literal
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-INSECURE_DEV_ENCRYPTION_KEY = "uZr6e4waGdI6B6xzUA8WpoJKzN-Eq9iUumBwJbLfhz0="
-
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        env_prefix="APP_",
+    )
 
+    # =========================
+    # Environment
+    # =========================
+    environment: Literal["development", "test", "staging", "production"]
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+    # =========================
     # API
+    # =========================
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    environment: Literal["development", "test", "staging", "production"] = "development"
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
+    # =========================
     # Database
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/istari_product"
-    app_db_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/istari_product"
-    analytics_db_url: str = "postgresql://postgres:postgres@localhost:5432/istari_product"
+    # =========================
+    database_url: str
+    app_db_url: str | None = None
+    analytics_db_url: str | None = None
+
     query_preview_cache_ttl_seconds: int = 60
     query_preview_cache_max_entries: int = 500
     query_timeout_seconds: int = 20
     query_result_rows_max: int = 1000
-    api_config_billing_window_days: int = 30
-    api_config_billing_monthly_budget_usd: float = 0.0
-    log_external_queries: bool = False
-    log_external_query_params: bool = False
 
-    # Dashboard widget execution (process-local cache/dedupe)
+    # =========================
+    # Dashboard widget execution
+    # =========================
     dashboard_widget_cache_max_entries: int = 2000
     dashboard_widget_cache_grace_seconds: int = 15
     dashboard_widget_cache_failover_seconds: int = 300
@@ -42,26 +56,28 @@ class Settings(BaseSettings):
     dashboard_widget_timeout_chart_seconds: int = 15
     dashboard_widget_timeout_table_seconds: int = 20
 
-    # JWT
-    secret_key: str = "your-super-secret-key-change-in-prod"
+    # =========================
+    # Security
+    # =========================
+    secret_key: str
+    encryption_key: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
-    # Encryption for credentials
-    encryption_key: str = INSECURE_DEV_ENCRYPTION_KEY
-
-    # Bootstrap (development only by default)
+    # =========================
+    # Bootstrap
+    # =========================
     bootstrap_admin_enabled: bool = False
-    bootstrap_admin_email: str = "admin@local"
-    bootstrap_admin_password: str = ""
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
 
-    @property
-    def is_production(self) -> bool:
-        return self.environment == "production"
+    # ============================================================
+    # Validators
+    # ============================================================
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def _parse_cors_origins(cls, value: str | list[str] | None) -> list[str]:
+    def parse_cors_origins(cls, value: str | list[str] | None) -> list[str]:
         if value is None:
             return []
         if isinstance(value, str):
@@ -69,39 +85,48 @@ class Settings(BaseSettings):
             return [item for item in raw_items if item]
         return value
 
-    @field_validator("database_url", "app_db_url", mode="before")
+    @field_validator("database_url", "app_db_url", "analytics_db_url", mode="before")
     @classmethod
-    def _normalize_sqlalchemy_postgres_urls(cls, value: str) -> str:
-        if isinstance(value, str) and value.startswith("postgresql://"):
-            return value.replace("postgresql://", "postgresql+psycopg://", 1)
+    def normalize_postgres_urls(cls, value: str | None) -> str | None:
+        if value and value.startswith(("postgres://", "postgresql://")):
+            return value.replace("postgres://", "postgresql+psycopg://", 1).replace(
+                "postgresql://", "postgresql+psycopg://", 1
+            )
         return value
 
     @field_validator("secret_key")
     @classmethod
-    def _validate_secret_key(cls, value: str, info: ValidationInfo) -> str:
-        env = (info.data.get("environment") or "development").lower()
-        if env == "production":
-            if value == "your-super-secret-key-change-in-prod" or len(value) < 32:
-                raise ValueError("SECRET_KEY must be strong and at least 32 chars in production")
+    def validate_secret_key(cls, value: str, info: ValidationInfo) -> str:
+        env = info.data.get("environment")
+        if env == "production" and len(value) < 32:
+            raise ValueError("SECRET_KEY must be at least 32 characters in production")
         return value
 
     @field_validator("encryption_key")
     @classmethod
-    def _validate_encryption_key(cls, value: str, info: ValidationInfo) -> str:
-        env = (info.data.get("environment") or "development").lower()
-        if env == "production" and value in {
-            "change-me-with-a-generated-fernet-key",
-            INSECURE_DEV_ENCRYPTION_KEY,
-        }:
-            raise ValueError("ENCRYPTION_KEY must be configured in production")
+    def validate_encryption_key(cls, value: str, info: ValidationInfo) -> str:
         if not value:
             raise ValueError("ENCRYPTION_KEY must be configured")
+
+        env = info.data.get("environment")
+        if env == "production" and len(value) < 32:
+            raise ValueError(
+                "ENCRYPTION_KEY must be strong and at least 32 characters in production"
+            )
         return value
 
     @model_validator(mode="after")
-    def _validate_prod_cors(self) -> "Settings":
-        if self.is_production and not self.cors_origins:
-            raise ValueError("CORS_ORIGINS must be configured in production")
+    def validate_production_rules(self) -> "Settings":
+        if self.is_production:
+            if not self.cors_origins:
+                raise ValueError("CORS_ORIGINS must be configured in production")
+
+            if "*" in self.cors_origins:
+                raise ValueError("Wildcard CORS is not allowed in production")
+
+            if self.log_level == "DEBUG":
+                raise ValueError("DEBUG logging is not allowed in production")
+
         return self
 
 
@@ -110,5 +135,4 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# Shared settings instance for app-wide imports.
 settings = get_settings()
