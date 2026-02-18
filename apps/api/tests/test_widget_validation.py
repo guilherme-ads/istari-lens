@@ -259,6 +259,21 @@ def test_table_columns_must_exist() -> None:
     assert "columns[1]" in exc.value.field_errors
 
 
+def test_non_table_widget_rejects_limit() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+                "limit": 10,
+            }
+        )
+
+
 def test_text_widget_requires_content() -> None:
     config = WidgetConfig.model_validate(
         {

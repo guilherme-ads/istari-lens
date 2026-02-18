@@ -630,7 +630,7 @@ const BuilderPage = () => {
                     <span className="hidden sm:inline">Dev SQL</span>
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="text-xs">Ver queries resultantes por widget (admin)</TooltipContent>
+                <TooltipContent className="text-xs">Ver QuerySpecs resultantes por widget (admin)</TooltipContent>
               </Tooltip>
             )}
             {previewMode && (
@@ -892,11 +892,11 @@ const BuilderPage = () => {
           <div className="glass-card mb-6 p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-foreground">Dev Mode SQL</h3>
+                <h3 className="text-sm font-semibold text-foreground">Dev Mode QuerySpec</h3>
                 <p className="text-xs text-muted-foreground">
                   {devModeSqlView === "widget"
-                    ? "Queries SQL efetivas por widget para este dashboard."
-                    : "Queries finais que serao executadas por dashboard apos dedupe/fusao."}
+                    ? "QuerySpec efetiva por widget para este dashboard."
+                    : "QuerySpecs finais que serao executadas por dashboard apos dedupe/fusao."}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -963,7 +963,9 @@ const BuilderPage = () => {
                         </div>
                         {item.status === "ok" && (
                           <>
-                            <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-muted/40 p-2 border border-border/50">{item.sql}</pre>
+                            <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-muted/40 p-2 border border-border/50">
+                              {JSON.stringify(item.query_spec || { sql: item.sql }, null, 2)}
+                            </pre>
                             <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-muted/40 p-2 border border-border/50">{JSON.stringify(item.params || [], null, 2)}</pre>
                           </>
                         )}
@@ -980,7 +982,7 @@ const BuilderPage = () => {
                 {devModeSqlView === "dashboard" && (
                   <>
                     {debugQueriesQuery.data.final_items.length === 0 && (
-                      <p className="text-xs text-muted-foreground">Nenhuma query final para execucao.</p>
+                      <p className="text-xs text-muted-foreground">Nenhuma QuerySpec final para execucao.</p>
                     )}
                     {debugQueriesQuery.data.final_items.map((item, index) => (
                       <div key={`${item.fingerprint_key}-${index}`} className="rounded-md border border-border/70 bg-background/60 p-3 space-y-2">
@@ -992,7 +994,9 @@ const BuilderPage = () => {
                             {item.execution_kind}
                           </span>
                         </div>
-                        <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-muted/40 p-2 border border-border/50">{item.sql}</pre>
+                        <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-muted/40 p-2 border border-border/50">
+                          {JSON.stringify(item.query_spec || { sql: item.sql }, null, 2)}
+                        </pre>
                         <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-muted/40 p-2 border border-border/50">{JSON.stringify(item.params || [], null, 2)}</pre>
                         <p className="text-[11px] text-muted-foreground break-all">fingerprint: {item.fingerprint_key}</p>
                       </div>

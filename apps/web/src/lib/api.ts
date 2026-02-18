@@ -326,6 +326,7 @@ export type ApiDashboardDebugQueryItem = {
   title?: string | null;
   status: "ok" | "text_widget" | "error";
   sql?: string | null;
+  query_spec?: Record<string, unknown> | null;
   params: unknown[];
   error?: string | null;
 };
@@ -334,6 +335,7 @@ export type ApiDashboardDebugFinalQueryItem = {
   execution_kind: "single" | "deduped" | "kpi_batched";
   widget_ids: number[];
   sql: string;
+  query_spec?: Record<string, unknown> | null;
   params: unknown[];
   sql_hash: string;
   fingerprint_key: string;

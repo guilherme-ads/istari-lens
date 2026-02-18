@@ -186,6 +186,8 @@ class WidgetConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> "WidgetConfig":
+        if self.widget_type != "table" and self.limit is not None:
+            raise ValueError("Only table widget supports limit")
         if self.widget_type == "kpi":
             if self.composite_metric is None and len(self.metrics) != 1:
                 raise ValueError("KPI widget requires exactly one metric when composite_metric is not set")

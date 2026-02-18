@@ -1,14 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from app.shared.infrastructure.database import get_db, get_analytics_connection
+from app.shared.infrastructure.database import get_db
 from app.modules.auth.adapters.api.dependencies import get_current_user
 from app.modules.core.legacy.models import User, View
 from app.modules.core.legacy.schemas import ViewSchemaColumnResponse
+from app.modules.engine.client import get_engine_client
+from app.modules.engine.access import resolve_datasource_access
 from app.modules.widgets.domain.config import normalize_column_type
-from app.shared.observability.external_query_logging import log_external_query
 
 router = APIRouter(prefix="/views", tags=["views"])
+
+
+def _resolve_correlation_id(request: Request) -> str | None:
+    return request.headers.get("x-correlation-id") or request.headers.get("x-request-id")
 
 
 def _resolve_view(
@@ -36,11 +41,13 @@ def _resolve_view(
 @router.get("/{view_name}/columns", response_model=list[ViewSchemaColumnResponse])
 async def get_view_columns(
     view_name: str,
+    request: Request,
     schema_name: str | None = Query(default=None),
     datasource_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _ = current_user
     view = _resolve_view(db, view_name, schema_name, datasource_id)
     if not view:
         raise HTTPException(status_code=404, detail="View not found")
@@ -55,36 +62,29 @@ async def get_view_columns(
             for col in view.columns
         ]
 
-    conn = None
-    try:
-        conn = await get_analytics_connection()
-        sql = """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_schema = %s AND table_name = %s
-            ORDER BY ordinal_position
-            """
-        params = (view.schema_name, view.view_name)
-        log_external_query(
-            sql=sql,
-            params=params,
-            context=f"view_schema_columns:view:{view.id}",
-            datasource_id=view.datasource_id,
+    payload = await get_engine_client().get_schema(
+        datasource_id=int(view.datasource_id),
+        workspace_id=int(view.datasource.created_by_id),
+        dataset_id=None,
+        resource_id=f"{view.schema_name}.{view.view_name}",
+        datasource_url=resolve_datasource_access(
+            datasource=view.datasource,
+            dataset=None,
+            current_user=current_user,
+        ).datasource_url,
+        actor_user_id=current_user.id,
+        correlation_id=_resolve_correlation_id(request),
+    )
+    fields = payload.get("fields", [])
+    if not fields:
+        raise HTTPException(status_code=404, detail="No columns found for the view")
+    return [
+        ViewSchemaColumnResponse(
+            column_name=field["name"],
+            column_type=field["data_type"],
+            normalized_type=normalize_column_type(field["data_type"]),
         )
-        result = await conn.execute(sql, params)
-        rows = await result.fetchall()
-        if not rows:
-            raise HTTPException(status_code=404, detail="No columns found for the view")
-        return [
-            ViewSchemaColumnResponse(
-                column_name=row[0],
-                column_type=row[1],
-                normalized_type=normalize_column_type(row[1]),
-            )
-            for row in rows
-        ]
-    finally:
-        if conn:
-            await conn.close()
+        for field in fields
+    ]
 
 

@@ -1,17 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
 
-from app.shared.infrastructure.database import get_db, get_analytics_connection
+from app.shared.infrastructure.database import get_db
 from app.modules.core.legacy.models import User, View, ViewColumn, Analysis
 from app.modules.core.legacy.schemas import ViewResponse, ViewCreateRequest, ViewUpdateRequest
 from app.modules.auth.adapters.api.dependencies import get_current_admin_user
 from app.shared.infrastructure.settings import get_settings
-from app.shared.observability.external_query_logging import log_external_query
+from app.modules.engine.client import get_engine_client
+from app.modules.engine.access import resolve_datasource_access
 
 router = APIRouter(prefix="/admin/views", tags=["admin"])
 settings = get_settings()
+
+
+def _resolve_correlation_id(request: Request) -> str | None:
+    return request.headers.get("x-correlation-id") or request.headers.get("x-request-id")
 
 
 @router.post("", response_model=ViewResponse)
@@ -37,6 +42,7 @@ async def create_view(
 @router.post("/{view_id}/sync", response_model=ViewResponse)
 async def sync_view_metadata(
     view_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
@@ -45,30 +51,21 @@ async def sync_view_metadata(
     if not view:
         raise HTTPException(status_code=404, detail="View not found")
     
-    # Get columns from analytics DB
+    # Get columns from engine
     try:
-        conn = await get_analytics_connection()
-        # Query information_schema to get columns
-        query = """
-        SELECT 
-            column_name,
-            data_type,
-            is_nullable
-        FROM information_schema.columns
-        WHERE table_schema = %s 
-            AND table_name = %s
-        ORDER BY ordinal_position
-        """
-        log_external_query(
-            sql=query,
-            params=(view.schema_name, view.view_name),
-            context=f"view_metadata_sync:view:{view_id}",
-            datasource_id=view.datasource_id,
+        payload = await get_engine_client().get_schema(
+            datasource_id=int(view.datasource_id),
+            workspace_id=int(view.datasource.created_by_id),
+            resource_id=f"{view.schema_name}.{view.view_name}",
+            datasource_url=resolve_datasource_access(
+                datasource=view.datasource,
+                dataset=None,
+                current_user=current_user,
+            ).datasource_url,
+            actor_user_id=current_user.id,
+            correlation_id=_resolve_correlation_id(request),
         )
-        
-        result = await conn.execute(query, (view.schema_name, view.view_name))
-        columns = await result.fetchall()
-        await conn.close()
+        columns = payload.get("fields", [])
         
         if not columns:
             raise HTTPException(
@@ -80,7 +77,9 @@ async def sync_view_metadata(
         db.query(ViewColumn).filter(ViewColumn.view_id == view_id).delete()
         
         # Add new columns
-        for col_name, col_type, is_nullable in columns:
+        for item in columns:
+            col_name = str(item["name"])
+            col_type = str(item["data_type"])
             # Determine column properties based on type
             is_numeric = col_type in ['integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision']
             is_temporal = col_type in ['date', 'timestamp', 'timestamp with time zone']

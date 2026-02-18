@@ -1,15 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from typing import Optional
 import secrets
 
-from app.shared.infrastructure.database import get_db, get_analytics_connection
+from app.shared.infrastructure.database import get_db
 from app.modules.core.legacy.models import User, Analysis, Share
 from app.modules.core.legacy.schemas import ShareCreateRequest, ShareResponse, SharedAnalysisResponse, QueryPreviewResponse
 from app.modules.auth.adapters.api.dependencies import get_current_user
-from app.shared.observability.external_query_logging import log_external_query
+from app.modules.engine import get_engine_client, resolve_datasource_access, to_engine_query_spec
 
 router = APIRouter(prefix="/analyses", tags=["shares"])
+
+
+def _resolve_correlation_id(request: Request) -> str | None:
+    return request.headers.get("x-correlation-id") or request.headers.get("x-request-id")
 
 
 @router.post("/{analysis_id}/share", response_model=ShareResponse)
@@ -20,6 +23,7 @@ async def create_share(
     current_user: User = Depends(get_current_user)
 ):
     """Create a read-only share link for analysis"""
+    _ = request
     analysis = db.query(Analysis).filter(
         Analysis.id == analysis_id,
         Analysis.owner_id == current_user.id
@@ -53,6 +57,7 @@ async def create_share(
 @router.get("/shared/{token}", response_model=SharedAnalysisResponse)
 async def get_shared_analysis(
     token: str,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Get shared analysis (read-only)"""
@@ -63,53 +68,37 @@ async def get_shared_analysis(
     
     analysis = share.analysis
     
-    # Execute query to get data
+    # Execute query via engine
     try:
-        conn = await get_analytics_connection()
-        
-        # Reconstruct query spec from saved config
         from app.modules.core.legacy.schemas import QuerySpec
-        from app.api.v1.routes.queries import build_query_sql
-        
-        spec_dict = analysis.query_config
-        spec = QuerySpec(**spec_dict)
-        
-        # Get view
+
+        spec = QuerySpec(**analysis.query_config)
         view = analysis.dataset
-        
-        query_sql, params = build_query_sql(spec, view)
-        log_external_query(
-            sql=query_sql,
-            params=params,
-            context=f"shared_analysis:{analysis.id}",
-            datasource_id=view.datasource_id if view else None,
+        if view is None:
+            raise HTTPException(status_code=400, detail="Analysis dataset view not found")
+        access = resolve_datasource_access(
+            datasource=analysis.datasource,
+            dataset=None,
+            current_user=None,
         )
-        
-        result = await conn.execute(query_sql, params)
-        rows = await result.fetchall()
-        columns = [desc[0] for desc in result.description]
-        
-        await conn.close()
-        
-        # Convert rows to dicts
-        row_dicts = []
-        for row in rows:
-            row_dict = {}
-            for i, col in enumerate(columns):
-                row_dict[col] = row[i]
-            row_dicts.append(row_dict)
-        
+
+        payload = await get_engine_client().execute_query(
+            datasource_id=access.datasource_id,
+            workspace_id=access.workspace_id,
+            dataset_id=None,
+            query_spec=to_engine_query_spec(spec, view=view),
+            datasource_url=access.datasource_url,
+            actor_user_id=analysis.owner_id,
+            correlation_id=_resolve_correlation_id(request),
+        )
         data = QueryPreviewResponse(
-            columns=columns,
-            rows=row_dicts,
-            row_count=len(row_dicts)
+            columns=payload.get("columns", []),
+            rows=payload.get("rows", []),
+            row_count=int(payload.get("row_count", 0)),
         )
-        
-        return SharedAnalysisResponse(
-            analysis=analysis,
-            data=data
-        )
-    
+        return SharedAnalysisResponse(analysis=analysis, data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load shared analysis: {str(e)}")
 
