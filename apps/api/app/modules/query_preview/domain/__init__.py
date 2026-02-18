@@ -1,0 +1,2 @@
+"""Query preview domain layer."""
+

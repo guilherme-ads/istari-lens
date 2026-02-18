@@ -13,11 +13,11 @@ from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 from psycopg import AsyncConnection
 
-from app.database import get_analytics_connection
-from app.external_query_logging import log_external_query
+from app.shared.infrastructure.database import get_analytics_connection
+from app.shared.observability.external_query_logging import log_external_query
 from app.modules.query_execution.domain.models import CompiledQuery, InternalQuerySpec, QueryExecutionContext, ResultSet
 from app.modules.security.adapters.fernet_vault import FernetSecretsVaultAdapter
-from app.settings import get_settings
+from app.shared.infrastructure.settings import get_settings
 
 logger = logging.getLogger("uvicorn.error")
 settings = get_settings()
@@ -434,3 +434,5 @@ class PostgresQueryRunnerAdapter:
         finally:
             if conn:
                 await conn.close()
+
+

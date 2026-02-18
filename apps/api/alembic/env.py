@@ -11,8 +11,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from app.models import Base
-    from app.settings import get_settings
+    from app.modules.core.legacy.models import Base
+    from app.shared.infrastructure.settings import get_settings
 except ImportError:
     # If imports fail, create dummy objects
     from sqlalchemy.orm import declarative_base

@@ -9,11 +9,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.dependencies import get_current_admin_user, get_current_user
-from app.dashboard_execution import get_dashboard_widget_executor
-from app.models import Base, Dashboard, Dataset, DataSource, User, View, ViewColumn
-from app.routers import dashboards
-import app.dashboard_execution as dashboard_execution
+from app.modules.auth.adapters.api.dependencies import get_current_admin_user, get_current_user
+from app.modules.widgets.application.execution_coordinator import get_dashboard_widget_executor
+from app.modules.core.legacy.models import Base, Dashboard, Dataset, DataSource, User, View, ViewColumn
+from app.api.v1.routes import dashboards
+import app.modules.widgets.application.execution_coordinator as dashboard_execution
 
 
 class _FakeResult:
@@ -517,3 +517,4 @@ def test_debug_queries_dashboard_mode_batches_composite_kpis(client: TestClient)
     assert 'DATE_TRUNC(\'day\', "data") AS "time_bucket"' in first["sql"]
     assert 'COUNT("id_recarga") AS "bucket_0"' in first["sql"]
     assert 'SUM("kwh") AS "bucket_1"' in first["sql"]
+

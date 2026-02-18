@@ -1,0 +1,2 @@
+"""Query preview application layer."""
+

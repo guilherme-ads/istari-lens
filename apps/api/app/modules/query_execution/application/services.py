@@ -11,8 +11,8 @@ from app.modules.query_execution.domain.models import (
     ResultSet,
 )
 from app.modules.query_execution.domain.ports import QueryCompilerPort, QueryRunnerPort
-from app.schemas import QuerySpec
-from app.widget_config import CompositeMetricConfig, FilterConfig, MetricConfig, OrderByConfig, WidgetConfig
+from app.modules.core.legacy.schemas import QuerySpec
+from app.modules.widgets.domain.config import CompositeMetricConfig, FilterConfig, MetricConfig, OrderByConfig, WidgetConfig
 
 
 class QueryBuilderService:
@@ -129,4 +129,5 @@ class QueryExecutionService:
             context=context,
             timeout_seconds=timeout_seconds,
         )
+
 

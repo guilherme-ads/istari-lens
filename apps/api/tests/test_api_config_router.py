@@ -9,10 +9,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.crypto import credential_encryptor
-from app.dependencies import get_current_admin_user, get_current_user
-from app.models import Base, LLMIntegration, User
-from app.routers import api_config
+from app.modules.security.adapters.fernet_encryptor import credential_encryptor
+from app.modules.auth.adapters.api.dependencies import get_current_admin_user, get_current_user
+from app.modules.core.legacy.models import Base, LLMIntegration, User
+from app.api.v1.routes import api_config
 
 
 def _create_app(with_integration: bool = True) -> tuple[TestClient, sessionmaker]:
@@ -264,3 +264,4 @@ def test_fetch_openai_costs_raises_clear_error_on_permission_denied() -> None:
             assert "Admin Key" in str(exc.detail)
     finally:
         api_config.httpx.AsyncClient = original_client
+

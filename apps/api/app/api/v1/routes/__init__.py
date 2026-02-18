@@ -1,0 +1,3 @@
+"""Official HTTP route registry."""
+
+

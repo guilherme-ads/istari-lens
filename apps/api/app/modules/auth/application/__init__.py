@@ -1,0 +1,2 @@
+"""Auth application layer."""
+

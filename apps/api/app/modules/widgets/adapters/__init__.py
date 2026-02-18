@@ -1,0 +1,2 @@
+"""Adapters for widgets module."""
+
