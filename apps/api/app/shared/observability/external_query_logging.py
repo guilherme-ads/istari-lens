@@ -1,4 +1,5 @@
 import logging
+import hashlib
 from typing import Any
 
 from app.shared.infrastructure.settings import get_settings
@@ -37,9 +38,10 @@ def log_external_query(
     payload: dict[str, Any] = {
         "context": context,
         "datasource_id": datasource_id,
-        "sql": sql,
+        "sql_hash": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+        "sql_length": len(sql),
     }
     if settings.log_external_query_params and params is not None:
-        payload["params"] = _safe_params(params)
+        payload["params_count"] = len(params)
 
     logger.info("external_query | %s", payload)

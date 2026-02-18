@@ -265,6 +265,7 @@ class DashboardDebugQueryItemResponse(BaseModel):
     title: Optional[str] = None
     status: Literal["ok", "text_widget", "error"]
     sql: Optional[str] = None
+    query_spec: Optional[dict[str, Any]] = None
     params: List[Any] = Field(default_factory=list)
     error: Optional[str] = None
 
@@ -273,6 +274,7 @@ class DashboardDebugFinalQueryItemResponse(BaseModel):
     execution_kind: Literal["single", "deduped", "kpi_batched"]
     widget_ids: List[int] = Field(default_factory=list)
     sql: str
+    query_spec: Optional[dict[str, Any]] = None
     params: List[Any] = Field(default_factory=list)
     sql_hash: str
     fingerprint_key: str

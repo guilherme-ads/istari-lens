@@ -1,14 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from statistics import mean
 import json
 
 from app.shared.infrastructure.database import get_db
-from app.modules.widgets.application.execution_coordinator import get_dashboard_widget_executor
+from app.modules.widgets.application.execution_coordinator import _to_engine_query_spec, get_dashboard_widget_executor
 from app.modules.core.legacy.models import Dashboard, DashboardWidget, Dataset, DataSource, User, View
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
-from app.modules.widgets.application.query_builder import build_widget_query
 from app.modules.core.legacy.schemas import (
     DashboardResponse,
     DashboardCreateRequest,
@@ -34,6 +33,10 @@ from app.modules.widgets.domain.config import (
 )
 
 router = APIRouter(prefix="/dashboards", tags=["dashboards"])
+
+
+def _resolve_correlation_id(request: Request) -> str | None:
+    return request.headers.get("x-correlation-id") or request.headers.get("x-request-id")
 
 
 def _widget_load_cost(widget: DashboardWidget) -> float:
@@ -339,15 +342,15 @@ async def debug_dashboard_queries(
                 )
                 continue
 
-            query_sql, params = build_widget_query(config)
             items.append(
                 DashboardDebugQueryItemResponse(
                     widget_id=widget.id,
                     widget_type=widget.widget_type,
                     title=widget.title,
                     status="ok",
-                    sql=query_sql,
-                    params=params,
+                    sql="ENGINE_MANAGED_QUERY",
+                    query_spec=_to_engine_query_spec(config),
+                    params=[],
                 )
             )
         except HTTPException as exc:
@@ -390,6 +393,7 @@ async def debug_dashboard_queries(
                     execution_kind=unit.execution_kind,
                     widget_ids=unit.widget_ids,
                     sql=unit.sql,
+                    query_spec=unit.query_spec,
                     params=unit.params,
                     sql_hash=unit.sql_hash,
                     fingerprint_key=unit.fingerprint_key,
@@ -671,6 +675,7 @@ async def delete_widget(
 async def get_widget_data(
     dashboard_id: int,
     widget_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -705,6 +710,7 @@ async def get_widget_data(
         configs_by_widget_id={widget.id: config},
         user=current_user,
         runtime_filters=[],
+        correlation_id=_resolve_correlation_id(request),
     )
     result = result_by_widget[widget.id]
     widget.last_execution_ms = result.metadata.execution_time_ms
@@ -728,6 +734,7 @@ async def get_widget_data(
 async def get_widget_data_batch(
     dashboard_id: int,
     request: DashboardWidgetBatchDataRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -772,6 +779,7 @@ async def get_widget_data_batch(
         configs_by_widget_id=configs_by_widget_id,
         user=current_user,
         runtime_filters=request.global_filters,
+        correlation_id=_resolve_correlation_id(http_request),
     )
 
     results: list[DashboardWidgetBatchDataItemResponse] = []

@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     query_preview_cache_max_entries: int = 500
     query_timeout_seconds: int = 20
     query_result_rows_max: int = 1000
+    engine_base_url: str = "http://localhost:8010"
+    engine_timeout_seconds: int = 30
+    engine_service_secret: str = "change-me-engine-service-secret"
+    engine_service_token_ttl_seconds: int = 120
+    api_config_billing_window_days: int = 30
+    api_config_billing_monthly_budget_usd: float = 0.0
+    log_external_queries: bool = False
+    log_external_query_params: bool = False
 
     # =========================
     # Dashboard widget execution

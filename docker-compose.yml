@@ -16,6 +16,32 @@ services:
       timeout: 5s
       retries: 5
 
+  engine:
+    build:
+      context: .
+      dockerfile: apps/engine/Dockerfile
+    container_name: istari_engine
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      ANALYTICS_DB_URL: ${ANALYTICS_DB_URL_DOCKER:-postgresql://postgres:postgres@app_db:5432/istari_product}
+      API_PORT: 8010
+      API_HOST: 0.0.0.0
+      ENVIRONMENT: development
+      QUERY_TIMEOUT_SECONDS: 20
+      QUERY_RESULT_ROWS_MAX: 1000
+      ENGINE_CACHE_TTL_SECONDS: 60
+      ENGINE_CACHE_MAX_ENTRIES: 1000
+      ENGINE_SINGLEFLIGHT_TTL_SECONDS: 30
+      ENGINE_SERVICE_SECRET: ${ENGINE_SERVICE_SECRET:-change-me-engine-service-secret}
+      ALLOW_DIRECT_DATASOURCE_HEADER: ${ALLOW_DIRECT_DATASOURCE_HEADER:-false}
+    depends_on:
+      app_db:
+        condition: service_healthy
+    volumes:
+      - ./apps/engine:/app
+      - /app/__pycache__
+    command: uvicorn main:app --host 0.0.0.0 --port 8010 --reload --log-level info --access-log
+
   api:
     build:
       context: .
@@ -23,6 +49,24 @@ services:
     container_name: istari_api
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
+      APP_DATABASE_URL: postgresql+psycopg://postgres:postgres@app_db:5432/istari_product
+      APP_APP_DB_URL: postgresql+psycopg://postgres:postgres@app_db:5432/istari_product
+      APP_ANALYTICS_DB_URL: ${ANALYTICS_DB_URL_DOCKER:-postgresql://postgres:postgres@app_db:5432/istari_product}
+      APP_API_PORT: 8000
+      APP_API_HOST: 0.0.0.0
+      APP_ENVIRONMENT: development
+      APP_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      APP_SECRET_KEY: ${SECRET_KEY:-your-super-secret-key-change-in-prod}
+      APP_JWT_ALGORITHM: HS256
+      APP_JWT_EXPIRE_MINUTES: 60
+      APP_ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      APP_ENGINE_BASE_URL: http://engine:8010
+      APP_ENGINE_TIMEOUT_SECONDS: 30
+      APP_ENGINE_SERVICE_SECRET: ${ENGINE_SERVICE_SECRET:-change-me-engine-service-secret}
+      APP_ENGINE_SERVICE_TOKEN_TTL_SECONDS: 120
+      APP_BOOTSTRAP_ADMIN_ENABLED: "true"
+      APP_BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@local}
+      APP_BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin123}
       DATABASE_URL: postgresql+psycopg://postgres:postgres@app_db:5432/istari_product
       APP_DB_URL: postgresql+psycopg://postgres:postgres@app_db:5432/istari_product
       ANALYTICS_DB_URL: ${ANALYTICS_DB_URL_DOCKER:-postgresql://postgres:postgres@app_db:5432/istari_product}
@@ -34,6 +78,10 @@ services:
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: 60
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ENGINE_BASE_URL: http://engine:8010
+      ENGINE_TIMEOUT_SECONDS: 30
+      ENGINE_SERVICE_SECRET: ${ENGINE_SERVICE_SECRET:-change-me-engine-service-secret}
+      ENGINE_SERVICE_TOKEN_TTL_SECONDS: 120
       BOOTSTRAP_ADMIN_ENABLED: "true"
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@local}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin123}
@@ -42,6 +90,8 @@ services:
     depends_on:
       app_db:
         condition: service_healthy
+      engine:
+        condition: service_started
     volumes:
       - ./apps/api:/app
       - /app/__pycache__

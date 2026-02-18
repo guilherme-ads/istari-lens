@@ -1,95 +1,48 @@
 # Istari Lens API
 
-FastAPI backend para Istari Lens - plataforma analitica low-code.
+API principal do produto (FastAPI). Esta camada gerencia autenticacao, dashboards, datasets, configuracoes e orquestra chamadas para o `engine`.
 
-## Desenvolvimento
-
-### Setup Local
+## Subir localmente
 
 ```bash
-# Instalar Poetry
-pip install poetry
-
-# Instalar dependencias
 poetry install
-
-# Configurar variaveis de ambiente
-cp .env.example .env
-
-# Executar migrations
 poetry run alembic upgrade head
-
-# Rodar servidor
-poetry run uvicorn main:app --reload
+poetry run uvicorn main:app --reload --port 8000
 ```
 
-A API estara disponivel em `http://localhost:8000`.
-
-### Documentacao
-
-- Swagger UI: `http://localhost:8000/docs`
+Documentacao:
+- Swagger: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-## Estrutura
+## Integracao com Engine
 
-```text
-app/
-|- models.py        # Modelos SQLAlchemy
-|- schemas.py       # Schemas Pydantic
-|- settings.py      # Configuracoes
-|- database.py      # Configuracao de banco
-|- auth.py          # Utilitarios de autenticacao
-|- dependencies.py  # Dependencias (middleware)
-'- routers/
-   |- auth.py       # Rotas de autenticacao
-   |- views.py      # Admin: gerenciar views
-   |- datasets.py   # Usuario: listar datasets
-   |- queries.py    # Usuario: executar queries
-   |- analyses.py   # Usuario: gerenciar analises
-   |- shares.py     # Usuario: compartilhar analises
-   |- api_config.py # Configuracao de provider/API
-   '- health.py     # Health check
+Principais fluxos:
+- Query preview (`/query/preview` e `/query/preview/batch`)
+- Execucao de widgets de dashboard
+- Sync de schema de views
+- Shared analysis read-only
+
+Todos esses fluxos chamam o servico `apps/engine` via `EngineClient`.
+
+## Variaveis de ambiente
+
+O settings da API usa prefixo `APP_`.
+
+Minimas para subir:
+```env
+APP_ENVIRONMENT=development
+APP_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/istari_product
+APP_APP_DB_URL=postgresql+psycopg://postgres:postgres@localhost:5432/istari_product
+APP_ANALYTICS_DB_URL=postgresql://postgres:postgres@localhost:5432/istari_product
+APP_SECRET_KEY=your-super-secret-key-change-in-prod
+APP_ENCRYPTION_KEY=<fernet-key-base64>
+APP_ENGINE_BASE_URL=http://localhost:8010
+APP_ENGINE_SERVICE_SECRET=change-me-engine-service-secret
+APP_ENGINE_SERVICE_TOKEN_TTL_SECONDS=120
 ```
 
-## API Configuration
-
-```http
-GET  /api-config/integration
-GET  /api-config/integrations
-POST /api-config/integrations/openai
-PATCH /api-config/integrations/{integration_id}/activate
-PATCH /api-config/integrations/{integration_id}/deactivate
-POST /api-config/integrations/{integration_id}/test
-POST /api-config/integrations/billing/refresh
-PUT  /api-config/integration/openai
-POST /api-config/integration/openai/test
-```
-
-## Lint & Format
-
-```bash
-poetry run black .
-poetry run ruff check --fix
-poetry run mypy .
-```
-
-## Tests
+## Testes
 
 ```bash
 poetry run pytest
-```
-
-## Environment Variables
-
-```env
-DATABASE_URL=postgresql://...
-APP_DB_URL=postgresql://...
-ANALYTICS_DB_URL=postgresql://...
-SECRET_KEY=your-secret
-ENCRYPTION_KEY=your-fernet-key
-JWT_ALGORITHM=HS256
-JWT_EXPIRE_MINUTES=60
-ENVIRONMENT=development
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-BOOTSTRAP_ADMIN_ENABLED=false
 ```

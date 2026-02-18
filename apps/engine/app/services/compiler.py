@@ -4,13 +4,15 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.modules.widgets.domain.config import (
-    CompositeMetricConfig,
-    FilterConfig,
-    MetricConfig,
-    WidgetConfig,
-    parse_temporal_dimension,
-)
+from app.errors import EngineError
+from app.schemas import QuerySpec
+
+_TEMPORAL_DIMENSION_PREFIXES: dict[str, str] = {
+    "__time_month__": "month",
+    "__time_week__": "week",
+    "__time_weekday__": "weekday",
+    "__time_hour__": "hour",
+}
 
 
 def _quote_ident(identifier: str) -> str:
@@ -24,20 +26,41 @@ def _qualified_name(name: str) -> str:
 
 def _metric_sql(metric_op: str, column: str | None) -> str:
     if metric_op == "count":
-        if column:
+        if column and column != "*":
             return f"COUNT({_quote_ident(column)})"
         return "COUNT(*)"
     if metric_op == "distinct_count":
         if not column:
-            raise ValueError("Metric 'distinct_count' requires a column")
+            raise EngineError(status_code=400, code="invalid_metric", message="Metric 'distinct_count' requires a column")
         return f"COUNT(DISTINCT {_quote_ident(column)})"
     if not column:
-        raise ValueError(f"Metric '{metric_op}' requires a column")
+        raise EngineError(status_code=400, code="invalid_metric", message=f"Metric '{metric_op}' requires a column")
     return f"{metric_op.upper()}({_quote_ident(column)})"
 
 
+def _metric_with_filters_sql(*, metric_op: str, column: str | None, metric_filters: list[Any], params: list[Any]) -> str:
+    metric_expr = _metric_sql(metric_op, column)
+    if not metric_filters:
+        return metric_expr
+    filter_parts, filter_params = _apply_filter(metric_filters)
+    if not filter_parts:
+        return metric_expr
+    params.extend(filter_params)
+    return f"{metric_expr} FILTER (WHERE {' AND '.join(filter_parts)})"
+
+
+def _parse_temporal_dimension(value: str) -> tuple[str, str] | None:
+    for prefix, granularity in _TEMPORAL_DIMENSION_PREFIXES.items():
+        token = f"{prefix}:"
+        if value.startswith(token):
+            column = value[len(token) :].strip()
+            if column:
+                return granularity, column
+    return None
+
+
 def _dimension_sql(dimension: str) -> tuple[str, str]:
-    temporal_dimension = parse_temporal_dimension(dimension)
+    temporal_dimension = _parse_temporal_dimension(dimension)
     if temporal_dimension is None:
         dim_ident = _quote_ident(dimension)
         return dim_ident, dim_ident
@@ -65,7 +88,7 @@ def _dimension_sql(dimension: str) -> tuple[str, str]:
 
 
 def _dimension_order_sql(dimension: str, direction: str) -> str | None:
-    temporal_dimension = parse_temporal_dimension(dimension)
+    temporal_dimension = _parse_temporal_dimension(dimension)
     if temporal_dimension is None:
         return None
     granularity, column = temporal_dimension
@@ -105,7 +128,7 @@ def _date_param_expr() -> str:
 
 def _next_date_value(value: Any) -> Any:
     if isinstance(value, date) and not isinstance(value, datetime):
-        return (value + timedelta(days=1))
+        return value + timedelta(days=1)
     if isinstance(value, str):
         try:
             parsed = datetime.strptime(value, "%Y-%m-%d").date()
@@ -147,12 +170,12 @@ def _resolve_relative_date_value(value: Any) -> tuple[str, Any] | None:
     return None
 
 
-def _apply_filter(filters: list[FilterConfig]) -> tuple[list[str], list[Any]]:
+def _apply_filter(filters: list[Any]) -> tuple[list[str], list[Any]]:
     where_parts: list[str] = []
     params: list[Any] = []
 
     for item in filters:
-        column = _quote_ident(item.column)
+        column = _quote_ident(item.field)
         op = item.op
         value = item.value
         relative = _resolve_relative_date_value(value)
@@ -187,21 +210,16 @@ def _apply_filter(filters: list[FilterConfig]) -> tuple[list[str], list[Any]]:
         elif op == "contains":
             where_parts.append(f"{column}::text ILIKE %s")
             params.append(f"%{value}%")
-        elif op == "in":
+        elif op in {"in", "not_in"}:
             values = value if isinstance(value, list) else [value]
             placeholder = _date_param_expr() if use_date_expr else "%s"
             placeholders = ", ".join([placeholder] * len(values))
-            where_parts.append(f"{column} IN ({placeholders})")
-            params.extend(values)
-        elif op == "not_in":
-            values = value if isinstance(value, list) else [value]
-            placeholder = _date_param_expr() if use_date_expr else "%s"
-            placeholders = ", ".join([placeholder] * len(values))
-            where_parts.append(f"{column} NOT IN ({placeholders})")
+            operator = "IN" if op == "in" else "NOT IN"
+            where_parts.append(f"{column} {operator} ({placeholders})")
             params.extend(values)
         elif op == "between":
             if not isinstance(value, list) or len(value) != 2:
-                raise ValueError("between filter requires [start, end]")
+                raise EngineError(status_code=400, code="invalid_filter", message="between filter requires [start, end]")
             if use_date_expr:
                 where_parts.append(f"{column} BETWEEN {_date_param_expr()} AND {_date_param_expr()}")
                 params.extend([value[0], _next_date_value(value[1])])
@@ -213,87 +231,95 @@ def _apply_filter(filters: list[FilterConfig]) -> tuple[list[str], list[Any]]:
         elif op == "not_null":
             where_parts.append(f"{column} IS NOT NULL")
         else:
-            raise ValueError(f"Unsupported filter operator '{op}'")
+            raise EngineError(status_code=400, code="invalid_filter", message=f"Unsupported filter operator '{op}'")
 
     return where_parts, params
 
 
-def build_widget_query(config: WidgetConfig) -> tuple[str, list[Any]]:
-    if config.widget_type == "text":
-        raise ValueError("Text widget does not generate SQL queries")
-    if config.widget_type == "dre":
-        if not config.dre_rows:
-            raise ValueError("DRE widget requires at least one row")
-        select_parts = []
-        for index, row in enumerate(config.dre_rows):
+def compile_query(spec: QuerySpec, *, max_rows: int) -> tuple[str, list[Any], int]:
+    if spec.widget_type == "text":
+        return "SELECT 1 WHERE FALSE", [], 0
+
+    if spec.widget_type == "dre":
+        if not spec.dre_rows:
+            raise EngineError(status_code=400, code="invalid_spec", message="DRE widget requires at least one row")
+        select_parts: list[str] = []
+        for index, row in enumerate(spec.dre_rows):
             if not row.metrics:
-                raise ValueError("DRE row requires at least one metric")
-            row_expr_parts = [f"COALESCE({_metric_sql(metric.op, metric.column)}, 0)" for metric in row.metrics]
-            row_expr = " + ".join(row_expr_parts)
-            select_parts.append(f"({row_expr}) AS {_quote_ident(f'm{index}')}")
-        query_parts = [
-            f"SELECT {', '.join(select_parts)}",
-            f"FROM {_qualified_name(config.view_name)}",
-        ]
-        where_parts, params = _apply_filter(config.filters)
+                raise EngineError(status_code=400, code="invalid_spec", message="DRE row requires at least one metric")
+            row_expr_parts = [f"COALESCE({_metric_sql(metric.agg, metric.field)}, 0)" for metric in row.metrics]
+            select_parts.append(f"({' + '.join(row_expr_parts)}) AS {_quote_ident(f'm{index}')}")
+        query_parts = [f"SELECT {', '.join(select_parts)}", f"FROM {_qualified_name(spec.resource_id)}"]
+        where_parts, params = _apply_filter(spec.filters)
         if where_parts:
             query_parts.append("WHERE " + " AND ".join(where_parts))
-        query_parts.append("LIMIT 1")
-        return " ".join(query_parts), params
-    if config.widget_type == "kpi" and config.composite_metric is not None:
-        where_parts, params = _apply_filter(config.filters)
+        return " ".join(query_parts), params, 1
+
+    if spec.widget_type == "kpi" and spec.composite_metric is not None:
+        where_parts, params = _apply_filter(spec.filters)
         where_sql = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
-        bucket = f"DATE_TRUNC('{config.composite_metric.granularity}', {_quote_ident(config.composite_metric.time_column)})"
-        inner_metric = _metric_sql(config.composite_metric.inner_agg, config.composite_metric.value_column)
-        outer_metric = _metric_sql(config.composite_metric.outer_agg, "bucket_value")
+        composite = spec.composite_metric
+        bucket = f"DATE_TRUNC('{composite.granularity}', {_quote_ident(composite.time_column)})"
+        inner_metric = _metric_sql(composite.inner_agg, composite.value_column)
+        outer_metric = _metric_sql(composite.outer_agg, "bucket_value")
         sql = (
             f"SELECT {outer_metric} AS {_quote_ident('m0')} "
             f"FROM ("
             f"SELECT {bucket} AS {_quote_ident('time_bucket')}, {inner_metric} AS {_quote_ident('bucket_value')} "
-            f"FROM {_qualified_name(config.view_name)}"
+            f"FROM {_qualified_name(spec.resource_id)}"
             f"{where_sql} "
             f"GROUP BY {_quote_ident('time_bucket')}"
             f") AS {_quote_ident('kpi_bucketed')}"
         )
-        return sql, params
+        return sql, params, 1
 
     select_parts: list[str] = []
     group_by_parts: list[str] = []
     params: list[Any] = []
 
-    if config.widget_type == "table":
-        for column in config.columns or []:
+    use_table_columns = spec.widget_type == "table" and bool(spec.columns)
+    if use_table_columns:
+        for column in spec.columns or []:
             select_parts.append(_quote_ident(column))
     else:
-        if config.widget_type == "line" and config.time:
-            if config.time.granularity == "hour":
+        if spec.widget_type == "line" and spec.time:
+            if spec.time.granularity == "hour":
                 time_expr = (
-                    f"TO_CHAR(DATE_TRUNC('hour', {_quote_ident(config.time.column)}), 'HH24:00') "
+                    f"TO_CHAR(DATE_TRUNC('hour', {_quote_ident(spec.time.column)}), 'HH24:00') "
                     f"AS {_quote_ident('time_bucket')}"
                 )
             else:
                 time_expr = (
-                    f"DATE_TRUNC('{config.time.granularity}', {_quote_ident(config.time.column)}) "
+                    f"DATE_TRUNC('{spec.time.granularity}', {_quote_ident(spec.time.column)}) "
                     f"AS {_quote_ident('time_bucket')}"
                 )
             select_parts.append(time_expr)
             group_by_parts.append(_quote_ident("time_bucket"))
 
-        for dimension in config.dimensions:
+        for dimension in spec.dimensions:
             dim_select, dim_group = _dimension_sql(dimension)
             select_parts.append(dim_select)
             group_by_parts.append(dim_group)
 
-        for index, metric in enumerate(config.metrics):
+        for index, metric in enumerate(spec.metrics):
             alias = _quote_ident(f"m{index}")
-            select_parts.append(f"{_metric_sql(metric.op, metric.column)} AS {alias}")
+            metric_expr = _metric_with_filters_sql(
+                metric_op=metric.agg,
+                column=metric.field,
+                metric_filters=metric.filters,
+                params=params,
+            )
+            select_parts.append(f"{metric_expr} AS {alias}")
+
+    if not select_parts:
+        raise EngineError(status_code=400, code="invalid_spec", message="Query requires at least one selected column or metric")
 
     query_parts = [
         f"SELECT {', '.join(select_parts)}",
-        f"FROM {_qualified_name(config.view_name)}",
+        f"FROM {_qualified_name(spec.resource_id)}",
     ]
 
-    where_parts, where_params = _apply_filter(config.filters)
+    where_parts, where_params = _apply_filter(spec.filters)
     if where_parts:
         query_parts.append("WHERE " + " AND ".join(where_parts))
         params.extend(where_params)
@@ -301,9 +327,16 @@ def build_widget_query(config: WidgetConfig) -> tuple[str, list[Any]]:
     if group_by_parts:
         query_parts.append("GROUP BY " + ", ".join(group_by_parts))
 
-    if config.order_by:
+    order_by = spec.order_by
+    if not order_by and spec.sort:
+        order_by = [
+            type("OrderBy", (), {"column": item.field, "metric_ref": None, "direction": item.dir})()
+            for item in spec.sort
+        ]
+
+    if order_by:
         order_parts: list[str] = []
-        for item in config.order_by:
+        for item in order_by:
             direction = "ASC" if item.direction == "asc" else "DESC"
             if item.column:
                 dimension_order = _dimension_order_sql(item.column, direction)
@@ -313,83 +346,28 @@ def build_widget_query(config: WidgetConfig) -> tuple[str, list[Any]]:
                     order_parts.append(f"{_quote_ident(item.column)} {direction}")
             elif item.metric_ref:
                 order_parts.append(f"{_quote_ident(item.metric_ref)} {direction}")
-        query_parts.append("ORDER BY " + ", ".join(order_parts))
-    elif config.widget_type == "line":
+        if order_parts:
+            query_parts.append("ORDER BY " + ", ".join(order_parts))
+    elif spec.widget_type == "line":
         query_parts.append(f"ORDER BY {_quote_ident('time_bucket')} ASC")
-    elif config.widget_type in {"bar", "column"} and len(config.dimensions) == 1:
-        dimension_order = _dimension_order_sql(config.dimensions[0], "ASC")
+    elif spec.widget_type in {"bar", "column"} and len(spec.dimensions) == 1:
+        dimension_order = _dimension_order_sql(spec.dimensions[0], "ASC")
         if dimension_order:
             query_parts.append("ORDER BY " + dimension_order)
 
-    effective_limit = config.limit
-    if config.widget_type in {"bar", "column", "donut"} and config.top_n is not None:
-        effective_limit = config.top_n
+    effective_limit: int | None = None
+    if spec.widget_type == "table":
+        effective_limit = spec.limit
+    if spec.widget_type in {"bar", "column", "donut"} and spec.top_n is not None:
+        effective_limit = spec.top_n
     if effective_limit is not None:
-        safe_limit = max(1, effective_limit)
+        safe_limit = min(max_rows, max(1, int(effective_limit)))
         query_parts.append(f"LIMIT {safe_limit}")
+    else:
+        safe_limit = max_rows
 
-    if config.offset is not None:
-        safe_offset = max(0, config.offset)
+    safe_offset = max(0, int(spec.offset))
+    if safe_offset:
         query_parts.append(f"OFFSET {safe_offset}")
 
-    return " ".join(query_parts), params
-
-
-def build_kpi_batch_query(
-    view_name: str,
-    metrics: list[MetricConfig],
-    filters: list[FilterConfig],
-    *,
-    composite_metrics: list[CompositeMetricConfig] | None = None,
-) -> tuple[str, list[Any], list[str]]:
-    if composite_metrics:
-        select_parts: list[str] = []
-        inner_select_parts: list[str] = []
-        aliases: list[str] = []
-
-        first = composite_metrics[0]
-        bucket_expr = f"DATE_TRUNC('{first.granularity}', {_quote_ident(first.time_column)})"
-        inner_select_parts.append(f"{bucket_expr} AS {_quote_ident('time_bucket')}")
-
-        for index, composite_metric in enumerate(composite_metrics):
-            alias = f"m{index}"
-            aliases.append(alias)
-            bucket_alias = f"bucket_{index}"
-            inner_select_parts.append(
-                f"{_metric_sql(composite_metric.inner_agg, composite_metric.value_column)} AS {_quote_ident(bucket_alias)}"
-            )
-            select_parts.append(f"{_metric_sql(composite_metric.outer_agg, bucket_alias)} AS {_quote_ident(alias)}")
-
-        query_parts = [f"SELECT {', '.join(select_parts)}", "FROM (", f"SELECT {', '.join(inner_select_parts)}"]
-        query_parts.append(f"FROM {_qualified_name(view_name)}")
-
-        where_parts, params = _apply_filter(filters)
-        if where_parts:
-            query_parts.append("WHERE " + " AND ".join(where_parts))
-
-        query_parts.append(f"GROUP BY {_quote_ident('time_bucket')}")
-        query_parts.append(f") AS {_quote_ident('kpi_bucketed')}")
-        return " ".join(query_parts), params, aliases
-
-    if not metrics:
-        raise ValueError("KPI batch query requires at least one metric")
-
-    select_parts: list[str] = []
-    aliases: list[str] = []
-    for index, metric in enumerate(metrics):
-        alias = f"m{index}"
-        aliases.append(alias)
-        select_parts.append(f"{_metric_sql(metric.op, metric.column)} AS {_quote_ident(alias)}")
-
-    query_parts = [
-        f"SELECT {', '.join(select_parts)}",
-        f"FROM {_qualified_name(view_name)}",
-    ]
-
-    where_parts, params = _apply_filter(filters)
-    if where_parts:
-        query_parts.append("WHERE " + " AND ".join(where_parts))
-
-    return " ".join(query_parts), params, aliases
-
-
+    return " ".join(query_parts), params, safe_limit
