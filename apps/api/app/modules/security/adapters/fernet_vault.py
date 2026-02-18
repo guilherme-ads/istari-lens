@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.crypto import credential_encryptor
+from app.modules.security.adapters.fernet_encryptor import credential_encryptor
 from app.modules.security.domain.ports import SecretsVaultPort
 
 
@@ -12,4 +12,5 @@ class FernetSecretsVaultAdapter(SecretsVaultPort):
 
     def decrypt(self, ciphertext: str) -> str:
         return credential_encryptor.decrypt(ciphertext)
+
 

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
-from app.models import Dashboard, DashboardWidget
-from app.routers.dashboards import _combined_load_score, _dashboard_load_score, _runtime_score, _widget_load_cost
+from app.modules.core.legacy.models import Dashboard, DashboardWidget
+from app.api.v1.routes.dashboards import _combined_load_score, _dashboard_load_score, _runtime_score, _widget_load_cost
 
 
 def _widget(*, widget_type: str, query_config: dict) -> DashboardWidget:
@@ -67,3 +67,4 @@ def test_dashboard_load_score_is_average_widget_complexity() -> None:
 
     score = _dashboard_load_score(dashboard)
     assert score == round((_widget_load_cost(w1) + _widget_load_cost(w2)) / 2.0, 1)
+

@@ -59,3 +59,4 @@ def test_runner_blocks_non_select_query() -> None:
         assert exc_info.value.status_code == 400
 
     asyncio.run(_run())
+

@@ -1,0 +1,2 @@
+"""Widgets module package."""
+

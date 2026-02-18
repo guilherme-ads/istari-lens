@@ -1,8 +1,8 @@
 import pytest
 from sqlalchemy.orm import Session
-from app.models import User
-from app.auth import hash_password
-from app.database import SessionLocal
+from app.modules.core.legacy.models import User
+from app.modules.auth.application.security import hash_password
+from app.shared.infrastructure.database import SessionLocal
 
 @pytest.fixture
 def db():
@@ -29,3 +29,4 @@ def test_user_creation(db: Session, admin_user: User):
     """Test user creation"""
     assert admin_user.email == "admin_test@test.com"
     assert admin_user.is_admin is True
+

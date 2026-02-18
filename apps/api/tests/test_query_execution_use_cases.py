@@ -1,6 +1,6 @@
 from app.modules.query_execution import PostgresQueryCompilerAdapter, QueryBuilderService
-from app.schemas import QuerySpec
-from app.widget_config import WidgetConfig
+from app.modules.core.legacy.schemas import QuerySpec
+from app.modules.widgets.domain.config import WidgetConfig
 
 
 def test_query_builder_service_compiles_widget_kpi() -> None:
@@ -36,4 +36,5 @@ def test_query_builder_service_compiles_api_query_spec() -> None:
     assert "COUNT(*) AS" in sql
     assert "LIMIT 10" in sql
     assert params == []
+
 

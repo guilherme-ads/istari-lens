@@ -3,11 +3,11 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from app.database import engine, Base, SessionLocal
-from app.models import User
-from app.auth import hash_password
-from app.settings import get_settings
-from app.routers import (
+from app.shared.infrastructure.database import engine, Base, SessionLocal
+from app.modules.core.legacy.models import User
+from app.modules.auth.application.security import hash_password
+from app.shared.infrastructure.settings import get_settings
+from app.api.v1.routes import (
     health,
     auth,
     views,
@@ -386,3 +386,5 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
+
+

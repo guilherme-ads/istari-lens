@@ -4,10 +4,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database import get_db
-from app.dependencies import get_current_admin_user
-from app.models import Base, User
-from app.routers import admin_users
+from app.shared.infrastructure.database import get_db
+from app.modules.auth.adapters.api.dependencies import get_current_admin_user
+from app.modules.core.legacy.models import Base, User
+from app.api.v1.routes import admin_users
 
 
 engine = create_engine(
@@ -154,3 +154,4 @@ def test_non_admin_access_is_forbidden():
     client, _ = _make_client(as_admin=False)
     response = client.get("/admin/users")
     assert response.status_code == 403
+

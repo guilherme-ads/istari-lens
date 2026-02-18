@@ -2,3 +2,4 @@ from app.modules.query_execution.adapters.postgres import PostgresQueryCompilerA
 
 __all__ = ["PostgresQueryCompilerAdapter", "PostgresQueryRunnerAdapter"]
 
+

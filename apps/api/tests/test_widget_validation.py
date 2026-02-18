@@ -1,6 +1,6 @@
 import pytest
 
-from app.widget_config import WidgetConfig, WidgetConfigValidationError, validate_widget_config_against_columns
+from app.modules.widgets.domain.config import WidgetConfig, WidgetConfigValidationError, validate_widget_config_against_columns
 
 
 COLUMN_TYPES = {
@@ -385,3 +385,4 @@ def test_kpi_composite_legacy_agg_field_is_still_supported() -> None:
         }
     )
     validate_widget_config_against_columns(config, COLUMN_TYPES)
+

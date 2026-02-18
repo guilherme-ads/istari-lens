@@ -31,3 +31,4 @@ class QueryRunnerPort(Protocol):
     ) -> ResultSet:
         raise NotImplementedError
 
+

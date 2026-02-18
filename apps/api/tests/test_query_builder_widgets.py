@@ -2,8 +2,8 @@ import pytest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.query_builder import build_kpi_batch_query, build_widget_query
-from app.widget_config import WidgetConfig
+from app.modules.widgets.application.query_builder import build_kpi_batch_query, build_widget_query
+from app.modules.widgets.domain.config import WidgetConfig
 
 
 def _cfg(payload: dict) -> WidgetConfig:
@@ -485,3 +485,4 @@ def test_kpi_batch_query_builds_multiple_composite_metrics() -> None:
     assert 'GROUP BY "time_bucket"' in sql
     assert params == []
     assert aliases == ["m0", "m1"]
+

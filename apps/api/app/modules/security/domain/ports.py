@@ -10,3 +10,4 @@ class SecretsVaultPort(Protocol):
     def decrypt(self, ciphertext: str) -> str:
         raise NotImplementedError
 
+

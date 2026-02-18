@@ -1,8 +1,8 @@
 import asyncio
 
-from app.models import View, ViewColumn
-from app.routers.queries import build_query_sql, validate_query_spec
-from app.schemas import QuerySpec
+from app.modules.core.legacy.models import View, ViewColumn
+from app.api.v1.routes.queries import build_query_sql, validate_query_spec
+from app.modules.core.legacy.schemas import QuerySpec
 
 
 def _make_view() -> View:
@@ -49,3 +49,4 @@ def test_validate_query_spec_accepts_count_star() -> None:
     )
 
     asyncio.run(validate_query_spec(spec, _make_view(), db=None))  # type: ignore[arg-type]
+
