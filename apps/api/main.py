@@ -20,6 +20,8 @@ from app.api.v1.routes import (
     view_schema,
     admin_users,
     api_config,
+    imports,
+    catalog,
 )
 
 logger = logging.getLogger(__name__)
@@ -299,6 +301,64 @@ def _ensure_users_admin_columns() -> None:
 _ensure_users_admin_columns()
 
 
+def _ensure_datasources_import_columns() -> None:
+    try:
+        with engine.begin() as conn:
+            has_source_type = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'datasources' AND column_name = 'source_type'
+                    LIMIT 1
+                    """
+                )
+            ).first()
+            if not has_source_type:
+                conn.execute(
+                    text(
+                        """
+                        ALTER TABLE datasources
+                        ADD COLUMN source_type VARCHAR(64) NOT NULL DEFAULT 'postgres_external'
+                        """
+                    )
+                )
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_datasources_source_type ON datasources(source_type)"))
+
+            has_tenant_id = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'datasources' AND column_name = 'tenant_id'
+                    LIMIT 1
+                    """
+                )
+            ).first()
+            if not has_tenant_id:
+                conn.execute(text("ALTER TABLE datasources ADD COLUMN tenant_id INTEGER"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_datasources_tenant_id ON datasources(tenant_id)"))
+
+            has_status = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'datasources' AND column_name = 'status'
+                    LIMIT 1
+                    """
+                )
+            ).first()
+            if not has_status:
+                conn.execute(text("ALTER TABLE datasources ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'active'"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_datasources_status ON datasources(status)"))
+    except Exception:
+        logger.exception("datasources import columns patch failed")
+
+
+_ensure_datasources_import_columns()
+
+
 def _bootstrap_admin_user() -> None:
     if not settings.bootstrap_admin_enabled:
         return
@@ -375,6 +435,8 @@ app.include_router(dashboards.router)
 app.include_router(admin_users.router)
 app.include_router(queries.router)
 app.include_router(api_config.router)
+app.include_router(imports.router)
+app.include_router(catalog.router)
 app.include_router(analyses.router)
 app.include_router(shares.router)
 

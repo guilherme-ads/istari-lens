@@ -21,6 +21,8 @@ passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 python-multipart = "^0.0.6"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 cryptography = "^41.0.7"
+openpyxl = "^3.1.5"
+boto3 = "^1.40.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"

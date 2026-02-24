@@ -7,6 +7,7 @@ export interface Datasource {
   schemaPattern: string;
   lastSync: string;
   status: DatasourceStatus;
+  sourceType: "database" | "spreadsheet";
   description: string;
 }
 

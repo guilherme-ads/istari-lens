@@ -32,6 +32,8 @@ def _validate_dataset_and_view(spec: QuerySpec, db: Session) -> tuple[Dataset, V
     view = dataset.view
     if not view or not view.is_active:
         raise HTTPException(status_code=400, detail="Dataset view is inactive")
+    if not dataset.datasource or not dataset.datasource.is_active:
+        raise HTTPException(status_code=400, detail="Dataset datasource is inactive")
 
     return dataset, view
 
@@ -67,6 +69,16 @@ async def execute_preview_query(
 
 @router.post("/preview", response_model=QueryPreviewResponse)
 async def preview_query(
+    spec: QuerySpec,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await execute_preview_query(spec, db, current_user, _resolve_correlation_id(request))
+
+
+@router.post("/execute", response_model=QueryPreviewResponse)
+async def execute_query(
     spec: QuerySpec,
     request: Request,
     db: Session = Depends(get_db),

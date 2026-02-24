@@ -217,6 +217,7 @@ export const mapDatasource = (item: ApiDatasource): Datasource => ({
   schemaPattern: item.schema_pattern || "*",
   lastSync: item.last_synced_at || "Never",
   status: item.is_active ? "active" : "inactive",
+  sourceType: item.source_type === "file_spreadsheet_import" ? "spreadsheet" : "database",
   description: item.description || "",
 });
 

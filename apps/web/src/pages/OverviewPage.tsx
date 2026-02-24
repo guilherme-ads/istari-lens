@@ -76,7 +76,7 @@ const OverviewPage = () => {
 
   const stats = [
     { label: "Datasources ativos", value: activeDatasources.length, icon: Database, color: "text-accent" },
-    { label: "Views disponíveis", value: activeViews.length, icon: Activity, color: "text-accent" },
+    { label: "Tabelas disponíveis", value: activeViews.length, icon: Activity, color: "text-accent" },
     { label: "Datasets", value: datasets.length, icon: Layers, color: "text-accent" },
     { label: "Dashboards", value: dashboards.length, icon: BarChart3, color: "text-accent" },
   ];
@@ -162,7 +162,7 @@ const OverviewPage = () => {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">Gerenciar Fontes</p>
-                  <p className="text-xs text-muted-foreground">Configure datasources e views</p>
+                  <p className="text-xs text-muted-foreground">Configure datasources e tabelas</p>
                 </div>
               </button>
             )}

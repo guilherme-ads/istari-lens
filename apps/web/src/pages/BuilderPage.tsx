@@ -278,7 +278,7 @@ const BuilderPage = () => {
   const handleWidgetCreated = useCallback(async (widgetType: WidgetType) => {
     if (!targetSectionId || !dataset || !view) return;
     if (!viewColumnsQuery.data || viewColumnsQuery.data.length === 0) {
-      toast({ title: "Nao foi possivel carregar colunas da view", variant: "destructive" });
+      toast({ title: "Nao foi possivel carregar colunas da tabela", variant: "destructive" });
       return;
     }
 
@@ -937,7 +937,7 @@ const BuilderPage = () => {
             {targetDashboardId && debugQueriesQuery.data && (
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  Dashboard #{debugQueriesQuery.data.dashboard_id} . View {debugQueriesQuery.data.view_name || "-"} . Datasource {debugQueriesQuery.data.datasource_id ?? "-"}
+                  Dashboard #{debugQueriesQuery.data.dashboard_id} . Tabela {debugQueriesQuery.data.view_name || "-"} . Datasource {debugQueriesQuery.data.datasource_id ?? "-"}
                 </p>
                 {devModeSqlView === "widget" && (
                   <>

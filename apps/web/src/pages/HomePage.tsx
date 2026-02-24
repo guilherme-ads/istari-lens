@@ -18,7 +18,7 @@ const features = [
   {
     icon: Layers,
     title: "Datasets",
-    desc: "Organize suas views em datasets temáticos para análise focada.",
+    desc: "Organize suas tabelas em datasets temáticos para análise focada.",
   },
   {
     icon: LayoutDashboard,
@@ -38,7 +38,7 @@ const HomePage = () => {
 
   const stats = [
     { label: "Datasources", value: datasources.filter((d) => d.status === "active").length },
-    { label: "Views ativas", value: views.filter((v) => v.status === "active").length },
+    { label: "Tabelas ativas", value: views.filter((v) => v.status === "active").length },
     { label: "Datasets", value: datasets.length },
     { label: "Dashboards", value: dashboards.length },
   ];
@@ -200,8 +200,8 @@ const HomePage = () => {
 
           <div className="grid gap-8 md:grid-cols-3 max-w-4xl mx-auto">
             {[
-              { step: "01", title: "Conecte", desc: "Registre seus datasources e sincronize as views automaticamente.", icon: Database },
-              { step: "02", title: "Organize", desc: "Crie datasets associando views aos contextos de análise.", icon: Eye },
+              { step: "01", title: "Conecte", desc: "Registre seus datasources e sincronize as tabelas automaticamente.", icon: Database },
+              { step: "02", title: "Organize", desc: "Crie datasets associando tabelas aos contextos de análise.", icon: Eye },
               { step: "03", title: "Visualize", desc: "Monte dashboards com widgets interativos e compartilhe.", icon: LayoutDashboard },
             ].map((item, i) => (
               <motion.div

@@ -90,6 +90,9 @@ def list_datasources(
 ):
     """List all data sources."""
     query = db.query(models.DataSource)
+    query = query.filter(
+        (models.DataSource.status.is_(None)) | (models.DataSource.status != "draft")
+    )
     
     if is_active is not None:
         query = query.filter(models.DataSource.is_active == is_active)
@@ -143,11 +146,63 @@ def update_datasource(
         datasource.schema_pattern = request.schema_pattern
     if request.is_active is not None:
         datasource.is_active = request.is_active
-    
+        datasource.status = "active" if request.is_active else "inactive"
+        if request.is_active is False:
+            db.query(models.View).filter(
+                models.View.datasource_id == datasource_id,
+                models.View.is_active == True,  # noqa: E712
+            ).update({"is_active": False}, synchronize_session=False)
+            db.query(models.Dataset).filter(
+                models.Dataset.datasource_id == datasource_id,
+                models.Dataset.is_active == True,  # noqa: E712
+            ).update({"is_active": False}, synchronize_session=False)
+
     datasource.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(datasource)
     return datasource
+
+
+@router.get("/{datasource_id}/deletion-impact", response_model=schemas.DataSourceDeletionImpactResponse)
+def get_datasource_deletion_impact(
+    datasource_id: int,
+    current_user: models.User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+):
+    datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DataSource not found",
+        )
+
+    datasets = db.query(models.Dataset).filter(models.Dataset.datasource_id == datasource_id).all()
+    dataset_ids = [dataset.id for dataset in datasets]
+    dashboards: list[models.Dashboard] = []
+    if dataset_ids:
+        dashboards = (
+            db.query(models.Dashboard)
+            .filter(models.Dashboard.dataset_id.in_(dataset_ids))
+            .order_by(models.Dashboard.id.asc())
+            .all()
+        )
+
+    dataset_name_by_id = {dataset.id: dataset.name for dataset in datasets}
+    return schemas.DataSourceDeletionImpactResponse(
+        datasource_id=datasource.id,
+        datasource_name=datasource.name,
+        datasets_count=len(datasets),
+        dashboards_count=len(dashboards),
+        dashboards=[
+            schemas.DataSourceDeletionImpactDashboardResponse(
+                dashboard_id=item.id,
+                dashboard_name=item.name,
+                dataset_id=item.dataset_id,
+                dataset_name=dataset_name_by_id.get(item.dataset_id, f"Dataset {item.dataset_id}"),
+            )
+            for item in dashboards
+        ],
+    )
 
 
 @router.delete("/{datasource_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -231,6 +286,11 @@ def sync_views(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="DataSource not found",
+        )
+    if not datasource.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="DataSource is inactive and cannot be synchronized",
         )
     
     try:

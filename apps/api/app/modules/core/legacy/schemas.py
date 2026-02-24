@@ -387,6 +387,8 @@ class DataSourceResponse(BaseModel):
     name: str
     description: Optional[str]
     schema_pattern: Optional[str]
+    source_type: str = "postgres_external"
+    status: str = "active"
     is_active: bool
     last_synced_at: Optional[datetime]
     created_at: datetime
@@ -397,6 +399,21 @@ class DataSourceResponse(BaseModel):
 class DataSourceDetailResponse(DataSourceResponse):
     """DataSource with views."""
     views: List["ViewResponse"] = []
+
+
+class DataSourceDeletionImpactDashboardResponse(BaseModel):
+    dashboard_id: int
+    dashboard_name: str
+    dataset_id: int
+    dataset_name: str
+
+
+class DataSourceDeletionImpactResponse(BaseModel):
+    datasource_id: int
+    datasource_name: str
+    datasets_count: int
+    dashboards_count: int
+    dashboards: List[DataSourceDeletionImpactDashboardResponse] = Field(default_factory=list)
 
 
 class ViewSchemaColumnResponse(BaseModel):

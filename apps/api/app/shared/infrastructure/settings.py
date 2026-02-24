@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     api_config_billing_monthly_budget_usd: float = 0.0
     log_external_queries: bool = False
     log_external_query_params: bool = False
+    import_storage_backend: Literal["local", "s3"] = "local"
+    import_storage_local_path: str = "storage/imports"
+    import_s3_bucket: str | None = None
+    import_s3_prefix: str = "imports"
+    import_s3_region: str | None = None
+    import_s3_endpoint_url: str | None = None
+    import_s3_access_key_id: str | None = None
+    import_s3_secret_access_key: str | None = None
+    import_max_file_size_bytes: int = 20 * 1024 * 1024
+    import_max_rows: int = 100_000
+    import_max_columns: int = 200
+    import_preview_rows: int = 50
+    import_error_sample_limit: int = 200
 
     # =========================
     # Dashboard widget execution
