@@ -17,8 +17,9 @@ RUN pip install --no-cache-dir \
 
 COPY apps/engine ./
 
+ENV PORT=8010
 EXPOSE 8010
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -fsS http://localhost:8010/health || exit 1
+  CMD curl -fsS "http://localhost:${PORT}/health" || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8010"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8010}"]
