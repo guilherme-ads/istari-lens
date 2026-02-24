@@ -18,7 +18,7 @@ async function request<T>(path: string, init: RequestInit = {}, requiresAuth = t
   const token = getAuthToken();
   const headers = new Headers(init.headers);
 
-  if (!headers.has("Content-Type") && init.body) {
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -103,9 +103,68 @@ export type ApiDatasource = {
   name: string;
   description?: string | null;
   schema_pattern?: string | null;
+  source_type?: string;
+  status?: string;
   is_active: boolean;
   last_synced_at?: string | null;
   created_at: string;
+};
+
+export type ApiDatasourceDeletionImpactDashboard = {
+  dashboard_id: number;
+  dashboard_name: string;
+  dataset_id: number;
+  dataset_name: string;
+};
+
+export type ApiDatasourceDeletionImpact = {
+  datasource_id: number;
+  datasource_name: string;
+  datasets_count: number;
+  dashboards_count: number;
+  dashboards: ApiDatasourceDeletionImpactDashboard[];
+};
+
+export type ApiSpreadsheetImport = {
+  id: number;
+  datasource_id: number;
+  created_by_id: number;
+  tenant_id: number;
+  status: string;
+  display_name: string;
+  header_row: number;
+  sheet_name?: string | null;
+  cell_range?: string | null;
+  csv_delimiter?: string | null;
+  file_uri?: string | null;
+  file_hash?: string | null;
+  file_size_bytes?: number | null;
+  row_count: number;
+  available_sheet_names?: string[];
+  selected_sheet_name?: string | null;
+  inferred_schema?: Array<Record<string, unknown>>;
+  mapped_schema?: Array<Record<string, unknown>>;
+  preview_rows?: Array<Record<string, unknown>>;
+  file_format?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiSpreadsheetImportConfirm = {
+  table_id: number;
+  table_name: string;
+  resource_id: string;
+  row_count: number;
+  sheet_name?: string | null;
+};
+
+export type ApiSpreadsheetImportConfirmSummary = {
+  import_id: number;
+  datasource_id: number;
+  row_count: number;
+  tables: ApiSpreadsheetImportConfirm[];
+  error_samples?: Array<Record<string, unknown>>;
+  status: string;
 };
 
 export type ApiDataset = {
@@ -416,8 +475,85 @@ export const api = {
   ) => request<ApiDatasource>(`/datasources/${datasourceId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
   deleteDatasource: (datasourceId: number) => request<void>(`/datasources/${datasourceId}`, { method: "DELETE" }),
+  getDatasourceDeletionImpact: (datasourceId: number) =>
+    request<ApiDatasourceDeletionImpact>(`/datasources/${datasourceId}/deletion-impact`),
 
   syncDatasource: (datasourceId: number) => request<{ status: string; synced_views: number }>(`/datasources/${datasourceId}/sync`, { method: "POST" }),
+
+  createSpreadsheetImport: (payload: {
+    tenant_id: number;
+    name: string;
+    description?: string;
+    timezone?: string;
+    header_row?: number;
+    sheet_name?: string;
+    cell_range?: string;
+    delimiter?: string;
+  }) => request<ApiSpreadsheetImport>("/imports/create", { method: "POST", body: JSON.stringify(payload) }),
+
+  uploadSpreadsheetImportFile: (importId: number, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<ApiSpreadsheetImport>(`/imports/${importId}/upload`, { method: "POST", body: formData });
+  },
+
+  downloadSpreadsheetImportFile: async (importId: number) => {
+    const token = getAuthToken();
+    const response = await fetch(`${API_BASE_URL}/imports/${importId}/download`, {
+      method: "GET",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const detail = typeof payload?.detail === "string" ? payload.detail : `Request failed with status ${response.status}`;
+      if (response.status === 401) {
+        clearAuthSession();
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          window.location.assign("/login");
+        }
+      }
+      throw new ApiError(detail, response.status, detail);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filenameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+    const filename = filenameMatch?.[1] || `import_${importId}`;
+
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(downloadUrl);
+  },
+
+  updateSpreadsheetImportTransform: (
+    importId: number,
+    payload: {
+      header_row: number;
+      sheet_name?: string;
+      cell_range?: string;
+      delimiter?: string;
+    },
+  ) => request<ApiSpreadsheetImport>(`/imports/${importId}/transform`, { method: "PATCH", body: JSON.stringify(payload) }),
+
+  updateSpreadsheetImportSchema: (
+    importId: number,
+    payload: {
+      columns: Array<{
+        source_name: string;
+        target_name: string;
+        type: "string" | "number" | "date" | "bool";
+      }>;
+    },
+  ) => request<ApiSpreadsheetImport>(`/imports/${importId}/schema`, { method: "PATCH", body: JSON.stringify(payload) }),
+
+  confirmSpreadsheetImport: (importId: number) =>
+    request<ApiSpreadsheetImportConfirmSummary>(`/imports/${importId}/confirm`, { method: "POST" }),
 
   listViews: () => request<ApiView[]>("/admin/views"),
 

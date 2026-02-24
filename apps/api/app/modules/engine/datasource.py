@@ -9,6 +9,14 @@ from app.modules.security.adapters.fernet_vault import FernetSecretsVaultAdapter
 _vault = FernetSecretsVaultAdapter()
 
 
+def _to_engine_url(url: str) -> str:
+    if url.startswith("postgresql+psycopg://"):
+        return url.replace("postgresql+psycopg://", "postgresql://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
 def resolve_datasource_url(datasource: DataSource | None) -> str | None:
     if datasource is None:
         return None
@@ -18,10 +26,10 @@ def resolve_datasource_url(datasource: DataSource | None) -> str | None:
         return None
 
     try:
-        return _vault.decrypt(raw_value)
+        return _to_engine_url(_vault.decrypt(raw_value))
     except InvalidToken as exc:
         if raw_value.startswith("postgresql://") or raw_value.startswith("postgresql+psycopg://"):
-            return raw_value
+            return _to_engine_url(raw_value)
         raise HTTPException(
             status_code=400,
             detail="Datasource credentials are invalid for current encryption key. Recreate datasource.",

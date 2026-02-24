@@ -287,7 +287,7 @@ const CreateDatasetDialog = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Novo Dataset</DialogTitle>
-          <DialogDescription>Selecione o datasource e a view para criar um novo dataset.</DialogDescription>
+          <DialogDescription>Selecione o datasource e a tabela para criar um novo dataset.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
@@ -320,10 +320,10 @@ const CreateDatasetDialog = ({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">View <span className="text-destructive">*</span></Label>
+            <Label className="text-xs font-semibold text-muted-foreground">Tabela <span className="text-destructive">*</span></Label>
             <Select value={viewId} onValueChange={setViewId} disabled={!datasourceId}>
               <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder={datasourceId ? "Selecione uma view..." : "Selecione um datasource primeiro"} />
+                <SelectValue placeholder={datasourceId ? "Selecione uma tabela..." : "Selecione um datasource primeiro"} />
               </SelectTrigger>
               <SelectContent>
                 {activeViews.map((v) => (

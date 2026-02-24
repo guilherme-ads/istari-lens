@@ -146,6 +146,18 @@ def _widget_response(widget: DashboardWidget) -> DashboardWidgetResponse:
     return DashboardWidgetResponse.model_validate(widget)
 
 
+def _ensure_dashboard_dataset_is_refreshable(dashboard: Dashboard) -> None:
+    dataset = dashboard.dataset
+    if not dataset:
+        raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
+    if not dataset.is_active:
+        raise HTTPException(status_code=409, detail="Dashboard dataset is inactive; data refresh is disabled")
+    if not dataset.datasource or not dataset.datasource.is_active:
+        raise HTTPException(status_code=409, detail="Dashboard datasource is inactive; data refresh is disabled")
+    if not dataset.view or not dataset.view.is_active:
+        raise HTTPException(status_code=409, detail="Dashboard table is inactive; data refresh is disabled")
+
+
 def _view_column_types(dashboard: Dashboard) -> dict[str, str]:
     dataset = dashboard.dataset
     if not dataset or not dataset.view:
@@ -516,8 +528,14 @@ async def create_dashboard(
     dataset = db.query(Dataset).filter(Dataset.id == request.dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found")
+    if not dataset.is_active:
+        raise HTTPException(status_code=400, detail="Dataset is inactive")
+    if not dataset.datasource or not dataset.datasource.is_active:
+        raise HTTPException(status_code=400, detail="Dataset datasource is inactive")
     if not dataset.view:
         raise HTTPException(status_code=400, detail="Dataset view is unavailable")
+    if not dataset.view.is_active:
+        raise HTTPException(status_code=400, detail="Dataset view is inactive")
 
     _validate_native_filters_against_column_types(
         request.native_filters,
@@ -699,6 +717,7 @@ async def get_widget_data(
     dashboard = widget.dashboard
     if not dashboard or not dashboard.dataset:
         raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
+    _ensure_dashboard_dataset_is_refreshable(dashboard)
 
     config = _resolve_widget_config(widget)
     executor = get_dashboard_widget_executor()
@@ -765,6 +784,7 @@ async def get_widget_data_batch(
     dashboard = first_widget.dashboard
     if not dashboard or not dashboard.dataset:
         raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
+    _ensure_dashboard_dataset_is_refreshable(dashboard)
 
     configs_by_widget_id: dict[int, WidgetConfig] = {}
     for widget in widgets:

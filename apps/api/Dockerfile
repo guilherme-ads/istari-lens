@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir \
     python-multipart \
     python-jose[cryptography] \
     cryptography \
+    openpyxl \
     argon2-cffi \
     pytest \
     pytest-asyncio

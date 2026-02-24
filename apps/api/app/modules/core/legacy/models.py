@@ -31,6 +31,7 @@ class User(Base):
         foreign_keys="LLMIntegration.updated_by_id",
         back_populates="updated_by_user",
     )
+    spreadsheet_imports = relationship("SpreadsheetImport", back_populates="created_by_user")
 
 
 class DataSource(Base):
@@ -42,6 +43,9 @@ class DataSource(Base):
     description = Column(Text)
     database_url = Column(String(1024), nullable=False)  # Encrypted
     schema_pattern = Column(String(255))  # Optional regex to filter schemas
+    source_type = Column(String(64), nullable=False, default="postgres_external", index=True)
+    tenant_id = Column(Integer, nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="active", index=True)
     is_active = Column(Boolean, default=True, index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -51,6 +55,11 @@ class DataSource(Base):
     created_by_user = relationship("User", back_populates="datasources")
     views = relationship("View", back_populates="datasource", cascade="all, delete-orphan")
     datasets = relationship("Dataset", back_populates="datasource", cascade="all, delete-orphan")
+    spreadsheet_imports = relationship(
+        "SpreadsheetImport",
+        back_populates="datasource",
+        cascade="all, delete-orphan",
+    )
 
 
 class View(Base):
@@ -261,4 +270,40 @@ class LLMIntegrationBillingSnapshot(Base):
     __table_args__ = (
         Index("llm_integration_billing_snapshot_integration_idx", "integration_id", "fetched_at"),
     )
+
+
+class SpreadsheetImport(Base):
+    __tablename__ = "spreadsheet_imports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    datasource_id = Column(Integer, ForeignKey("datasources.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(Integer, nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(32), nullable=False, default="created", index=True)
+    display_name = Column(String(255), nullable=False)
+    timezone = Column(String(64), nullable=False, default="UTC")
+    header_row = Column(Integer, nullable=False, default=1)
+    sheet_name = Column(String(255), nullable=True)
+    cell_range = Column(String(64), nullable=True)
+    csv_delimiter = Column(String(8), nullable=True)
+    file_uri = Column(String(1024), nullable=True)
+    file_hash = Column(String(128), nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
+    file_format = Column(String(16), nullable=True)
+    inferred_schema = Column(JSON, nullable=False, default=list)
+    mapped_schema = Column(JSON, nullable=False, default=list)
+    preview_rows = Column(JSON, nullable=False, default=list)
+    row_count = Column(Integer, nullable=False, default=0)
+    table_name = Column(String(255), nullable=True)
+    resource_id = Column(String(512), nullable=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    error_samples = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    datasource = relationship("DataSource", back_populates="spreadsheet_imports")
+    created_by_user = relationship("User", back_populates="spreadsheet_imports")
 

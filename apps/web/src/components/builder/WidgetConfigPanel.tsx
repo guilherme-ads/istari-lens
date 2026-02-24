@@ -435,7 +435,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
         <SheetHeader>
           <SheetTitle className="text-base">Configurar Widget</SheetTitle>
           <SheetDescription className="text-xs">
-            {view ? `${view.schema}.${view.name}` : "View nao encontrada"}
+            {view ? `${view.schema}.${view.name}` : "Tabela nao encontrada"}
           </SheetDescription>
         </SheetHeader>
 

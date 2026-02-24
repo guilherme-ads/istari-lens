@@ -26,6 +26,8 @@ def resolve_datasource_access(
 ) -> DatasourceAccessContext:
     if datasource is None:
         raise HTTPException(status_code=400, detail="Datasource not found")
+    if not datasource.is_active:
+        raise HTTPException(status_code=400, detail="Datasource is inactive")
 
     workspace_id = int(datasource.created_by_id)
     actor_user_id = int(current_user.id) if current_user is not None else None
@@ -38,6 +40,8 @@ def resolve_datasource_access(
         raise HTTPException(status_code=400, detail="Datasource URL is unavailable")
 
     dataset_id = int(dataset.id) if dataset is not None else None
+    if dataset is not None and not dataset.is_active:
+        raise HTTPException(status_code=400, detail="Dataset is inactive")
     return DatasourceAccessContext(
         datasource_id=int(datasource.id),
         datasource_url=datasource_url,
