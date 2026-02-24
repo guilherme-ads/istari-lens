@@ -1,4 +1,6 @@
 FROM node:20-alpine AS builder
+ARG VITE_API_URL
+ARG NEXT_PUBLIC_API_URL
 
 WORKDIR /repo
 COPY tsconfig.base.json ./tsconfig.base.json
@@ -6,6 +8,8 @@ COPY apps/web/package*.json ./apps/web/
 WORKDIR /repo/apps/web
 RUN npm ci
 COPY apps/web/ ./
+ENV VITE_API_URL=${VITE_API_URL}
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN npm run build
 
 FROM nginx:1.27-alpine
