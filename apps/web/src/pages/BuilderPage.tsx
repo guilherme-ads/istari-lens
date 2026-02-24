@@ -278,7 +278,7 @@ const BuilderPage = () => {
   const handleWidgetCreated = useCallback(async (widgetType: WidgetType) => {
     if (!targetSectionId || !dataset || !view) return;
     if (!viewColumnsQuery.data || viewColumnsQuery.data.length === 0) {
-      toast({ title: "Nao foi possivel carregar colunas da tabela", variant: "destructive" });
+      toast({ title: "Não foi possivel carregar colunas da tabela", variant: "destructive" });
       return;
     }
 
@@ -545,8 +545,8 @@ const BuilderPage = () => {
       <div className="bg-background flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Dataset nao encontrado</h2>
-            <p className="text-sm text-muted-foreground">O dataset solicitado nao existe.</p>
+            <h2 className="text-lg font-semibold text-foreground">Dataset não encontrado</h2>
+            <p className="text-sm text-muted-foreground">O dataset solicitado não existe.</p>
             <Button variant="outline" onClick={() => navigate("/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar aos Datasets
             </Button>
@@ -660,10 +660,10 @@ const BuilderPage = () => {
                       onClick={() => navigate(`/presentation/datasets/${datasetId}/dashboard/${activeDashboardId || dashboardId}`)}
                     >
                       <Monitor className="h-3 w-3 sm:mr-1" />
-                      <span className="hidden sm:inline">Apresentacao</span>
+                      <span className="hidden sm:inline">Apresentação</span>
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent className="text-xs">Abrir dashboard em modo apresentacao</TooltipContent>
+                  <TooltipContent className="text-xs">Abrir dashboard em modo apresentação</TooltipContent>
                 </Tooltip>
               </>
             )}
@@ -948,7 +948,7 @@ const BuilderPage = () => {
                       <div key={item.widget_id} className="rounded-md border border-border/70 bg-background/60 p-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-medium text-foreground">
-                            Widget #{item.widget_id} . {item.title || "(sem titulo)"} . {item.widget_type}
+                            Widget #{item.widget_id} . {item.title || "(sem título)"} . {item.widget_type}
                           </p>
                           <span
                             className={cn(
@@ -970,7 +970,7 @@ const BuilderPage = () => {
                           </>
                         )}
                         {item.status === "text_widget" && (
-                          <p className="text-[11px] text-muted-foreground">Widget textual nao executa SQL.</p>
+                          <p className="text-[11px] text-muted-foreground">Widget textual não executa SQL.</p>
                         )}
                         {item.status === "error" && (
                           <pre className="text-[11px] leading-5 whitespace-pre-wrap break-all rounded bg-destructive/5 p-2 border border-destructive/30 text-destructive">{item.error}</pre>
@@ -1060,7 +1060,7 @@ const BuilderPage = () => {
         open={deleteDashboardOpen}
         onOpenChange={setDeleteDashboardOpen}
         title="Excluir dashboard?"
-        description={`Esta acao removera permanentemente o dashboard "${dashboardTitle}" e todos os widgets dele.`}
+        description={`Esta ação removera permanentemente o dashboard "${dashboardTitle}" e todos os widgets dele.`}
         confirmLabel="Excluir dashboard"
         destructive
         onConfirm={handleDeleteDashboard}

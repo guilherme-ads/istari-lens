@@ -234,8 +234,8 @@ const DashboardViewPage = () => {
         <main className="container py-8 flex-1 flex items-center justify-center">
           <EmptyState
             icon={<Database className="h-5 w-5" />}
-            title="Sessao necessaria"
-            description="Para abrir este dashboard em modo apresentacao, faca login novamente."
+            title="Sessão necessaria"
+            description="Para abrir este dashboard em modo apresentação, faca login novamente."
             action={(
               <Button size="sm" onClick={() => navigate("/login")}>
                 Ir para login
@@ -272,7 +272,7 @@ const DashboardViewPage = () => {
       <div className="bg-background min-h-screen flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Dashboard nao encontrado</h2>
+            <h2 className="text-lg font-semibold text-foreground">Dashboard não encontrado</h2>
             <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}` : "/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
             </Button>
@@ -341,10 +341,10 @@ const DashboardViewPage = () => {
                   onClick={() => navigate(`/presentation/datasets/${datasetId}/dashboard/${dashboardId}`)}
                 >
                   <Monitor className="h-3 w-3 sm:mr-1" />
-                  <span className="hidden sm:inline">Apresentacao</span>
+                  <span className="hidden sm:inline">Apresentação</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Abrir modo apresentacao</TooltipContent>
+              <TooltipContent className="text-xs">Abrir modo apresentação</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -554,7 +554,7 @@ const DashboardViewPage = () => {
             animate={{ opacity: 1, y: 0 }}
             className="flex flex-col items-center justify-center py-24 gap-4"
           >
-            <p className="text-sm text-muted-foreground">Este dashboard ainda nao possui widgets.</p>
+            <p className="text-sm text-muted-foreground">Este dashboard ainda não possui widgets.</p>
             <Button variant="outline" onClick={() => navigate(`/datasets/${datasetId}/builder/${dashboardId}`)}>
               <Pencil className="h-4 w-4 mr-1.5" /> Editar dashboard
             </Button>
@@ -619,7 +619,7 @@ const ViewSection = ({
           >
             {widget.config.show_title !== false && (
               <div className="px-4 py-2.5 border-b border-border/50">
-                <h4 className="text-sm font-semibold text-foreground truncate">{widget.title || "Sem titulo"}</h4>
+                <h4 className="text-sm font-semibold text-foreground truncate">{widget.title || "Sem título"}</h4>
               </div>
             )}
             <div className={`p-3 flex items-center justify-center ${widget.config.size?.height === 0.5 ? "min-h-[100px]" : "min-h-[180px]"}`}>

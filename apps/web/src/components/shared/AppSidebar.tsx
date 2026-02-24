@@ -33,7 +33,7 @@ export function AppSidebar() {
     ...(user?.is_admin
       ? [
         { title: "Fontes", url: "/admin", icon: Settings },
-        { title: "Usuarios", url: "/admin/users", icon: Users },
+        { title: "Usuários", url: "/admin/users", icon: Users },
         { title: "APIs", url: "/api-config", icon: KeyRound },
       ]
       : []),

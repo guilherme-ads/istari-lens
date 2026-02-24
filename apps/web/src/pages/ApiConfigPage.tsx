@@ -48,9 +48,9 @@ const ApiConfigPage = () => {
 
   const testDraftIntegrationMutation = useMutation({
     mutationFn: () => api.testOpenAIIntegration({ api_key: apiKey.trim() || undefined, model }),
-    onSuccess: () => toast({ title: "Conexao validada", description: "OpenAI respondeu com sucesso." }),
+    onSuccess: () => toast({ title: "Conexão validada", description: "OpenAI respondeu com sucesso." }),
     onError: (error: unknown) => {
-      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao testar conexao";
+      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao testar conexão";
       toast({ title: "Falha no teste", description: message, variant: "destructive" });
     },
   });
@@ -59,10 +59,10 @@ const ApiConfigPage = () => {
     mutationFn: (integrationId: number) => api.testApiIntegration(integrationId),
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["api-config", "integrations"] });
-      toast({ title: "Conexao validada", description: result.message });
+      toast({ title: "Conexão validada", description: result.message });
     },
     onError: (error: unknown) => {
-      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao testar conexao";
+      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao testar conexão";
       toast({ title: "Falha no teste", description: message, variant: "destructive" });
     },
   });
@@ -96,7 +96,7 @@ const ApiConfigPage = () => {
       <main className="container space-y-6 py-6">
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-foreground"><KeyRound className="h-5 w-5 text-accent" />Configuracao de APIs</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-foreground"><KeyRound className="h-5 w-5 text-accent" />Configuração de APIs</h1>
             <p className="mt-1 text-sm text-muted-foreground">Configure e gerencie credenciais de providers LLM.</p>
           </div>
           {isAdmin && (
@@ -124,12 +124,12 @@ const ApiConfigPage = () => {
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">Provider</p><p className="text-lg font-bold tracking-tight text-foreground">{activeIntegration?.provider?.toUpperCase() || "OpenAI"}</p><p className="mt-0.5 text-xs text-muted-foreground">Provider atualmente ativo</p></div>
-          <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">Status</p><p className="text-lg font-bold tracking-tight text-foreground">{llmConfigured ? "Configurada" : "Nao configurada"}</p><p className="mt-0.5 text-xs text-muted-foreground">{llmConfigured ? "Credenciais validadas" : "Necessita chave de API"}</p></div>
+          <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">Status</p><p className="text-lg font-bold tracking-tight text-foreground">{llmConfigured ? "Configurada" : "Não configurada"}</p><p className="mt-0.5 text-xs text-muted-foreground">{llmConfigured ? "Credenciais validadas" : "Necessita chave de API"}</p></div>
           <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">APIs cadastradas</p><p className="text-lg font-bold tracking-tight text-foreground">{integrationsQuery.data?.items.length || 0}</p><p className="mt-0.5 text-xs text-muted-foreground">{inactiveIntegrations.length} desativada(s)</p></div>
         </div>
 
         {!isAdmin ? (
-          <div className="glass-card max-w-xl p-6"><p className="text-sm font-semibold text-foreground">Acesso restrito</p><p className="mt-1 text-sm text-muted-foreground">Somente administradores podem alterar configuracoes de APIs.</p></div>
+          <div className="glass-card max-w-xl p-6"><p className="text-sm font-semibold text-foreground">Acesso restrito</p><p className="mt-1 text-sm text-muted-foreground">Somente administradores podem alterar configurações de APIs.</p></div>
         ) : (
           <div className="glass-card space-y-6 p-6">
             <div><h2 className="text-base font-semibold text-foreground">APIs configuradas</h2><p className="mt-1 text-sm text-muted-foreground">Apenas uma API pode ficar ativa por vez.</p></div>
@@ -145,7 +145,7 @@ const ApiConfigPage = () => {
                         <TableCell className="font-medium">{activeIntegration.provider.toUpperCase()}</TableCell>
                         <TableCell>{activeIntegration.model}</TableCell>
                         <TableCell><code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{activeIntegration.masked_api_key}</code></TableCell>
-                        <TableCell>{typeof activeIntegration.billing_estimated_remaining_usd === "number" ? `US$ ${activeIntegration.billing_estimated_remaining_usd.toFixed(2)}` : "Nao disponivel"}</TableCell>
+                        <TableCell>{typeof activeIntegration.billing_estimated_remaining_usd === "number" ? `US$ ${activeIntegration.billing_estimated_remaining_usd.toFixed(2)}` : "Não disponível"}</TableCell>
                         <TableCell>{new Date(activeIntegration.updated_at).toLocaleString("pt-BR")}</TableCell>
                         <TableCell><Badge className="border-success/20 bg-success/10 text-success" variant="outline">Ativa</Badge></TableCell>
                         <TableCell>
@@ -175,7 +175,7 @@ const ApiConfigPage = () => {
                           <TableCell className="font-medium">{item.provider.toUpperCase()}</TableCell>
                           <TableCell>{item.model}</TableCell>
                           <TableCell><code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{item.masked_api_key}</code></TableCell>
-                          <TableCell>{typeof item.billing_estimated_remaining_usd === "number" ? `US$ ${item.billing_estimated_remaining_usd.toFixed(2)}` : "Nao disponivel"}</TableCell>
+                          <TableCell>{typeof item.billing_estimated_remaining_usd === "number" ? `US$ ${item.billing_estimated_remaining_usd.toFixed(2)}` : "Não disponível"}</TableCell>
                           <TableCell>{new Date(item.updated_at).toLocaleString("pt-BR")}</TableCell>
                           <TableCell><Badge variant="outline" className="text-muted-foreground">Desativada</Badge></TableCell>
                           <TableCell>

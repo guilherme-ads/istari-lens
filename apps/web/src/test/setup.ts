@@ -4,7 +4,7 @@ Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) => ({
     matches: false,
-    media: query,
+    média: query,
     onchange: null,
     addListener: () => {},
     removeListener: () => {},

@@ -12,6 +12,7 @@ const getFromStorages = (key: string): string | null =>
   sessionStorage.getItem(key) || localStorage.getItem(key);
 
 export const getAuthToken = (): string | null => getFromStorages(TOKEN_STORAGE_KEY);
+export const hasAuthSession = (): boolean => !!getAuthToken() && !!getStoredUser();
 
 export const setAuthSession = (token: string, user: StoredUser, rememberMe = true): void => {
   clearAuthSession();

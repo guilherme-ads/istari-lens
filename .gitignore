@@ -21,3 +21,4 @@ htmlcov/
 *.db
 *.tsbuildinfo
 alembic/versions/[0-9]*.py
+apps/api/storage/

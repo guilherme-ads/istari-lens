@@ -51,7 +51,7 @@ const DatasetDetailPage = () => {
       <div className="bg-background flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Dataset nao encontrado</h2>
+            <h2 className="text-lg font-semibold text-foreground">Dataset não encontrado</h2>
             <Button variant="outline" onClick={() => navigate("/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
             </Button>

@@ -87,10 +87,10 @@ const AppLayout = () => {
                       }`}
                     >
                       <Users className="h-3.5 w-3.5" />
-                      Usuarios
+                      Usuários
                     </Link>
                   </TooltipTrigger>
-                  <TooltipContent className="text-xs">Usuarios</TooltipContent>
+                  <TooltipContent className="text-xs">Usuários</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -120,7 +120,7 @@ const AppLayout = () => {
                   Sair
                 </button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Encerrar sessao</TooltipContent>
+              <TooltipContent className="text-xs">Encerrar sessão</TooltipContent>
             </Tooltip>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -170,7 +170,7 @@ const AppLayout = () => {
                       }`}
                     >
                       <Users className="h-4 w-4" />
-                      Usuarios
+                      Usuários
                     </Link>
                     <Link
                       to="/api-config"

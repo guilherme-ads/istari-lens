@@ -6,7 +6,7 @@ from typing import List
 from app.shared.infrastructure.database import get_db
 from app.modules.core.legacy.models import User, View, ViewColumn, Analysis
 from app.modules.core.legacy.schemas import ViewResponse, ViewCreateRequest, ViewUpdateRequest
-from app.modules.auth.adapters.api.dependencies import get_current_admin_user
+from app.modules.auth.adapters.api.dependencies import get_current_admin_user, get_current_user
 from app.shared.infrastructure.settings import get_settings
 from app.modules.engine.client import get_engine_client
 from app.modules.engine.access import resolve_datasource_access
@@ -107,9 +107,9 @@ async def sync_view_metadata(
 @router.get("", response_model=List[ViewResponse])
 async def list_views(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_current_user)
 ):
-    """List all registered views"""
+    """List all registered views available to authenticated users."""
     views = db.query(View).all()
     return views
 

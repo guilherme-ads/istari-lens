@@ -3,7 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { getStoredUser } from "./lib/auth";
+import { getStoredUser, hasAuthSession } from "./lib/auth";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import AppLayout from "./components/shared/AppLayout";
@@ -27,6 +27,11 @@ const RequireAdmin = ({ children }: { children: JSX.Element }) => {
   return children;
 };
 
+const RequireAuth = ({ children }: { children: JSX.Element }) => {
+  if (!hasAuthSession()) return <Navigate to="/login" replace />;
+  return children;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -38,10 +43,13 @@ const App = () => (
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/shared/:shareToken" element={<SharedAnalysisPage />} />
-          <Route path="/presentation/datasets/:datasetId/dashboard/:dashboardId" element={<DashboardViewPage />} />
+          <Route
+            path="/presentation/datasets/:datasetId/dashboard/:dashboardId"
+            element={<RequireAuth><DashboardViewPage /></RequireAuth>}
+          />
 
           {/* Authenticated pages — sidebar layout */}
-          <Route element={<AppLayout />}>
+          <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route path="/home" element={<OverviewPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
             <Route path="/dashboards" element={<DashboardsPage />} />

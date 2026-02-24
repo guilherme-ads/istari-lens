@@ -23,7 +23,7 @@ const AppHeader = ({ title = "Lens App", showNav = true, onLogout }: AppHeaderPr
     ...(user?.is_admin
       ? [
         { to: "/admin", label: "Fontes", icon: Settings },
-        { to: "/admin/users", label: "Usuarios", icon: Users },
+        { to: "/admin/users", label: "Usuários", icon: Users },
       ]
       : []),
   ];

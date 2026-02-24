@@ -263,6 +263,10 @@ def delete_datasource(
             detail="DataSource cannot be deleted because it is used in analyses",
         )
 
+    dataset_ids = [item.id for item in db.query(models.Dataset.id).filter(models.Dataset.datasource_id == datasource_id).all()]
+    if dataset_ids:
+        db.query(models.Dashboard).filter(models.Dashboard.dataset_id.in_(dataset_ids)).delete(synchronize_session=False)
+
     db.delete(datasource)
     db.commit()
 

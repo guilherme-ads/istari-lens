@@ -226,7 +226,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
     } catch (error) {
       setSheets((prev) => prev.map((sheet, index) => (index === sheetIndex ? { ...sheet, loading: false } : sheet)));
       const message = error instanceof ApiError ? error.detail || error.message : "Falha ao carregar aba";
-      toast({ title: "Erro ao carregar configuracao", description: message, variant: "destructive" });
+      toast({ title: "Erro ao carregar configuração", description: message, variant: "destructive" });
     }
   }, [fileFormat, importId, sheets, toast]);
 
@@ -271,7 +271,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
 
   const confirmImport = useMutation({
     mutationFn: async (): Promise<ApiSpreadsheetImportConfirmSummary> => {
-      if (!importId) throw new Error("Importacao nao iniciada");
+      if (!importId) throw new Error("Importação não iniciada");
       const selectedSheets = sheets.filter((sheet) => sheet.enabled);
       if (selectedSheets.length === 0) throw new Error("Selecione pelo menos uma aba para importar");
 
@@ -319,12 +319,12 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
         queryClient.invalidateQueries({ queryKey: ["views"] }),
         queryClient.invalidateQueries({ queryKey: ["datasets"] }),
       ]);
-      toast({ title: "Importacao confirmada", description: `${result.tables.length} tabela(s) criada(s), ${result.row_count.toLocaleString("pt-BR")} linhas processadas.` });
+      toast({ title: "Importação confirmada", description: `${result.tables.length} tabela(s) criada(s), ${result.row_count.toLocaleString("pt-BR")} linhas processadas.` });
       onCompleted();
     },
     onError: (error: unknown) => {
       const message = error instanceof ApiError ? error.detail || error.message : String((error as Error)?.message || error);
-      toast({ title: "Erro ao confirmar importacao", description: message, variant: "destructive" });
+      toast({ title: "Erro ao confirmar importação", description: message, variant: "destructive" });
     },
   });
 
@@ -411,7 +411,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                       </Button>
                     </div>
                     <div className="rounded-xl border border-border/70 bg-background/70 p-3 text-xs text-muted-foreground">
-                      No proximo passo voce seleciona abas, renomeia colunas e ajusta tipos antes da importacao.
+                      No próximo passo você seleciona abas, renomeia colunas e ajusta tipos antes da importação.
                     </div>
                   </div>
                 ) : (
@@ -441,7 +441,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                     <Input id="import-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Relatorio Financeiro Q1" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="import-desc">Descricao</Label>
+                    <Label htmlFor="import-desc">Descrição</Label>
                     <Textarea id="import-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Contexto e uso esperado..." />
                   </div>
                 </div>
@@ -451,7 +451,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
               <Button variant="outline" className="w-auto" onClick={onBack}><ArrowLeft className="mr-1 h-4 w-4" />Voltar</Button>
               <LoadingButton loading={startSpreadsheetImport.isPending} loadingText="Enviando..." className="w-auto bg-accent text-accent-foreground hover:bg-accent/90" disabled={!file || !name.trim()} onClick={() => startSpreadsheetImport.mutate()}>
-                Configurar Importacao<ChevronRight className="ml-1 h-4 w-4" />
+                Configurar Importação<ChevronRight className="ml-1 h-4 w-4" />
               </LoadingButton>
             </div>
           </motion.div>
@@ -502,13 +502,13 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                           </TabsList>
                           <Dialog open={advancedSettingsOpen} onOpenChange={setAdvancedSettingsOpen}>
                             <DialogTrigger asChild>
-                              <Button type="button" variant="outline" size="icon" className="h-8 w-8" aria-label="Configuracoes avancadas">
+                              <Button type="button" variant="outline" size="icon" className="h-8 w-8" aria-label="Configurações avancadas">
                                 <SlidersHorizontal className="h-4 w-4" />
                               </Button>
                             </DialogTrigger>
                             <DialogContent className="sm:max-w-md">
                               <DialogHeader>
-                                <DialogTitle className="text-base">Configuracoes avancadas da aba</DialogTitle>
+                                <DialogTitle className="text-base">Configurações avancadas da aba</DialogTitle>
                                 <DialogDescription>
                                   Ajustes locais para o processamento da aba selecionada.
                                 </DialogDescription>
@@ -517,19 +517,19 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                                 <div className="flex items-center justify-between rounded-lg border border-border bg-muted/10 px-3 py-2.5">
                                   <div>
                                     <p className="text-sm font-medium text-foreground">Ignorar linhas vazias</p>
-                                    <p className="text-xs text-muted-foreground">Nao aplica linhas totalmente vazias no processamento.</p>
+                                    <p className="text-xs text-muted-foreground">Não aplica linhas totalmente vazias no processamento.</p>
                                   </div>
                                   <Switch checked={activeSheet.skipEmptyRows} onCheckedChange={(checked) => updateSheet(activeSheetIndex, (c) => ({ ...c, skipEmptyRows: checked }))} />
                                 </div>
                                 <div className="flex items-center justify-between rounded-lg border border-border bg-muted/10 px-3 py-2.5">
                                   <div>
                                     <p className="text-sm font-medium text-foreground">Remover espacos extras</p>
-                                    <p className="text-xs text-muted-foreground">Trim local nas celulas antes de confirmar a importacao.</p>
+                                    <p className="text-xs text-muted-foreground">Trim local nas células antes de confirmar a importação.</p>
                                   </div>
                                   <Switch checked={activeSheet.trimWhitespace} onCheckedChange={(checked) => updateSheet(activeSheetIndex, (c) => ({ ...c, trimWhitespace: checked }))} />
                                 </div>
                                 <p className="text-[11px] text-muted-foreground">
-                                  No backend atual, linha de cabecalho e delimitador sao aplicados. Esses toggles permanecem como configuracao local da UI.
+                                  No backend atual, linha de cabeçalho e delimitador sao aplicados. Esses toggles permanecem como configuração local da UI.
                                 </p>
                               </div>
                             </DialogContent>
@@ -544,7 +544,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                             isCsv ? "md:grid-cols-[minmax(0,220px)_minmax(0,220px)_1fr]" : "md:grid-cols-[minmax(0,220px)_1fr]",
                           )}>
                             <div className="space-y-1.5">
-                              <Label className="text-xs">Linha do cabecalho</Label>
+                              <Label className="text-xs">Linha do cabeçalho</Label>
                               <Select value={String(activeSheet.headerRow)} onValueChange={(value) => updateSheet(activeSheetIndex, (c) => ({ ...c, headerRow: Math.max(1, Number(value) || 1), loaded: false }))}>
                                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>{[1, 2, 3, 4, 5].map((n) => <SelectItem key={n} value={String(n)}>Linha {n}</SelectItem>)}</SelectContent>
@@ -563,7 +563,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                             ) : null}
                             <div className="flex items-end justify-start md:justify-end">
                               <p className="text-[11px] text-muted-foreground">
-                                Alterar cabecalho ou delimitador atualiza a deteccao de colunas quando voce abrir o preview.
+                                Alterar cabeçalho ou delimitador atualiza a detecção de colunas quando você abrir o preview.
                               </p>
                             </div>
                           </div>
@@ -597,7 +597,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                                     </div>
                                   </div>
                                 ))}
-                                {activeSheet.columns.length === 0 && <div className="flex h-28 items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">Nenhuma coluna detectada ainda. Abra o preview para atualizar a deteccao.</div>}
+                                {activeSheet.columns.length === 0 && <div className="flex h-28 items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">Nenhuma coluna detectada ainda. Abra o preview para atualizar a detecção.</div>}
                               </div>
                             </ScrollArea>
                           </div>
@@ -640,7 +640,7 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
             <div className="min-w-0 rounded-2xl border border-border bg-card p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Resumo da Importacao</p>
+                  <p className="text-sm font-semibold text-foreground">Resumo da Importação</p>
                   <p className="mt-1 text-xs text-muted-foreground">{enabledSheetCount} abas, {totalRows.toLocaleString("pt-BR")} linhas e {totalEnabledColumns} colunas ativas.</p>
                 </div>
                 <div className="flex flex-wrap gap-2"><Badge variant="secondary">{enabledSheetCount} abas</Badge><Badge variant="secondary">{totalEnabledColumns} colunas</Badge><Badge variant="secondary">{totalRows.toLocaleString("pt-BR")} linhas</Badge></div>
@@ -657,12 +657,12 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                   );
                 })}
               </div>
-              {enabledSheetCount > 1 && <p className="mt-4 text-xs text-amber-600">A importacao multipla sera executada sequencialmente, uma aba por vez.</p>}
+              {enabledSheetCount > 1 && <p className="mt-4 text-xs text-amber-600">A importação multipla sera executada sequencialmente, uma aba por vez.</p>}
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-              <Button variant="outline" className="w-auto" onClick={() => setStep(1)}><ChevronLeft className="mr-1 h-4 w-4" />Voltar para Configuracao</Button>
-              <LoadingButton loading={confirmImport.isPending} loadingText="Importando..." className="w-auto bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => confirmImport.mutate()}>Confirmar Importacao</LoadingButton>
+              <Button variant="outline" className="w-auto" onClick={() => setStep(1)}><ChevronLeft className="mr-1 h-4 w-4" />Voltar para Configuração</Button>
+              <LoadingButton loading={confirmImport.isPending} loadingText="Importando..." className="w-auto bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => confirmImport.mutate()}>Confirmar Importação</LoadingButton>
             </div>
           </motion.div>
         )}

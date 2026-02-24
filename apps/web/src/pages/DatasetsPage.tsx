@@ -82,7 +82,7 @@ const DatasetsPage = () => {
         queryClient.invalidateQueries({ queryKey: ["dashboards"] }),
       ]);
       setDeleteTarget(null);
-      toast({ title: "Dataset excluido com sucesso" });
+      toast({ title: "Dataset excluído com sucesso" });
     },
     onError: (error: unknown) => {
       const message = error instanceof ApiError ? error.detail || error.message : "Falha ao excluir dataset";
@@ -101,18 +101,16 @@ const DatasetsPage = () => {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Datasets</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Explore os datasets disponiveis e crie dashboards.
+              Explore os datasets disponíveis e crie dashboards.
             </p>
           </div>
-          {isAdmin && (
-            <Button
-              className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0"
-              onClick={() => setCreateOpen(true)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Novo Dataset
-            </Button>
-          )}
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Dataset
+          </Button>
         </motion.div>
 
         <motion.div
@@ -141,7 +139,7 @@ const DatasetsPage = () => {
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar por nome ou descricao..."
+              placeholder="Buscar por nome ou descrição..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 h-9"
@@ -188,10 +186,10 @@ const DatasetsPage = () => {
         ) : datasets.length === 0 ? (
           <EmptyState
             icon={<FolderOpen className="h-5 w-5" />}
-            title={search ? "Nenhum resultado encontrado" : "Nenhum dataset disponivel"}
-            description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dataset para comecar."}
+            title={search ? "Nenhum resultado encontrado" : "Nenhum dataset disponível"}
+            description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dataset para começar."}
             action={
-              !search && isAdmin ? (
+              !search ? (
                 <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
                   <Plus className="h-3.5 w-3.5 mr-1.5" /> Criar dataset
                 </Button>
@@ -227,23 +225,21 @@ const DatasetsPage = () => {
         )}
       </main>
 
-      {isAdmin && (
-        <CreateDatasetDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          datasources={datasources}
-          views={views}
-          submitting={createDataset.isPending}
-          onCreate={({ name, description, datasourceId, viewId }) => createDataset.mutate({ name, description, datasourceId, viewId })}
-        />
-      )}
+      <CreateDatasetDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        datasources={datasources}
+        views={views}
+        submitting={createDataset.isPending}
+        onCreate={({ name, description, datasourceId, viewId }) => createDataset.mutate({ name, description, datasourceId, viewId })}
+      />
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
         }}
         title="Excluir dataset?"
-        description={`Esta acao excluira "${deleteTarget?.name}" e os dashboards vinculados.`}
+        description={`Esta ação excluirá "${deleteTarget?.name}" e os dashboards vinculados.`}
         confirmLabel={deleteDataset.isPending ? "Excluindo..." : "Excluir"}
         destructive
         onConfirm={() => {
@@ -287,7 +283,7 @@ const CreateDatasetDialog = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Novo Dataset</DialogTitle>
-          <DialogDescription>Selecione o datasource e a tabela para criar um novo dataset.</DialogDescription>
+          <DialogDescription>Selecione a fonte de dados e a tabela para criar um novo dataset.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
@@ -295,11 +291,11 @@ const CreateDatasetDialog = ({
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Sales Pipeline" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Descricao</Label>
-            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descreva o proposito deste dataset..." rows={2} />
+            <Label className="text-xs font-semibold text-muted-foreground">Descrição</Label>
+            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descreva o propósito deste dataset..." rows={2} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Datasource <span className="text-destructive">*</span></Label>
+            <Label className="text-xs font-semibold text-muted-foreground">Fonte de dados <span className="text-destructive">*</span></Label>
             <Select
               value={datasourceId}
               onValueChange={(value) => {

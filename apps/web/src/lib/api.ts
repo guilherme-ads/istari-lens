@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken } from "@/lib/auth";
+import { getAuthToken } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -47,7 +47,6 @@ async function request<T>(path: string, init: RequestInit = {}, requiresAuth = t
           : undefined;
 
     if (requiresAuth && response.status === 401) {
-      clearAuthSession();
       if (typeof window !== "undefined" && window.location.pathname !== "/login") {
         window.location.assign("/login");
       }
@@ -508,7 +507,6 @@ export const api = {
       const payload = await response.json().catch(() => ({}));
       const detail = typeof payload?.detail === "string" ? payload.detail : `Request failed with status ${response.status}`;
       if (response.status === 401) {
-        clearAuthSession();
         if (typeof window !== "undefined" && window.location.pathname !== "/login") {
           window.location.assign("/login");
         }

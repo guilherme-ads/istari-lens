@@ -18,7 +18,6 @@ const LoginPage = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -152,7 +151,7 @@ const LoginPage = () => {
             <LoadingButton
               type="submit"
               loading={loading}
-              loadingText="Entrando…"
+              loadingText="Entrando..."
               className="w-full h-10 bg-accent text-accent-foreground hover:bg-accent/90 font-semibold"
             >
               Entrar
@@ -169,7 +168,7 @@ const LoginPage = () => {
           </div>
           <p className="text-center text-xs text-muted-foreground/60">
             {/* Cliente pediu remover "istari" do texto visivel; para reverter, restaurar "istari Lens". */}
-            © 2026 Lens App · Data Intelligence Platform
+            © 2026 Lens App | Data Intelligence Platform
           </p>
         </div>
       </motion.div>
@@ -178,4 +177,3 @@ const LoginPage = () => {
 };
 
 export default LoginPage;
-

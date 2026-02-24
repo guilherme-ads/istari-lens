@@ -63,7 +63,7 @@ const SharedAnalysisPage = () => {
     return (
       <div className="min-h-screen bg-background">
         <main className="container py-8 max-w-5xl">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Analise nao encontrada" description={(sharedQuery.error as Error | undefined)?.message || "Token invalido ou expirado."} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Analise não encontrada" description={(sharedQuery.error as Error | undefined)?.message || "Token invalido ou expirado."} />
         </main>
       </div>
     );
@@ -119,7 +119,7 @@ const SharedAnalysisPage = () => {
 
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Visualizacao</h2>
+              <h2 className="text-sm font-semibold text-foreground">Visualização</h2>
               <span className="text-xs text-muted-foreground">{rows.length} registros</span>
             </div>
             {xKey && yKey ? (
@@ -133,7 +133,7 @@ const SharedAnalysisPage = () => {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <EmptyState icon={<Database className="h-5 w-5" />} title="Sem dados para grafico" description="Nao foi possivel identificar colunas para visualizacao." />
+              <EmptyState icon={<Database className="h-5 w-5" />} title="Sem dados para grafico" description="Não foi possivel identificar colunas para visualização." />
             )}
           </div>
 

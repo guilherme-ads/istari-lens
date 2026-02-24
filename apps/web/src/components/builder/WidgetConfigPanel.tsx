@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+﻿import { memo, useEffect, useMemo, useState } from "react";
 import { Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,11 +35,11 @@ const relativeDateOptions = [
 ] as const;
 const aggLabelMap = {
   count: "CONTAGEM",
-  distinct_count: "CONTAGEM ÃšNICA",
+  distinct_count: "CONTAGEM ÚNICA",
   sum: "SOMA",
-  avg: "MÃ‰DIA",
-  max: "MÃXIMO",
-  min: "MÃNIMO",
+  avg: "MÉDIA",
+  max: "MÁXIMO",
+  min: "MÍNIMO",
 } as const;
 const dreRowTypeMeta = {
   result: {
@@ -191,7 +191,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
       if (!baseMetric) {
         messages.push("KPI requer exatamente 1 metrica.");
       } else if (baseMetric.op && numOps.includes(baseMetric.op) && (!baseMetric.column || !numericColumns.some((column) => column.name === baseMetric.column))) {
-        messages.push("KPI com sum/avg/min/max requer coluna numerica.");
+        messages.push("KPI com sum/avg/min/max requer coluna numérica.");
       }
 
       if (config.composite_metric) {
@@ -252,14 +252,14 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
         const baseRowIndex = resolveDrePercentBaseRowIndex(config.dre_rows, config.dre_percent_base_row_index);
         if (typeof baseRowIndex !== "number") messages.push("Widget DRE requer ao menos uma conta N1 para base de percentual.");
         config.dre_rows.forEach((row, index) => {
-          if (!row.title.trim()) messages.push(`Linha ${index + 1}: titulo obrigatorio.`);
+          if (!row.title.trim()) messages.push(`Linha ${index + 1}: título obrigatorio.`);
           if (!row.metrics || row.metrics.length === 0) {
             messages.push(`Linha ${index + 1}: requer ao menos 1 metrica.`);
             return;
           }
           row.metrics.forEach((metricItem) => {
             if (numOps.includes(metricItem.op) && (!metricItem.column || !numericColumns.some((column) => column.name === metricItem.column))) {
-              messages.push(`Linha ${index + 1}: agregacao ${metricItem.op} requer coluna numerica.`);
+              messages.push(`Linha ${index + 1}: agregação ${metricItem.op} requer coluna numérica.`);
             }
             if (metricItem.op === "distinct_count" && !metricItem.column) {
               messages.push(`Linha ${index + 1}: distinct_count requer coluna.`);
@@ -435,7 +435,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
         <SheetHeader>
           <SheetTitle className="text-base">Configurar Widget</SheetTitle>
           <SheetDescription className="text-xs">
-            {view ? `${view.schema}.${view.name}` : "Tabela nao encontrada"}
+            {view ? `${view.schema}.${view.name}` : "Tabela não encontrada"}
           </SheetDescription>
         </SheetHeader>
 
@@ -661,11 +661,11 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                   <SelectTrigger className="w-[130px] h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="count">CONTAGEM</SelectItem>
-                    <SelectItem value="distinct_count">CONTAGEM ÃšNICA</SelectItem>
+                    <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
                     <SelectItem value="sum">SOMA</SelectItem>
-                    <SelectItem value="avg">MÃ‰DIA</SelectItem>
-                    <SelectItem value="min">MÃNIMO</SelectItem>
-                    <SelectItem value="max">MÃXIMO</SelectItem>
+                    <SelectItem value="avg">MÉDIA</SelectItem>
+                    <SelectItem value="min">MÍNIMO</SelectItem>
+                    <SelectItem value="max">MÁXIMO</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select
@@ -760,12 +760,12 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="avg">MÃ‰DIA</SelectItem>
+                        <SelectItem value="avg">MÉDIA</SelectItem>
                         <SelectItem value="sum">SOMA</SelectItem>
                         <SelectItem value="count">CONTAGEM</SelectItem>
-                        <SelectItem value="distinct_count">CONTAGEM ÃšNICA</SelectItem>
-                        <SelectItem value="min">MÃNIMO</SelectItem>
-                        <SelectItem value="max">MÃXIMO</SelectItem>
+                        <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
+                        <SelectItem value="min">MÍNIMO</SelectItem>
+                        <SelectItem value="max">MÁXIMO</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -871,11 +871,11 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                       <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="count">CONTAGEM</SelectItem>
-                        <SelectItem value="distinct_count">CONTAGEM ÃšNICA</SelectItem>
+                        <SelectItem value="distinct_count">CONTAGEM ÚNICA</SelectItem>
                         <SelectItem value="sum">SOMA</SelectItem>
-                        <SelectItem value="avg">MÃ‰DIA</SelectItem>
-                        <SelectItem value="min">MÃNIMO</SelectItem>
-                        <SelectItem value="max">MÃXIMO</SelectItem>
+                        <SelectItem value="avg">MÉDIA</SelectItem>
+                        <SelectItem value="min">MÍNIMO</SelectItem>
+                        <SelectItem value="max">MÁXIMO</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select
@@ -1251,7 +1251,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                 >
                   <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione uma conta N1" /></SelectTrigger>
                   <SelectContent>
-                    {dreResultRowOptions.length === 0 && <SelectItem value="__none__">Nenhuma conta N1 disponivel</SelectItem>}
+                    {dreResultRowOptions.length === 0 && <SelectItem value="__none__">Nenhuma conta N1 disponível</SelectItem>}
                     {dreResultRowOptions.map(({ row, index }) => (
                       <SelectItem key={`dre-percent-base-${index}`} value={String(index)}>
                         {row.title.trim() || `Conta N1 ${index + 1}`}
@@ -1417,7 +1417,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
           <Separator />
           <div className="space-y-1">
             <Label className="text-xs font-semibold text-muted-foreground">Consulta</Label>
-            <p className="text-[11px] text-muted-foreground">Defina filtros, ordenacao e limites.</p>
+            <p className="text-[11px] text-muted-foreground">Defina filtros, ordenação e limites.</p>
           </div>
 
           {draft.config.widget_type !== "text" && <div className="space-y-2">
@@ -1492,7 +1492,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                       <SelectItem value="in">in</SelectItem>
                       <SelectItem value="not_in">not in</SelectItem>
                       <SelectItem value="is_null">nulo</SelectItem>
-                      <SelectItem value="not_null">nao nulo</SelectItem>
+                      <SelectItem value="not_null">não nulo</SelectItem>
                     </SelectContent>
                   </Select>
                   {draft.config.filters[0].op === "is_null" || draft.config.filters[0].op === "not_null" ? (
@@ -1629,7 +1629,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
 
           {(draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && <div className="space-y-2">
             <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <ArrowUpDown className="h-3 w-3" /> Ordenacao (categorico)
+              <ArrowUpDown className="h-3 w-3" /> Ordenação (categorico)
             </Label>
             <div className="flex items-center gap-2">
               <Select
@@ -1650,9 +1650,9 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     },
                   })}
               >
-                <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem ordenacao" /></SelectTrigger>
+                <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem ordenação" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">Sem ordenacao</SelectItem>
+                  <SelectItem value="__none__">Sem ordenação</SelectItem>
                   <SelectItem value="__metric__">Pela metrica</SelectItem>
                   {barDim && <SelectItem value={barDim}>Pela dimensao</SelectItem>}
                 </SelectContent>
@@ -1701,7 +1701,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
 
           {draft.config.widget_type !== "text" && draft.config.widget_type !== "kpi" && draft.config.widget_type !== "bar" && draft.config.widget_type !== "column" && draft.config.widget_type !== "donut" && draft.config.widget_type !== "dre" && <div className="space-y-2">
             <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <ArrowUpDown className="h-3 w-3" /> Ordenacao simples
+              <ArrowUpDown className="h-3 w-3" /> Ordenação simples
             </Label>
             <div className="flex items-center gap-2">
               <Select
@@ -1717,9 +1717,9 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                     },
                   })}
               >
-                <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem ordenacao" /></SelectTrigger>
+                <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem ordenação" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">Sem ordenacao</SelectItem>
+                  <SelectItem value="__none__">Sem ordenação</SelectItem>
                   {columns.map((column) => (
                     <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
                   ))}
@@ -1749,9 +1749,9 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
           <Separator />
 
           <div className="space-y-2">
-            <Label className="text-xs font-semibold text-muted-foreground">Configuracoes visuais</Label>
+            <Label className="text-xs font-semibold text-muted-foreground">Configurações visuais</Label>
             <div className="flex items-center justify-between rounded-md border border-border p-2">
-              <span className="text-xs text-muted-foreground">Mostrar titulo do widget</span>
+              <span className="text-xs text-muted-foreground">Mostrar título do widget</span>
               <Switch
                 checked={draft.config.show_title !== false}
                 onCheckedChange={(checked) =>
@@ -1820,7 +1820,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
 
           <div className="flex gap-2">
             <Button className="flex-1" onClick={handleSave} disabled={saving}>
-              {saving ? "Salvando..." : "Salvar alteracoes"}
+              {saving ? "Salvando..." : "Salvar alterações"}
             </Button>
             <Button variant="destructive" size="icon" onClick={onDelete}>
               <Trash2 className="h-4 w-4" />

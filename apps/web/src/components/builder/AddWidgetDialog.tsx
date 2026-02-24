@@ -7,14 +7,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { WidgetType } from "@/types/dashboard";
 
 const widgetTypes: { value: WidgetType; label: string; icon: typeof BarChartHorizontal; desc: string; whenToUse: string }[] = [
-  { value: "kpi", label: "KPI", icon: Hash, desc: "Metrica agregada unica", whenToUse: "Quando quiser destacar um unico numero-chave (meta, total, media)." },
+  { value: "kpi", label: "KPI", icon: Hash, desc: "Metrica agregada unica", whenToUse: "Quando quiser destacar um unico numero-chave (meta, total, média)." },
   { value: "bar", label: "Barra", icon: BarChartHorizontal, desc: "Categoria x metrica agregada", whenToUse: "Quando comparar poucas categorias em barras horizontais." },
   { value: "column", label: "Coluna", icon: BarChart3, desc: "Categoria x metrica agregada em barras verticais", whenToUse: "Quando comparar categorias em barras verticais." },
-  { value: "donut", label: "Rosca", icon: PieChart, desc: "Distribuicao percentual por categoria", whenToUse: "Quando mostrar composicao/participacao percentual entre categorias." },
+  { value: "donut", label: "Rosca", icon: PieChart, desc: "Distribuicao percentual por categoria", whenToUse: "Quando mostrar composicao/participação percentual entre categorias." },
   { value: "dre", label: "DRE", icon: Table2, desc: "Tabela de demonstrativo com Totais, Contas Redutoras e Contas Analiticas", whenToUse: "Quando montar um demonstrativo financeiro com totais, contas redutoras e contas analiticas." },
   { value: "line", label: "Linha", icon: LineChart, desc: "Serie temporal agregada", whenToUse: "Quando analisar tendencia ao longo do tempo." },
   { value: "table", label: "Tabela", icon: Table2, desc: "Linhas detalhadas com colunas selecionadas", whenToUse: "Quando precisar ver detalhes linha a linha e exportar dados." },
-  { value: "text", label: "Texto", icon: TextCursorInput, desc: "Bloco de texto livre para titulo ou anotacoes", whenToUse: "Quando incluir contexto, explicacoes ou instrucoes no dashboard." },
+  { value: "text", label: "Texto", icon: TextCursorInput, desc: "Bloco de texto livre para título ou anotações", whenToUse: "Quando incluir contexto, explicações ou instrucoes no dashboard." },
 ];
 
 interface AddWidgetDialogProps {

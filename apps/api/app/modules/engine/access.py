@@ -32,9 +32,6 @@ def resolve_datasource_access(
     workspace_id = int(datasource.created_by_id)
     actor_user_id = int(current_user.id) if current_user is not None else None
 
-    if current_user is not None and not current_user.is_admin and current_user.id != datasource.created_by_id:
-        raise HTTPException(status_code=403, detail="User is not authorized for datasource workspace")
-
     datasource_url = resolve_datasource_url(datasource)
     if not datasource_url:
         raise HTTPException(status_code=400, detail="Datasource URL is unavailable")

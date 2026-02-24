@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -259,7 +259,7 @@ const AdminPage = () => {
     return (
       <div className="bg-background">
         <main className="container py-6">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administracao" description={errorMessage} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administração" description={errorMessage} />
         </main>
       </div>
     );
@@ -276,7 +276,7 @@ const AdminPage = () => {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Gerenciamento</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Configure fontes de dados e gerencie tabelas disponiveis.
+              Configure fontes de dados e gerencie tabelas disponíveis.
             </p>
           </div>
 
@@ -318,7 +318,7 @@ const AdminPage = () => {
                       <div>
                         <p className="font-semibold text-foreground">Banco de Dados</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Conexao por URL para sincronizar tabelas existentes.
+                          Conexão por URL para sincronizar tabelas existentes.
                         </p>
                       </div>
                     </div>
@@ -378,7 +378,7 @@ const AdminPage = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ds-desc">Descricao</Label>
+                    <Label htmlFor="ds-desc">Descrição</Label>
                     <Textarea
                       id="ds-desc"
                       value={formDesc}
@@ -423,7 +423,7 @@ const AdminPage = () => {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard icon={ServerCog} label="Datasources" value={stats.totalDs} detail={`${stats.activeDs} ativos`} delay={0} />
           <StatCard icon={Activity} label="Ativos" value={stats.activeDs} detail={`de ${stats.totalDs} total`} delay={0.05} />
-          <StatCard icon={Layers} label="Tabelas" value={stats.totalTables} detail={`${stats.activeTables} disponiveis`} delay={0.1} />
+          <StatCard icon={Layers} label="Tabelas" value={stats.totalTables} detail={`${stats.activeTables} disponíveis`} delay={0.1} />
           <StatCard icon={AlertCircle} label="Inativos" value={stats.totalDs - stats.activeDs + stats.totalTables - stats.activeTables} detail="requerem atencao" delay={0.15} />
         </div>
 
@@ -488,7 +488,7 @@ const AdminPage = () => {
                 <EmptyState
                   icon={<Database className="h-5 w-5" />}
                   title={dsSearch ? "Nenhum resultado" : "Nenhum datasource registrado"}
-                  description={dsSearch ? "Tente outro termo de busca." : "Clique em Nova Fonte para comecar."}
+                  description={dsSearch ? "Tente outro termo de busca." : "Clique em Nova Fonte para começar."}
                 />
               ) : (
                 <div className="glass-card overflow-hidden">
@@ -530,7 +530,7 @@ const AdminPage = () => {
                           <TableCell>
                             <div className="flex items-center justify-end gap-0.5">
                               <ActionBtn
-                                tooltip={ds.sourceType === "spreadsheet" ? "Nao se aplica para planilha" : "Sincronizar"}
+                                tooltip={ds.sourceType === "spreadsheet" ? "Não se aplica para planilha" : "Sincronizar"}
                                 onClick={() => handleSync(ds.id)}
                                 disabled={syncingId === ds.id || ds.sourceType === "spreadsheet"}
                               >
@@ -646,8 +646,8 @@ const AdminPage = () => {
         title="Confirmar exclusao"
         description={
           deleteTarget?.type === "ds"
-            ? `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta acao removera tambem datasets e dashboards vinculados.`
-            : `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta acao nao pode ser desfeita.`
+            ? `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta ação removera tambem datasets e dashboards vinculados.`
+            : `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta ação não pode ser desfeita.`
         }
         details={
           deleteTarget?.type === "ds" && deleteImpact ? (

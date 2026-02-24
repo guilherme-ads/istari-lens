@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.shared.infrastructure.database import get_db
-from app.modules.core.legacy.models import User, Dataset, View
+from app.modules.core.legacy.models import User, Dataset, View, Dashboard
 from app.modules.core.legacy.schemas import DatasetResponse, DatasetCreateRequest, DatasetUpdateRequest
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
 
@@ -28,9 +28,9 @@ async def list_datasets(
 async def create_dataset(
     request: DatasetCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Create a dataset from a registered view. Admin only."""
+    """Create a dataset from a registered view."""
     view = (
         db.query(View)
         .filter(
@@ -43,6 +43,16 @@ async def create_dataset(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="View not found for the provided datasource",
+        )
+    if not view.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="View is inactive",
+        )
+    if not view.datasource or not view.datasource.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Datasource is inactive",
         )
 
     dataset = Dataset(
@@ -91,14 +101,14 @@ async def delete_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Delete a dataset. Admin only."""
+    """Delete a dataset and its dashboards. Admin only."""
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Dataset not found",
         )
-
+    db.query(Dashboard).filter(Dashboard.dataset_id == dataset_id).delete(synchronize_session=False)
     db.delete(dataset)
     db.commit()
 

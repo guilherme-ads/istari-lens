@@ -149,7 +149,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50">
         <div className="min-w-0 flex-1">
           <h4 className="text-sm font-semibold text-foreground truncate">
-            {widget.title || "Sem titulo"}
+            {widget.title || "Sem título"}
           </h4>
         </div>
         {!readOnly && (
@@ -178,7 +178,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
                   <Eye className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Ocultar titulo</TooltipContent>
+              <TooltipContent className="text-xs">Ocultar título</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -346,7 +346,7 @@ const SectionBlock = ({
             onClick={() => !readOnly && setEditingTitle(true)}
             className={`text-sm font-semibold text-foreground transition-colors flex items-center gap-1 ${readOnly ? "" : "hover:text-accent"}`}
           >
-            {section.title || "Secao sem titulo"}
+            {section.title || "Secao sem título"}
             {!readOnly && <Pencil className="h-3 w-3 opacity-0 group-hover/section:opacity-100 transition-opacity" />}
           </button>
         )}
@@ -360,7 +360,7 @@ const SectionBlock = ({
                 {section.showTitle === false ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
             </TooltipTrigger>
-            <TooltipContent className="text-xs">{section.showTitle === false ? "Mostrar titulo da secao" : "Ocultar titulo da secao"}</TooltipContent>
+            <TooltipContent className="text-xs">{section.showTitle === false ? "Mostrar título da secao" : "Ocultar título da secao"}</TooltipContent>
           </Tooltip>
         )}
 

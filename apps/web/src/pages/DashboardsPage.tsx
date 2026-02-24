@@ -108,7 +108,7 @@ const DashboardsPage = () => {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Dashboards</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Explore dashboards disponiveis e crie novos a partir de datasets.
+              Explore dashboards disponíveis e crie novos a partir de datasets.
             </p>
           </div>
           <Button
@@ -138,7 +138,7 @@ const DashboardsPage = () => {
           <div className="h-4 w-px bg-border hidden sm:block" />
           <div className="flex items-center gap-2 text-muted-foreground">
             <Clock3 className="h-4 w-4 text-accent" />
-            <span className="font-semibold text-foreground">{loading ? "..." : avgLatency != null ? `${avgLatency.toFixed(1)} ms` : "-"}</span> latencia media
+            <span className="font-semibold text-foreground">{loading ? "..." : avgLatency != null ? `${avgLatency.toFixed(1)} ms` : "-"}</span> latência média
           </div>
         </motion.div>
 
@@ -198,8 +198,8 @@ const DashboardsPage = () => {
         ) : filteredRows.length === 0 ? (
           <EmptyState
             icon={<LayoutDashboard className="h-5 w-5" />}
-            title={search ? "Nenhum resultado encontrado" : "Nenhum dashboard disponivel"}
-            description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dashboard para comecar."}
+            title={search ? "Nenhum resultado encontrado" : "Nenhum dashboard disponível"}
+            description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dashboard para começar."}
             action={
               !search ? (
                 <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
@@ -269,7 +269,7 @@ const CreateDashboardDialog = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Novo Dashboard</DialogTitle>
-          <DialogDescription>Selecione o dataset para iniciar a criacao do dashboard.</DialogDescription>
+          <DialogDescription>Selecione o dataset para iniciar a criação do dashboard.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
@@ -280,7 +280,7 @@ const CreateDashboardDialog = ({
               </SelectTrigger>
               <SelectContent>
                 {datasets.length === 0
-                  ? <SelectItem value="__none__" disabled>Nenhum dataset disponivel</SelectItem>
+                  ? <SelectItem value="__none__" disabled>Nenhum dataset disponível</SelectItem>
                   : datasets.map((dataset) => (
                     <SelectItem key={dataset.id} value={dataset.id}>{dataset.name}</SelectItem>
                   ))}
@@ -339,7 +339,7 @@ const DashboardGridCard = ({
       <h3 className="font-semibold text-foreground leading-tight">{item.name}</h3>
       <code className="text-xs font-mono text-muted-foreground">{item.dataset_name}</code>
       <p className="text-sm text-muted-foreground line-clamp-2">
-        Criado por {item.created_by_name || item.created_by_email || "Nao identificado"}
+        Criado por {item.created_by_name || item.created_by_email || "Não identificado"}
       </p>
     </div>
 
@@ -397,7 +397,7 @@ const DashboardListItem = ({
         <code className="text-xs font-mono text-muted-foreground hidden sm:inline">{item.dataset_name}</code>
       </div>
       <p className="text-sm text-muted-foreground truncate mt-0.5">
-        {item.created_by_name || item.created_by_email || "Nao identificado"} . {formatDateTimeBR(item.last_edited_at)}
+        {item.created_by_name || item.created_by_email || "Não identificado"} | {formatDateTimeBR(item.last_edited_at)}
       </p>
     </div>
     <div className="hidden md:flex items-center gap-4 shrink-0 text-xs text-muted-foreground">
