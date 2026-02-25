@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Preinstall frontend dependencies for faster first boot.
 COPY apps/web/package*.json ./apps/web/
-RUN npm --prefix apps/web ci
+RUN npm --prefix apps/web install
 
 EXPOSE 3000
 
