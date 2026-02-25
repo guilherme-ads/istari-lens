@@ -496,39 +496,6 @@ export const api = {
     return request<ApiSpreadsheetImport>(`/imports/${importId}/upload`, { method: "POST", body: formData });
   },
 
-  downloadSpreadsheetImportFile: async (importId: number) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/imports/${importId}/download`, {
-      method: "GET",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      const detail = typeof payload?.detail === "string" ? payload.detail : `Request failed with status ${response.status}`;
-      if (response.status === 401) {
-        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-          window.location.assign("/login");
-        }
-      }
-      throw new ApiError(detail, response.status, detail);
-    }
-
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const filenameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = filenameMatch?.[1] || `import_${importId}`;
-
-    const downloadUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(downloadUrl);
-  },
-
   updateSpreadsheetImportTransform: (
     importId: number,
     payload: {
