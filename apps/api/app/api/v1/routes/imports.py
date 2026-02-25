@@ -5,7 +5,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -15,8 +14,8 @@ from app.modules.imports.services import (
     build_resource_id,
     build_table_name,
     create_import_table_and_load_rows,
+    delete_file_from_uri,
     detect_file_format,
-    infer_filename_from_file_uri,
     load_file_from_uri,
     normalize_column_name,
     parse_spreadsheet,
@@ -185,8 +184,8 @@ async def create_import(
 ):
     analytics_db_url = _require_analytics_db_url()
     datasource = DataSource(
-        name=f"{request.name} (Spreadsheet)",
-        description=(request.description or f"Spreadsheet import datasource for {request.name}"),
+        name=request.name,
+        description=(request.description or f"Fonte de dados de importação de planilha para {request.name}"),
         database_url=credential_encryptor.encrypt(analytics_db_url),
         source_type="file_spreadsheet_import",
         tenant_id=request.tenant_id,
@@ -443,6 +442,8 @@ async def confirm_import(
         tables: list[ImportConfirmedTableResponse] = []
         all_error_samples: list[dict[str, Any]] = []
         total_rows = 0
+        datasource = db.query(DataSource).filter(DataSource.id == spreadsheet_import.datasource_id).first()
+        datasource_display_name = datasource.name if datasource else spreadsheet_import.display_name
 
         for index, current_sheet_name in enumerate(sheet_names, start=1):
             current_parsed = parsed
@@ -501,7 +502,7 @@ async def confirm_import(
                     datasource_id=spreadsheet_import.datasource_id,
                     schema_name="public",
                     view_name=table_name,
-                    description=f"Imported spreadsheet #{spreadsheet_import.id}",
+                    description=f"Planilha importada: {datasource_display_name}",
                     is_active=True,
                 )
                 db.add(view)
@@ -531,7 +532,6 @@ async def confirm_import(
                 )
             )
 
-        datasource = db.query(DataSource).filter(DataSource.id == spreadsheet_import.datasource_id).first()
         if datasource:
             datasource.status = "active"
             datasource.is_active = True
@@ -545,9 +545,18 @@ async def confirm_import(
         spreadsheet_import.finished_at = datetime.utcnow()
         spreadsheet_import.confirmed_at = datetime.utcnow()
         spreadsheet_import.updated_at = datetime.utcnow()
+        source_file_uri = spreadsheet_import.file_uri
 
         db.commit()
         db.refresh(spreadsheet_import)
+        if source_file_uri:
+            try:
+                delete_file_from_uri(file_uri=source_file_uri, settings=settings)
+                spreadsheet_import.file_uri = None
+                spreadsheet_import.updated_at = datetime.utcnow()
+                db.commit()
+            except Exception:
+                db.rollback()
         return ImportConfirmResponse(
             import_id=spreadsheet_import.id,
             datasource_id=spreadsheet_import.datasource_id,
@@ -571,38 +580,3 @@ async def confirm_import(
         raise HTTPException(status_code=500, detail=f"Import confirmation failed: {str(exc)}") from exc
 
 
-@router.get("/{import_id}/download")
-async def download_import_file(
-    import_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    spreadsheet_import = db.query(SpreadsheetImport).filter(SpreadsheetImport.id == import_id).first()
-    if not spreadsheet_import:
-        raise HTTPException(status_code=404, detail="Import not found")
-    _ensure_import_access(spreadsheet_import, current_user)
-    if not spreadsheet_import.file_uri:
-        raise HTTPException(status_code=400, detail="Import has no uploaded file")
-
-    try:
-        raw = load_file_from_uri(file_uri=spreadsheet_import.file_uri, settings=settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to download import file: {str(exc)}") from exc
-
-    filename = infer_filename_from_file_uri(
-        spreadsheet_import.file_uri,
-        fallback=f"import_{spreadsheet_import.id}.{spreadsheet_import.file_format or 'bin'}",
-    )
-    media_type = "application/octet-stream"
-    if filename.lower().endswith(".csv"):
-        media_type = "text/csv"
-    elif filename.lower().endswith(".xlsx"):
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-    return Response(
-        content=raw,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )

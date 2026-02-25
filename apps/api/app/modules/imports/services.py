@@ -5,7 +5,6 @@ import hashlib
 import io
 import re
 import unicodedata
-from urllib.parse import unquote
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -345,21 +344,18 @@ def load_file_from_uri(*, file_uri: str, settings: Settings) -> bytes:
     raise ValueError("Unsupported file_uri protocol")
 
 
-def infer_filename_from_file_uri(file_uri: str, *, fallback: str) -> str:
+def delete_file_from_uri(*, file_uri: str, settings: Settings) -> None:
     if file_uri.startswith("local://"):
         path = Path(file_uri.replace("local://", "", 1))
-        name = path.name
-    elif file_uri.startswith("s3://"):
-        _, key = _parse_s3_uri(file_uri)
-        name = key.rsplit("/", 1)[-1]
-    else:
-        return fallback
-
-    decoded = unquote(name)
-    parts = decoded.split("_", 1)
-    if len(parts) == 2 and len(parts[0]) >= 32:
-        return parts[1]
-    return decoded or fallback
+        if path.exists():
+            path.unlink()
+        return
+    if file_uri.startswith("s3://"):
+        bucket, key = _parse_s3_uri(file_uri)
+        s3 = _create_s3_client(settings)
+        s3.delete_object(Bucket=bucket, Key=key)
+        return
+    raise ValueError("Unsupported file_uri protocol")
 
 
 def _parse_s3_uri(file_uri: str) -> tuple[str, str]:
@@ -393,21 +389,20 @@ def build_table_name(
     sheet_name: str | None = None,
     sheet_index: int | None = None,
 ) -> str:
-    base_slug = normalize_column_name(display_name or "import", fallback_index=import_id)
-
     if sheet_name:
         sheet_slug = normalize_column_name(sheet_name, fallback_index=sheet_index or 1)
-        raw = f"{base_slug}_{sheet_slug}_{import_id}"
+        raw = f"{sheet_slug}_{import_id}"
     else:
+        base_slug = normalize_column_name(display_name or "import", fallback_index=import_id)
         raw = f"{base_slug}_{import_id}"
 
     if len(raw) <= 63:
         return raw
 
     if sheet_name:
-        suffix = f"_{sheet_slug}_{import_id}"
-        max_base_len = max(1, 63 - len(suffix))
-        return f"{base_slug[:max_base_len]}{suffix}"
+        suffix = f"_{import_id}"
+        max_sheet_len = max(1, 63 - len(suffix))
+        return f"{sheet_slug[:max_sheet_len]}{suffix}"
 
     suffix = f"_{import_id}"
     max_base_len = max(1, 63 - len(suffix))
