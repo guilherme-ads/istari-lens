@@ -6,7 +6,7 @@ WORKDIR /repo
 COPY tsconfig.base.json ./tsconfig.base.json
 COPY apps/web/package*.json ./apps/web/
 WORKDIR /repo/apps/web
-RUN npm ci
+RUN npm install
 COPY apps/web/ ./
 ENV VITE_API_URL=${VITE_API_URL}
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
