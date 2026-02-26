@@ -21,22 +21,22 @@
 NEXT_PUBLIC_API_URL=https://api.istari-lens.com
 NEXT_PUBLIC_APP_URL=https://istari-lens.com
 
-# Backend
-API_HOST=0.0.0.0
-API_PORT=8000
-ENVIRONMENT=production
-CORS_ORIGINS=https://istari-lens.com,https://app.istari-lens.com
+# Backend (this app uses APP_ prefix in settings)
+APP_API_HOST=0.0.0.0
+APP_API_PORT=8000
+APP_ENVIRONMENT=production
+APP_CORS_ORIGINS=https://istari-lens.com,https://app.istari-lens.com,https://lens.up.railway.app
 
 # JWT
-SECRET_KEY=<strong-random-key-from-vault>
-JWT_ALGORITHM=HS256
-JWT_EXPIRE_MINUTES=60
-ENCRYPTION_KEY=<stable-fernet-key-from-vault>
+APP_SECRET_KEY=<strong-random-key-from-vault>
+APP_JWT_ALGORITHM=HS256
+APP_JWT_EXPIRE_MINUTES=60
+APP_ENCRYPTION_KEY=<stable-fernet-key-from-vault>
 
 # Database
-DATABASE_URL=postgresql+psycopg://user:pass@prod-db.example.com:5432/istari_product
-APP_DB_URL=postgresql+psycopg://user:pass@prod-db.example.com:5432/istari_product
-ANALYTICS_DB_URL=postgresql://readonly:pass@analytics-db.example.com:5432/istari_analytics
+APP_DATABASE_URL=postgresql+psycopg://user:pass@prod-db.example.com:5432/istari_product
+APP_APP_DB_URL=postgresql+psycopg://user:pass@prod-db.example.com:5432/istari_product
+APP_ANALYTICS_DB_URL=postgresql://readonly:pass@analytics-db.example.com:5432/istari_analytics
 ```
 
 ## Docker Deployment
@@ -419,5 +419,4 @@ psql -U postgres -h prod-db istari_product < backup_20260101.sql
 
 **Last Updated**: February 2026
 **Deployment Version**: 1.0.0
-
 

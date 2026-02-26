@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, ValidationInfo, field_validator, model_validator
+from pydantic import AliasChoices, Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -26,7 +26,10 @@ class Settings(BaseSettings):
     # =========================
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("APP_CORS_ORIGINS", "CORS_ORIGINS"),
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     # =========================
