@@ -32,6 +32,11 @@ const RequireAuth = ({ children }: { children: JSX.Element }) => {
   return children;
 };
 
+const RedirectIfAuthenticated = ({ children }: { children: JSX.Element }) => {
+  if (hasAuthSession()) return <Navigate to="/home" replace />;
+  return children;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -41,7 +46,7 @@ const App = () => (
         <Routes>
           {/* Public pages — no sidebar */}
           <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
           <Route path="/shared/:shareToken" element={<SharedAnalysisPage />} />
           <Route
             path="/presentation/datasets/:datasetId/dashboard/:dashboardId"
