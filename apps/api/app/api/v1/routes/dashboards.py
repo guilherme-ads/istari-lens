@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 from datetime import datetime
 from statistics import mean
 import json
 
 from app.shared.infrastructure.database import get_db
 from app.modules.widgets.application.execution_coordinator import _to_engine_query_spec, get_dashboard_widget_executor
-from app.modules.core.legacy.models import Dashboard, DashboardWidget, Dataset, DataSource, User, View
+from app.modules.core.legacy.models import Dashboard, DashboardWidget, DashboardEmailShare, Dataset, DataSource, User, View
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
 from app.modules.core.legacy.schemas import (
     DashboardResponse,
@@ -20,6 +21,11 @@ from app.modules.core.legacy.schemas import (
     DashboardWidgetBatchDataResponse,
     DashboardWidgetBatchDataItemResponse,
     DashboardCatalogItemResponse,
+    DashboardEmailShareResponse,
+    DashboardShareUpsertRequest,
+    DashboardVisibilityUpdateRequest,
+    DashboardSharingResponse,
+    DashboardShareableUserResponse,
     DashboardDebugQueriesRequest,
     DashboardDebugQueriesResponse,
     DashboardDebugQueryItemResponse,
@@ -33,6 +39,96 @@ from app.modules.widgets.domain.config import (
 )
 
 router = APIRouter(prefix="/dashboards", tags=["dashboards"])
+
+ACCESS_RANK = {"view": 1, "edit": 2, "owner": 3}
+
+
+def _normalize_email(value: str) -> str:
+    return value.strip().lower()
+
+
+def _resolve_dashboard_access(dashboard: Dashboard, user: User) -> tuple[str, str] | None:
+    if dashboard.created_by_id == user.id:
+        return ("owner", "owner")
+
+    normalized_email = _normalize_email(user.email)
+    direct_level: str | None = None
+    for share in dashboard.email_shares or []:
+        if _normalize_email(share.email) != normalized_email:
+            continue
+        if share.permission == "edit":
+            direct_level = "edit"
+            break
+        if direct_level is None:
+            direct_level = "view"
+
+    workspace_level: str | None = None
+    if dashboard.visibility == "workspace_edit":
+        workspace_level = "edit"
+    elif dashboard.visibility == "workspace_view":
+        workspace_level = "view"
+
+    if direct_level and workspace_level:
+        if ACCESS_RANK[direct_level] >= ACCESS_RANK[workspace_level]:
+            return (direct_level, "direct")
+        return (workspace_level, "workspace")
+    if direct_level:
+        return (direct_level, "direct")
+    if workspace_level:
+        return (workspace_level, "workspace")
+    return None
+
+
+def _require_dashboard_access(
+    dashboard: Dashboard,
+    user: User,
+    min_level: str = "view",
+) -> tuple[str, str]:
+    resolved = _resolve_dashboard_access(dashboard, user)
+    if resolved is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    level, source = resolved
+    if ACCESS_RANK[level] < ACCESS_RANK[min_level]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission for this dashboard action")
+    return level, source
+
+
+def _load_dashboard_for_user(
+    db: Session,
+    dashboard_id: int,
+    user: User,
+    min_level: str = "view",
+    options: list | None = None,
+) -> tuple[Dashboard, str, str]:
+    query = db.query(Dashboard)
+    if options:
+        query = query.options(*options)
+    dashboard = query.filter(Dashboard.id == dashboard_id).first()
+    if not dashboard:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    level, source = _require_dashboard_access(dashboard, user, min_level=min_level)
+    return dashboard, level, source
+
+
+def _dashboard_response_for_user(dashboard: Dashboard, user: User) -> DashboardResponse:
+    level, source = _require_dashboard_access(dashboard, user, min_level="view")
+    return DashboardResponse(
+        id=dashboard.id,
+        dataset_id=dashboard.dataset_id,
+        created_by_id=dashboard.created_by_id,
+        is_owner=level == "owner",
+        access_level=level,
+        access_source=source,
+        visibility=dashboard.visibility or "private",
+        name=dashboard.name,
+        description=dashboard.description,
+        is_active=dashboard.is_active,
+        layout_config=dashboard.layout_config or [],
+        native_filters=dashboard.native_filters or [],
+        widgets=[_widget_response(widget) for widget in dashboard.widgets],
+        created_at=dashboard.created_at,
+        updated_at=dashboard.updated_at,
+    )
 
 
 def _resolve_correlation_id(request: Request) -> str | None:
@@ -461,10 +557,16 @@ async def list_dashboards(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Dashboard)
+    query = db.query(Dashboard).options(joinedload(Dashboard.widgets), joinedload(Dashboard.email_shares))
     if dataset_id is not None:
         query = query.filter(Dashboard.dataset_id == dataset_id)
-    return query.all()
+    dashboards = query.all()
+    visible: list[DashboardResponse] = []
+    for dashboard in dashboards:
+        if _resolve_dashboard_access(dashboard, current_user) is None:
+            continue
+        visible.append(_dashboard_response_for_user(dashboard, current_user))
+    return visible
 
 
 @router.get("/catalog", response_model=list[DashboardCatalogItemResponse])
@@ -477,6 +579,7 @@ async def list_dashboard_catalog(
         .options(
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.created_by_user),
+            joinedload(Dashboard.email_shares),
             joinedload(Dashboard.dataset)
             .joinedload(Dataset.datasource)
             .joinedload(DataSource.created_by_user),
@@ -485,6 +588,10 @@ async def list_dashboard_catalog(
     )
     items: list[DashboardCatalogItemResponse] = []
     for dashboard in dashboards:
+        access = _resolve_dashboard_access(dashboard, current_user)
+        if access is None:
+            continue
+        level, source = access
         widget_updated_values = [widget.updated_at for widget in dashboard.widgets if widget.updated_at]
         last_edited_at = max([dashboard.updated_at, *widget_updated_values]) if widget_updated_values else dashboard.updated_at
 
@@ -512,6 +619,10 @@ async def list_dashboard_catalog(
                 dataset_name=dashboard.dataset.name if dashboard.dataset else f"Dataset {dashboard.dataset_id}",
                 name=dashboard.name,
                 created_by_id=creator.id if creator else None,
+                is_owner=level == "owner",
+                access_level=level,
+                access_source=source,
+                visibility=dashboard.visibility or "private",
                 created_by_name=creator.full_name if creator else None,
                 created_by_email=creator.email if creator else None,
                 widget_count=len(dashboard.widgets),
@@ -531,16 +642,47 @@ async def list_dashboard_catalog(
     return items
 
 
+@router.get("/shareable-users", response_model=list[DashboardShareableUserResponse])
+async def list_dashboard_shareable_users(
+    search: str | None = Query(default=None),
+    limit: int = Query(default=8, ge=1, le=30),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = (
+        db.query(User)
+        .filter(User.deleted_at.is_(None), User.is_active.is_(True))
+    )
+    if search:
+        like = f"%{search.strip()}%"
+        query = query.filter((User.email.ilike(like)) | (User.full_name.ilike(like)))
+
+    users = (
+        query.order_by(User.full_name.asc().nullslast(), User.email.asc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        DashboardShareableUserResponse(id=user.id, email=user.email, full_name=user.full_name)
+        for user in users
+        if user.id != current_user.id
+    ]
+
+
 @router.get("/{dashboard_id}", response_model=DashboardResponse)
 async def get_dashboard(
     dashboard_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dashboard = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
-    if not dashboard:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
-    return dashboard
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.widgets), joinedload(Dashboard.email_shares)],
+    )
+    return _dashboard_response_for_user(dashboard, current_user)
 
 
 @router.post("", response_model=DashboardResponse)
@@ -573,12 +715,19 @@ async def create_dashboard(
         layout_config=request.layout_config,
         native_filters=[item.model_dump(mode="json") for item in request.native_filters],
         is_active=request.is_active,
+        visibility=request.visibility,
         created_by_id=current_user.id,
     )
     db.add(dashboard)
     db.commit()
     db.refresh(dashboard)
-    return dashboard
+    dashboard = (
+        db.query(Dashboard)
+        .options(joinedload(Dashboard.widgets), joinedload(Dashboard.email_shares))
+        .filter(Dashboard.id == dashboard.id)
+        .first()
+    )
+    return _dashboard_response_for_user(dashboard, current_user)
 
 
 @router.patch("/{dashboard_id}", response_model=DashboardResponse)
@@ -588,9 +737,17 @@ async def update_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dashboard = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
-    if not dashboard:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[
+            joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
+            joinedload(Dashboard.widgets),
+            joinedload(Dashboard.email_shares),
+        ],
+    )
 
     if request.name is not None:
         dashboard.name = request.name
@@ -606,7 +763,7 @@ async def update_dashboard(
 
     db.commit()
     db.refresh(dashboard)
-    return dashboard
+    return _dashboard_response_for_user(dashboard, current_user)
 
 
 @router.delete("/{dashboard_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -615,11 +772,162 @@ async def delete_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dashboard = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
-    if not dashboard:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    dashboard, level, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="owner",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    if level != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can delete it")
     db.delete(dashboard)
     db.commit()
+
+
+@router.get("/{dashboard_id}/sharing", response_model=DashboardSharingResponse)
+async def get_dashboard_sharing(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, level, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="owner",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    if level != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can manage sharing")
+    shares = sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))
+    return DashboardSharingResponse(
+        dashboard_id=dashboard.id,
+        visibility=dashboard.visibility or "private",
+        shares=[DashboardEmailShareResponse.model_validate(item) for item in shares],
+    )
+
+
+@router.put("/{dashboard_id}/sharing/visibility", response_model=DashboardSharingResponse)
+async def update_dashboard_visibility(
+    dashboard_id: int,
+    request: DashboardVisibilityUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, level, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="owner",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    if level != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can manage sharing")
+    dashboard.visibility = request.visibility
+    db.commit()
+    db.refresh(dashboard)
+    return DashboardSharingResponse(
+        dashboard_id=dashboard.id,
+        visibility=dashboard.visibility or "private",
+        shares=[DashboardEmailShareResponse.model_validate(item) for item in sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))],
+    )
+
+
+@router.post("/{dashboard_id}/sharing/email", response_model=DashboardSharingResponse)
+async def upsert_dashboard_email_share(
+    dashboard_id: int,
+    request: DashboardShareUpsertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, level, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="owner",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    if level != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can manage sharing")
+
+    normalized_email = _normalize_email(request.email)
+    if normalized_email == _normalize_email(current_user.email):
+        raise HTTPException(status_code=400, detail="Owner already has full access")
+    invitee = (
+        db.query(User)
+        .filter(
+            func.lower(User.email) == normalized_email,
+            User.deleted_at.is_(None),
+            User.is_active.is_(True),
+        )
+        .first()
+    )
+    if invitee is None:
+        raise HTTPException(status_code=400, detail="Email must belong to an active user")
+
+    share = (
+        db.query(DashboardEmailShare)
+        .filter(
+            DashboardEmailShare.dashboard_id == dashboard.id,
+            func.lower(DashboardEmailShare.email) == normalized_email,
+        )
+        .first()
+    )
+    if share:
+        share.permission = request.permission
+        share.updated_at = datetime.utcnow()
+    else:
+        share = DashboardEmailShare(
+            dashboard_id=dashboard.id,
+            email=normalized_email,
+            permission=request.permission,
+            created_by_id=current_user.id,
+        )
+        db.add(share)
+    db.commit()
+    db.refresh(dashboard)
+    return DashboardSharingResponse(
+        dashboard_id=dashboard.id,
+        visibility=dashboard.visibility or "private",
+        shares=[DashboardEmailShareResponse.model_validate(item) for item in sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))],
+    )
+
+
+@router.delete("/{dashboard_id}/sharing/email/{share_id}", response_model=DashboardSharingResponse)
+async def delete_dashboard_email_share(
+    dashboard_id: int,
+    share_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, level, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="owner",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    if level != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can manage sharing")
+    share = (
+        db.query(DashboardEmailShare)
+        .filter(
+            DashboardEmailShare.id == share_id,
+            DashboardEmailShare.dashboard_id == dashboard.id,
+        )
+        .first()
+    )
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    db.delete(share)
+    db.commit()
+    db.refresh(dashboard)
+    return DashboardSharingResponse(
+        dashboard_id=dashboard.id,
+        visibility=dashboard.visibility or "private",
+        shares=[DashboardEmailShareResponse.model_validate(item) for item in sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))],
+    )
 
 
 @router.post("/{dashboard_id}/widgets", response_model=DashboardWidgetResponse)
@@ -629,9 +937,17 @@ async def create_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dashboard = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
-    if not dashboard:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[
+            joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
+            joinedload(Dashboard.widgets),
+            joinedload(Dashboard.email_shares),
+        ],
+    )
 
     config = _parse_widget_config(request)
     if request.widget_type != config.widget_type:
@@ -661,6 +977,13 @@ async def update_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[joinedload(Dashboard.email_shares)],
+    )
     widget = db.query(DashboardWidget).filter(
         DashboardWidget.id == widget_id,
         DashboardWidget.dashboard_id == dashboard_id,
@@ -703,6 +1026,13 @@ async def delete_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[joinedload(Dashboard.email_shares)],
+    )
     widget = db.query(DashboardWidget).filter(
         DashboardWidget.id == widget_id,
         DashboardWidget.dashboard_id == dashboard_id,
@@ -721,6 +1051,13 @@ async def get_widget_data(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.email_shares)],
+    )
     widget = (
         db.query(DashboardWidget)
         .options(
@@ -795,6 +1132,13 @@ async def get_widget_data_batch(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.email_shares)],
+    )
     if not request.widget_ids:
         return DashboardWidgetBatchDataResponse(results=[])
 

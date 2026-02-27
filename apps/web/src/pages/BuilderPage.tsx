@@ -104,6 +104,8 @@ const BuilderPage = () => {
   const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
   const existingDashboard = useMemo(() => dashboards.find((item) => item.id === dashboardId), [dashboards, dashboardId]);
+  const isEditingExistingDashboard = !!dashboardId;
+  const canEditExistingDashboard = !!existingDashboard && existingDashboard.accessLevel !== "view";
 
   const [activeDashboardId, setActiveDashboardId] = useState<string | undefined>(dashboardId);
   const [dashboardTitle, setDashboardTitle] = useState("Novo Dashboard");
@@ -549,6 +551,38 @@ const BuilderPage = () => {
             <p className="text-sm text-muted-foreground">O dataset solicitado não existe.</p>
             <Button variant="outline" onClick={() => navigate("/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar aos Datasets
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isEditingExistingDashboard && !existingDashboard) {
+    return (
+      <div className="bg-background flex flex-col flex-1">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-3">
+            <h2 className="text-lg font-semibold text-foreground">Dashboard não encontrado</h2>
+            <p className="text-sm text-muted-foreground">Você não tem permissão para editar este dashboard ou ele não existe.</p>
+            <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
+              <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isEditingExistingDashboard && !canEditExistingDashboard) {
+    return (
+      <div className="bg-background flex flex-col flex-1">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-3">
+            <h2 className="text-lg font-semibold text-foreground">Acesso negado</h2>
+            <p className="text-sm text-muted-foreground">Você tem acesso somente de visualização para este dashboard.</p>
+            <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
+              <ChevronLeft className="h-4 w-4 mr-1" /> Ir para visualização
             </Button>
           </div>
         </div>

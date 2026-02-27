@@ -161,6 +161,10 @@ class DashboardResponse(BaseModel):
     id: int
     dataset_id: int
     created_by_id: Optional[int] = None
+    is_owner: bool = False
+    access_level: Literal["owner", "edit", "view"] = "view"
+    access_source: Literal["owner", "direct", "workspace"] = "direct"
+    visibility: Literal["private", "workspace_view", "workspace_edit"] = "private"
     name: str
     description: Optional[str]
     is_active: bool
@@ -181,6 +185,7 @@ class DashboardCreateRequest(BaseModel):
     layout_config: List[dict] = Field(default_factory=list)
     native_filters: List[FilterConfig] = Field(default_factory=list)
     is_active: bool = True
+    visibility: Literal["private", "workspace_view", "workspace_edit"] = "private"
 
 
 class DashboardUpdateRequest(BaseModel):
@@ -297,6 +302,10 @@ class DashboardCatalogItemResponse(BaseModel):
     dataset_name: str
     name: str
     created_by_id: Optional[int] = None
+    is_owner: bool = False
+    access_level: Literal["owner", "edit", "view"] = "view"
+    access_source: Literal["owner", "direct", "workspace"] = "direct"
+    visibility: Literal["private", "workspace_view", "workspace_edit"] = "private"
     created_by_name: Optional[str] = None
     created_by_email: Optional[str] = None
     widget_count: int
@@ -310,6 +319,40 @@ class DashboardCatalogItemResponse(BaseModel):
     p95_widget_execution_ms: Optional[int] = None
     slowest_widget_execution_ms: Optional[int] = None
     last_widget_executed_at: Optional[datetime] = None
+
+
+class DashboardEmailShareResponse(BaseModel):
+    id: int
+    dashboard_id: int
+    email: str
+    permission: Literal["view", "edit"]
+    created_by_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DashboardShareUpsertRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    permission: Literal["view", "edit"] = "view"
+
+
+class DashboardVisibilityUpdateRequest(BaseModel):
+    visibility: Literal["private", "workspace_view", "workspace_edit"]
+
+
+class DashboardSharingResponse(BaseModel):
+    dashboard_id: int
+    visibility: Literal["private", "workspace_view", "workspace_edit"]
+    shares: List[DashboardEmailShareResponse] = Field(default_factory=list)
+
+
+class DashboardShareableUserResponse(BaseModel):
+    id: int
+    email: str
+    full_name: Optional[str] = None
 
 
 # ==================== QUERY SPEC ====================
