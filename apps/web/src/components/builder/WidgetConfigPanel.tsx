@@ -1,4 +1,4 @@
-﻿import { memo, useEffect, useMemo, useState } from "react";
+﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import type { View } from "@/types";
 
 interface WidgetConfigPanelProps {
   widget: DashboardWidget | null;
+  dashboardWidgets?: DashboardWidget[];
   view?: View;
   sectionColumns?: 1 | 2 | 3 | 4;
   open: boolean;
@@ -85,6 +86,46 @@ const parseTemporalDimensionValue = (value: string): { granularity: "month" | "w
   return null;
 };
 
+const extractKpiFormulaRefs = (formula: string): string[] => {
+  const matches = formula.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || [];
+  const fnNames = new Set(["COUNT", "DISTINCT", "SUM", "AVG", "MAX", "MIN"]);
+  return [...new Set(matches.filter((token) => !fnNames.has(token.toUpperCase())))];
+};
+
+const isValidFormulaIdentifier = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+
+const normalizeKpiDependencies = (
+  deps: Array<{ source_type?: "widget" | "column"; widget_id?: number; column?: string; alias?: string }> = [],
+): Array<{ source_type: "widget" | "column"; widget_id?: number; column?: string; alias: string }> =>
+  deps
+    .map((item, index) => {
+      const alias = (item.alias || "").trim() || `kpi_${index}`;
+      const column = (item.column || "").trim();
+      const widgetId = Number(item.widget_id);
+      const hasValidWidgetId = Number.isFinite(widgetId) && widgetId > 0;
+      const inferredSource: "widget" | "column" = item.source_type === "column"
+        ? "column"
+        : item.source_type === "widget"
+          ? "widget"
+          : (column ? "column" : "widget");
+      const sourceType: "widget" | "column" = inferredSource === "widget" && !hasValidWidgetId && column
+        ? "column"
+        : inferredSource;
+
+      return sourceType === "column"
+        ? {
+            source_type: "column" as const,
+            column: column || undefined,
+            alias,
+          }
+        : {
+            source_type: "widget" as const,
+            widget_id: hasValidWidgetId ? widgetId : undefined,
+            alias,
+          };
+    })
+    .filter((item) => (item.source_type === "column" ? !!item.column : (item.widget_id || 0) > 0));
+
 const resolveDrePercentBaseRowIndex = (
   rows: Array<{ row_type: "result" | "deduction" | "detail" }>,
   current?: number,
@@ -130,10 +171,12 @@ const DreTitleInput = memo(({
 });
 DreTitleInput.displayName = "DreTitleInput";
 
-export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onClose, onSave, onDelete }: WidgetConfigPanelProps) => {
+export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, sectionColumns = 3, open, onClose, onSave, onDelete }: WidgetConfigPanelProps) => {
   const [draft, setDraft] = useState<DashboardWidget | null>(widget);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const formulaTextareaRef = useRef<HTMLInputElement | null>(null);
+  const [formulaCaret, setFormulaCaret] = useState<number>(0);
 
   useEffect(() => {
     setDraft(widget);
@@ -184,14 +227,29 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     const config = target.config;
 
     if (config.widget_type === "kpi") {
+      const isDerivedKpi = config.kpi_type === "derived";
       const baseMetric = config.metrics[0] || (config.composite_metric
         ? { op: config.composite_metric.inner_agg, column: config.composite_metric.value_column }
         : undefined);
 
-      if (!baseMetric) {
+      if (!baseMetric && !isDerivedKpi) {
         messages.push("KPI requer exatamente 1 metrica.");
-      } else if (baseMetric.op && numOps.includes(baseMetric.op) && (!baseMetric.column || !numericColumns.some((column) => column.name === baseMetric.column))) {
+      } else if (baseMetric && baseMetric.op && numOps.includes(baseMetric.op) && (!baseMetric.column || !numericColumns.some((column) => column.name === baseMetric.column))) {
         messages.push("KPI com sum/avg/min/max requer coluna numérica.");
+      }
+
+      if (isDerivedKpi) {
+        if (config.composite_metric) messages.push("KPI derivada não suporta métrica composta neste MVP.");
+        if (!config.formula?.trim()) messages.push("KPI derivada requer fórmula.");
+        const refs = extractKpiFormulaRefs(config.formula || "");
+        if (refs.length === 0) messages.push("Fórmula deve referenciar aliases das métricas base.");
+        const normalizedDeps = normalizeKpiDependencies(config.kpi_dependencies || []);
+        const aliases = normalizedDeps.map((item) => item.alias);
+        const validRefs = new Set(aliases);
+        if (refs.some((ref) => !validRefs.has(ref))) messages.push("Fórmula referencia métrica base inexistente.");
+        if (aliases.some((alias) => !isValidFormulaIdentifier(alias))) messages.push("Alias das métricas base devem usar letras, números e _.");
+        if (new Set(aliases).size !== aliases.length) messages.push("Aliases das métricas base não podem se repetir.");
+        if (normalizedDeps.length < 1) messages.push("KPI derivada requer ao menos 1 base.");
       }
 
       if (config.composite_metric) {
@@ -319,6 +377,7 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     }
 
     if (normalizedDraft.config.widget_type === "kpi") {
+      const kpiType = normalizedDraft.config.kpi_type === "derived" ? "derived" : "atomic";
       const draftMetric = normalizedDraft.config.metrics[0]
         || (normalizedDraft.config.composite_metric
           ? {
@@ -332,6 +391,9 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
           ...normalizedDraft,
           config: {
             ...normalizedDraft.config,
+            kpi_type: "atomic",
+            formula: undefined,
+            dependencies: [],
             metrics: [],
             composite_metric: {
               ...normalizedDraft.config.composite_metric,
@@ -341,12 +403,23 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
           },
         };
       } else {
+        const normalizedFormula = normalizedDraft.config.formula?.trim();
+        const dependencies = kpiType === "derived" && normalizedFormula ? extractKpiFormulaRefs(normalizedFormula) : [];
         normalizedDraft = {
           ...normalizedDraft,
           config: {
             ...normalizedDraft.config,
+            kpi_type: kpiType,
+            formula: kpiType === "derived" ? normalizedFormula : undefined,
+            dependencies,
+            kpi_dependencies: kpiType === "derived"
+              ? normalizeKpiDependencies(normalizedDraft.config.kpi_dependencies || [])
+              : [],
+            kpi_decimals: Math.max(0, Math.min(8, Math.trunc(Number(normalizedDraft.config.kpi_decimals ?? 2)))),
             composite_metric: undefined,
-            metrics: [{ op: draftMetric.op, column: draftMetric.column }],
+            metrics: kpiType === "derived"
+              ? []
+              : [{ op: draftMetric.op, column: draftMetric.column }],
           },
         };
       }
@@ -402,6 +475,30 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
   const textStyle = draft.config.text_style || { content: "", font_size: 18, align: "left" as const };
   const compositeMetric = draft.config.widget_type === "kpi" ? draft.config.composite_metric : undefined;
   const compositeEnabled = draft.config.widget_type === "kpi" && !!draft.config.composite_metric;
+  const derivedKpiEnabled = draft.config.widget_type === "kpi" && draft.config.kpi_type === "derived";
+  const kpiMode = derivedKpiEnabled ? "derived" : compositeEnabled ? "composite" : "atomic";
+  const kpiShowAsSelectValue = draft.config.kpi_show_as === "integer" ? "integer" : "number_2";
+  const availableDashboardKpiWidgets = dashboardWidgets.filter((item) => item.id !== draft.id && item.config.widget_type === "kpi");
+  const normalizedDerivedDeps = derivedKpiEnabled ? normalizeKpiDependencies(draft.config.kpi_dependencies || []) : [];
+  const derivedMetricAliases = derivedKpiEnabled
+    ? normalizedDerivedDeps.map((item) => item.alias)
+    : [];
+  const formulaText = draft.config.formula || "";
+  const formulaCaretSafe = Math.max(0, Math.min(formulaCaret, formulaText.length));
+  const formulaPrefixText = formulaText.slice(0, formulaCaretSafe);
+  const formulaTokenMatch = formulaPrefixText.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
+  const formulaTokenPrefix = formulaTokenMatch?.[1] || "";
+  const formulaAutocompleteSuggestions = derivedKpiEnabled && formulaTokenPrefix
+    ? derivedMetricAliases.filter((alias, index, arr) => arr.indexOf(alias) === index && alias.startsWith(formulaTokenPrefix)).slice(0, 8)
+    : [];
+  const formulaBestSuggestion = (
+    formulaCaretSafe === formulaText.length
+      ? formulaAutocompleteSuggestions.find((alias) => alias !== formulaTokenPrefix)
+      : undefined
+  );
+  const formulaInlineCompletionSuffix = formulaBestSuggestion && formulaTokenPrefix
+    ? formulaBestSuggestion.slice(formulaTokenPrefix.length)
+    : "";
   const periodLabelMap: Record<"day" | "week" | "month" | "hour", string> = { day: "dia", week: "semana", month: "mes", hour: "hora" };
   const compositeDescription = compositeMetric
     ? `${aggLabelMap[compositeMetric.outer_agg]} da ${aggLabelMap[metric.op]}(${metric.column || "*"}) por ${periodLabelMap[compositeMetric.granularity]}`
@@ -428,12 +525,71 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     && !Array.isArray(activeFilterValue)
     && "relative" in (activeFilterValue as Record<string, unknown>);
   const temporalOpUiValue = isRelativeTemporalFilter ? "__relative__" : (activeFilter?.op || "eq");
+  const insertFormulaAliasAtCursor = (alias: string) => {
+    if (!derivedKpiEnabled) return;
+    const currentFormula = draft.config.formula || "";
+    const textarea = formulaTextareaRef.current;
+    const start = textarea?.selectionStart ?? formulaCaretSafe;
+    const end = textarea?.selectionEnd ?? formulaCaretSafe;
+    const before = currentFormula.slice(0, start);
+    const after = currentFormula.slice(end);
+    const token = before.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
+    const replaceStart = token ? start - token[1].length : start;
+    const nextFormula = `${currentFormula.slice(0, replaceStart)}${alias}${after}`;
+    update({
+      config: {
+        ...draft.config,
+        formula: nextFormula,
+        dependencies: extractKpiFormulaRefs(nextFormula),
+      },
+    });
+    const nextCaret = replaceStart + alias.length;
+    setFormulaCaret(nextCaret);
+    queueMicrotask(() => {
+      if (formulaTextareaRef.current) {
+        formulaTextareaRef.current.focus();
+        formulaTextareaRef.current.setSelectionRange(nextCaret, nextCaret);
+      }
+    });
+  };
+  const handleKpiModeChange = (value: string) => {
+    if (draft.config.widget_type !== "kpi") return;
+    const nextMode = value === "derived" || value === "composite" ? value : "atomic";
+    const existingMetrics = (draft.config.metrics || []).length > 0
+      ? draft.config.metrics
+      : [{ op: "count" as const, column: undefined }];
+    const existingKpiDeps = (draft.config.kpi_dependencies || []).length > 0
+      ? draft.config.kpi_dependencies
+      : [];
+    update({
+      config: {
+        ...draft.config,
+        kpi_type: nextMode === "derived" ? "derived" : "atomic",
+        composite_metric: nextMode === "composite"
+          ? (draft.config.composite_metric || {
+              type: "agg_over_time_bucket",
+              inner_agg: existingMetrics[0]?.op || "count",
+              outer_agg: "avg",
+              value_column: existingMetrics[0]?.column,
+              time_column: temporalColumns[0]?.name || "",
+              granularity: "day",
+            })
+          : undefined,
+        formula: nextMode === "derived" ? (draft.config.formula || "") : undefined,
+        dependencies: nextMode === "derived"
+          ? extractKpiFormulaRefs(draft.config.formula || "")
+          : [],
+        kpi_dependencies: nextMode === "derived" ? existingKpiDeps : [],
+        metrics: nextMode === "derived" ? [] : [existingMetrics[0]],
+      },
+    });
+  };
 
   return (
     <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
       <SheetContent className="w-[95vw] sm:w-[46vw] sm:max-w-none sm:min-w-[700px] overflow-y-auto">
         <SheetHeader>
-          <SheetTitle className="text-base">Configurar Widget</SheetTitle>
+          <SheetTitle className="text-base">Configurar Widget: {draft.config.widget_type.toUpperCase()}</SheetTitle>
           <SheetDescription className="text-xs">
             {view ? `${view.schema}.${view.name}` : "Tabela não encontrada"}
           </SheetDescription>
@@ -450,119 +606,26 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             />
           </div>
 
+          {draft.config.widget_type === "kpi" && (
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold text-muted-foreground">Tipo de KPI</Label>
+              <Select value={kpiMode} onValueChange={handleKpiModeChange}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="atomic">Padrão</SelectItem>
+                  <SelectItem value="composite">Métrica composta</SelectItem>
+                  <SelectItem value="derived">Fórmula avançada</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <Separator />
           <div className="space-y-1">
             <Label className="text-xs font-semibold text-muted-foreground">Dados</Label>
             <p className="text-[11px] text-muted-foreground">Configure metricas, colunas e tempo.</p>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Tipo</Label>
-            <Select
-              value={draft.config.widget_type}
-              onValueChange={(value) => {
-                const nextType = value as DashboardWidget["config"]["widget_type"];
-                if (nextType === "text") {
-                  update({
-                    config: {
-                      ...draft.config,
-                      widget_type: "text",
-                      text_style: draft.config.text_style || { content: "Texto", font_size: 18, align: "left" },
-                      metrics: [],
-                      dimensions: [],
-                      filters: [],
-                      order_by: [],
-                      columns: undefined,
-                      time: undefined,
-                      top_n: undefined,
-                      dre_rows: undefined,
-                    },
-                  });
-                  return;
-                }
-
-                if (nextType === "kpi") {
-                  update({
-                    config: {
-                      ...draft.config,
-                      widget_type: "kpi",
-                      kpi_show_as: draft.config.kpi_show_as || "number_2",
-                      composite_metric: undefined,
-                      order_by: [],
-                      dimensions: [],
-                      time: undefined,
-                      columns: undefined,
-                      top_n: undefined,
-                      metrics: draft.config.metrics.length > 0 ? draft.config.metrics : [{ op: "count" }],
-                      dre_rows: undefined,
-                    },
-                  });
-                  return;
-                }
-                if (nextType === "dre") {
-                  const existingRows = draft.config.dre_rows && draft.config.dre_rows.length > 0
-                    ? draft.config.dre_rows
-                    : [{
-                        title: "Faturamento",
-                        row_type: "result" as const,
-                        metrics: [{ op: "sum" as const, column: numericColumns[0]?.name || columns[0]?.name }],
-                      }];
-                  update({
-                    config: {
-                      ...draft.config,
-                      widget_type: "dre",
-                      metrics: [],
-                      dimensions: [],
-                      time: undefined,
-                      columns: undefined,
-                      top_n: undefined,
-                      order_by: [],
-                      dre_rows: existingRows,
-                      dre_percent_base_row_index: resolveDrePercentBaseRowIndex(existingRows, draft.config.dre_percent_base_row_index),
-                    },
-                  });
-                  return;
-                }
-
-                update({
-                  config: {
-                    ...draft.config,
-                    widget_type: nextType,
-                    composite_metric: undefined,
-                    top_n: nextType === "bar" || nextType === "column" || nextType === "donut" ? draft.config.top_n : undefined,
-                    dimensions: nextType === "bar" || nextType === "column" || nextType === "donut" ? draft.config.dimensions : [],
-                    time: nextType === "line" ? draft.config.time : undefined,
-                    line_data_labels_enabled: nextType === "line" ? !!draft.config.line_data_labels_enabled : undefined,
-                    line_data_labels_percent: nextType === "line"
-                      ? Math.max(1, Math.min(100, draft.config.line_data_labels_percent || 100))
-                      : undefined,
-                    donut_show_legend: nextType === "donut" ? draft.config.donut_show_legend !== false : undefined,
-                    donut_data_labels_enabled: nextType === "donut" ? !!draft.config.donut_data_labels_enabled : undefined,
-                    donut_data_labels_min_percent: nextType === "donut"
-                      ? Math.max(1, Math.min(100, draft.config.donut_data_labels_min_percent || 6))
-                      : undefined,
-                    donut_metric_display: nextType === "donut"
-                      ? (draft.config.donut_metric_display === "percent" ? "percent" : "value")
-                      : undefined,
-                    dre_rows: undefined,
-                    dre_percent_base_row_index: undefined,
-                  },
-                });
-              }}
-            >
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="kpi">KPI</SelectItem>
-                <SelectItem value="line">Linha</SelectItem>
-                <SelectItem value="bar">Barras</SelectItem>
-                <SelectItem value="column">Colunas</SelectItem>
-                <SelectItem value="donut">Rosca</SelectItem>
-                <SelectItem value="dre">DRE</SelectItem>
-                <SelectItem value="table">Tabela</SelectItem>
-                <SelectItem value="text">Texto</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           {draft.config.widget_type === "text" && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">Texto</Label>
@@ -626,7 +689,11 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
             </div>
           )}
 
-          {draft.config.widget_type !== "table" && draft.config.widget_type !== "text" && draft.config.widget_type !== "line" && draft.config.widget_type !== "dre" && (
+          {draft.config.widget_type !== "table"
+            && draft.config.widget_type !== "text"
+            && draft.config.widget_type !== "line"
+            && draft.config.widget_type !== "dre"
+            && !(draft.config.widget_type === "kpi" && draft.config.kpi_type === "derived") && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Hash className="h-3 w-3" /> Metrica
@@ -718,31 +785,171 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
 
           {draft.config.widget_type === "kpi" && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between rounded-md border border-border p-2">
-                <span className="text-xs text-muted-foreground">Metrica composta</span>
-                <Switch
-                  checked={compositeEnabled}
-                  onCheckedChange={(checked) =>
-                    update({
-                      config: {
-                        ...draft.config,
-                        metrics: [{ op: metric.op, column: metric.column }],
-                        composite_metric: checked
-                          ? {
-                              type: "agg_over_time_bucket",
-                              inner_agg: metric.op,
-                              outer_agg: "avg",
-                              value_column: metric.column,
-                              time_column: draft.config.composite_metric?.time_column || temporalColumns[0]?.name || "",
-                              granularity: draft.config.composite_metric?.granularity || "day",
-                            }
-                          : undefined,
-                      },
-                    })}
-                />
-              </div>
+              {derivedKpiEnabled && (
+                <div className="space-y-2 rounded-md border border-border p-2">
+                  <Label className="text-xs font-semibold text-muted-foreground">KPIs base do dashboard</Label>
+                  {(draft.config.kpi_dependencies || []).map((item, index) => (
+                    <div key={`kpi-derived-base-${index}`} className="grid grid-cols-[280px_120px_minmax(0,1fr)_36px] items-center gap-2">
+                      <Input
+                        className="h-8 text-xs font-mono"
+                        value={item.alias || ""}
+                        placeholder={`kpi_${index}`}
+                        onChange={(e) => {
+                          const nextDeps = [...(draft.config.kpi_dependencies || [])];
+                          nextDeps[index] = { ...item, alias: e.target.value };
+                          update({ config: { ...draft.config, kpi_dependencies: nextDeps } });
+                        }}
+                      />
+                      <Select
+                        value={item.source_type === "column" ? "column" : "widget"}
+                        onValueChange={(value) => {
+                          const nextDeps = [...(draft.config.kpi_dependencies || [])];
+                          nextDeps[index] = value === "column"
+                            ? {
+                                alias: item.alias,
+                                source_type: "column",
+                                column: item.column || columns[0]?.name,
+                              }
+                            : {
+                                alias: item.alias,
+                                source_type: "widget",
+                                widget_id: item.widget_id || Number(availableDashboardKpiWidgets[0]?.id || 0),
+                              };
+                          update({ config: { ...draft.config, kpi_dependencies: nextDeps } });
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="widget">KPI</SelectItem>
+                          <SelectItem value="column">Coluna</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={item.source_type === "column" ? String(item.column || "") : String(item.widget_id || 0)}
+                        onValueChange={(value) => {
+                          const nextDeps = [...(draft.config.kpi_dependencies || [])];
+                          if (item.source_type === "column") {
+                            nextDeps[index] = { ...item, source_type: "column", column: value };
+                          } else {
+                            nextDeps[index] = { ...item, source_type: "widget", widget_id: Number(value) };
+                          }
+                          update({ config: { ...draft.config, kpi_dependencies: nextDeps } });
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs min-w-0"><SelectValue placeholder="KPI base" /></SelectTrigger>
+                        <SelectContent>
+                          {item.source_type === "column"
+                            ? columns.map((col) => (
+                                <SelectItem key={`${col.name}:${index}`} value={col.name}>
+                                  {col.name}
+                                </SelectItem>
+                              ))
+                            : availableDashboardKpiWidgets.map((depWidget) => (
+                                <SelectItem key={`${depWidget.id}-${index}`} value={String(depWidget.id)}>
+                                  #{depWidget.id} · {depWidget.title || "KPI sem título"}
+                                </SelectItem>
+                              ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={(draft.config.kpi_dependencies || []).length <= 1}
+                        onClick={() => {
+                          const nextDeps = (draft.config.kpi_dependencies || []).filter((_, metricIndex) => metricIndex !== index);
+                          update({ config: { ...draft.config, kpi_dependencies: nextDeps } });
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() =>
+                        update({
+                          config: {
+                            ...draft.config,
+                            kpi_dependencies: [
+                              ...(draft.config.kpi_dependencies || []),
+                              (
+                                availableDashboardKpiWidgets.length > 0
+                                  ? {
+                                      widget_id: Number(availableDashboardKpiWidgets[0]?.id || 0),
+                                      source_type: "widget" as const,
+                                      alias: `kpi_${(draft.config.kpi_dependencies || []).length}`,
+                                    }
+                                  : {
+                                      source_type: "column" as const,
+                                      column: columns[0]?.name || "",
+                                      alias: `col_${(draft.config.kpi_dependencies || []).length}`,
+                                    }
+                              ),
+                            ],
+                          },
+                        })}
+                      disabled={columns.length === 0}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar base
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">Use aliases e funções na fórmula: `COUNT`, `DISTINCT`, `SUM`, `AVG`, `MAX`, `MIN`.</span>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-muted-foreground">Fórmula</Label>
+                    <div className="relative">
+                      <Input
+                      ref={formulaTextareaRef}
+                      className="relative z-10 h-8 text-xs font-mono pr-3"
+                      placeholder=""
+                      value={draft.config.formula || ""}
+                      onSelect={(e) => setFormulaCaret((e.target as HTMLInputElement).selectionStart || 0)}
+                      onKeyUp={(e) => setFormulaCaret((e.currentTarget as HTMLInputElement).selectionStart || 0)}
+                      onClick={(e) => setFormulaCaret((e.currentTarget as HTMLInputElement).selectionStart || 0)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Tab" && formulaBestSuggestion) {
+                          e.preventDefault();
+                          insertFormulaAliasAtCursor(formulaBestSuggestion);
+                        }
+                      }}
+                      onChange={(e) =>
+                        update({
+                          config: {
+                            ...draft.config,
+                            formula: e.target.value,
+                            dependencies: extractKpiFormulaRefs(e.target.value),
+                          },
+                        })}
+                      />
+                      {formulaBestSuggestion && formulaTokenPrefix && formulaCaretSafe === formulaText.length && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex items-center px-3 text-xs font-mono">
+                          <span className="whitespace-pre text-transparent">
+                            {formulaPrefixText}
+                          </span>
+                          <span className="whitespace-pre text-muted-foreground/50">
+                            {formulaInlineCompletionSuffix}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-muted-foreground truncate">
+                        {derivedMetricAliases.length > 0 ? `Aliases: ${derivedMetricAliases.join(", ")} • Ex.: SUM(receita), COUNT(clientes), DISTINCT(client_id)` : "Selecione bases e defina aliases."}
+                      </span>
+                      {formulaBestSuggestion && (
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">TAB completa: {formulaBestSuggestion}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
-              {compositeEnabled && draft.config.composite_metric && (
+              {!derivedKpiEnabled && compositeEnabled && draft.config.composite_metric && (
                 <div className="space-y-2 rounded-md border border-border p-2">
                   <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
                     <Select
@@ -821,25 +1028,44 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
                 </div>
               )}
 
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-muted-foreground">Mostrar como</Label>
-                <Select
-                  value={draft.config.kpi_show_as || "number_2"}
-                  onValueChange={(value) =>
-                    update({
-                      config: {
-                        ...draft.config,
-                        kpi_show_as: value as "currency_brl" | "number_2" | "integer",
-                      },
-                    })}
-                >
-                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="currency_brl">Moeda (R$)</SelectItem>
-                    <SelectItem value="number_2">Decimal (2 casas)</SelectItem>
-                    <SelectItem value="integer">Inteiro</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-[minmax(0,220px)_1fr_1fr] gap-2 items-end">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold text-muted-foreground">Mostrar como</Label>
+                  <Select
+                    value={kpiShowAsSelectValue}
+                    onValueChange={(value) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          kpi_show_as: value as "number_2" | "integer",
+                        },
+                      })}
+                  >
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="number_2">Decimal (2 casas)</SelectItem>
+                      <SelectItem value="integer">Inteiro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Prefixo</Label>
+                  <Input
+                    className="h-8 text-xs"
+                    value={draft.config.kpi_prefix || ""}
+                    onChange={(e) => update({ config: { ...draft.config, kpi_prefix: e.target.value || undefined } })}
+                    placeholder="Ex: R$"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Sufixo</Label>
+                  <Input
+                    className="h-8 text-xs"
+                    value={draft.config.kpi_suffix || ""}
+                    onChange={(e) => update({ config: { ...draft.config, kpi_suffix: e.target.value || undefined } })}
+                    placeholder="Ex: %"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1750,20 +1976,22 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
 
           <div className="space-y-2">
             <Label className="text-xs font-semibold text-muted-foreground">Configurações visuais</Label>
-            <div className="flex items-center justify-between rounded-md border border-border p-2">
-              <span className="text-xs text-muted-foreground">Mostrar título do widget</span>
-              <Switch
-                checked={draft.config.show_title !== false}
-                onCheckedChange={(checked) =>
-                  update({
-                    config: {
-                      ...draft.config,
-                      show_title: checked,
-                    },
-                  })}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-[minmax(0,170px)_1fr_1fr] items-end gap-2 rounded-md border border-border p-2">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Mostrar título</Label>
+                <div className="h-8 w-[88px] px-2 rounded-md border border-input flex items-center justify-start">
+                  <Switch
+                    checked={draft.config.show_title !== false}
+                    onCheckedChange={(checked) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          show_title: checked,
+                        },
+                      })}
+                  />
+                </div>
+              </div>
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Largura</Label>
                 <Select
@@ -1831,4 +2059,6 @@ export const WidgetConfigPanel = ({ widget, view, sectionColumns = 3, open, onCl
     </Sheet>
   );
 };
+
+
 

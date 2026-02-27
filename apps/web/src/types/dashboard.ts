@@ -21,6 +21,7 @@ export type FilterOp =
 export interface WidgetMetric {
   op: MetricOp;
   column?: string;
+  alias?: string;
   line_y_axis?: "left" | "right";
 }
 
@@ -40,7 +41,19 @@ export interface WidgetConfig {
   widget_type: WidgetType;
   view_name: string;
   show_title?: boolean;
-  kpi_show_as?: "currency_brl" | "number_2" | "integer";
+  kpi_show_as?: "currency_brl" | "number_2" | "integer" | "percent";
+  kpi_decimals?: number;
+  kpi_prefix?: string;
+  kpi_suffix?: string;
+  kpi_type?: "atomic" | "derived";
+  formula?: string;
+  dependencies?: string[];
+  kpi_dependencies?: Array<{
+    source_type?: "widget" | "column";
+    widget_id?: number;
+    column?: string;
+    alias: string;
+  }>;
   composite_metric?: {
     type: "avg_per_time_bucket" | "agg_over_time_bucket";
     inner_agg: MetricOp;
@@ -141,6 +154,11 @@ export const createDefaultWidgetConfig = (params: {
       view_name: viewName,
       show_title: true,
       kpi_show_as: "number_2",
+      kpi_decimals: 2,
+      kpi_type: "atomic",
+      formula: undefined,
+      dependencies: [],
+      kpi_dependencies: [],
       size: { width: 1, height: 1 },
       composite_metric: undefined,
       metrics: [{ op: "count", column: numeric?.name || fallback?.name }],

@@ -303,9 +303,33 @@ def _validate_and_normalize_config(config: WidgetConfig, dashboard: Dashboard) -
         )
     try:
         validate_widget_config_against_columns(config, _view_column_types(dashboard))
+        _validate_kpi_dependency_refs(config, dashboard)
         return config
     except WidgetConfigValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.to_detail())
+
+
+def _validate_kpi_dependency_refs(config: WidgetConfig, dashboard: Dashboard) -> None:
+    if config.widget_type != "kpi" or config.kpi_type != "derived":
+        return
+    widget_by_id = {widget.id: widget for widget in (dashboard.widgets or [])}
+    field_errors: dict[str, list[str]] = {}
+    for index, dep in enumerate(config.kpi_dependencies):
+        if dep.source_type == "column":
+            if dep.column not in _view_column_types(dashboard):
+                field_errors.setdefault(f"kpi_dependencies[{index}].column", []).append("Column dependency not found in dataset view")
+            continue
+        if dep.widget_id not in widget_by_id:
+            field_errors.setdefault(f"kpi_dependencies[{index}].widget_id", []).append("Widget dependency not found in dashboard")
+            continue
+        target_widget = widget_by_id[dep.widget_id]
+        target_type = None
+        if isinstance(target_widget.query_config, dict):
+            target_type = target_widget.query_config.get("widget_type") or target_widget.widget_type
+        if target_type != "kpi":
+            field_errors.setdefault(f"kpi_dependencies[{index}].widget_id", []).append("Widget dependency must be a KPI")
+    if field_errors:
+        raise HTTPException(status_code=400, detail={"message": "Widget config validation failed", "field_errors": field_errors})
 
 
 @router.post("/{dashboard_id}/debug/queries", response_model=DashboardDebugQueriesResponse)
@@ -720,13 +744,27 @@ async def get_widget_data(
     _ensure_dashboard_dataset_is_refreshable(dashboard)
 
     config = _resolve_widget_config(widget)
+    all_widgets = (
+        db.query(DashboardWidget)
+        .options(
+            joinedload(DashboardWidget.dashboard)
+            .joinedload(Dashboard.dataset)
+            .joinedload(Dataset.view)
+            .joinedload(View.columns),
+            joinedload(DashboardWidget.dashboard).joinedload(Dashboard.dataset).joinedload(Dataset.datasource),
+        )
+        .filter(DashboardWidget.dashboard_id == dashboard_id)
+        .all()
+    )
+    widgets_for_execution = [widget]
+    configs_by_widget_id = {item.id: _resolve_widget_config(item) for item in all_widgets}
     executor = get_dashboard_widget_executor()
     result_by_widget = await executor.execute_widgets(
         dashboard_id=dashboard_id,
         dataset_id=dashboard.dataset_id,
         datasource=dashboard.dataset.datasource,
-        widgets=[widget],
-        configs_by_widget_id={widget.id: config},
+        widgets=widgets_for_execution,
+        configs_by_widget_id=configs_by_widget_id,
         user=current_user,
         runtime_filters=[],
         correlation_id=_resolve_correlation_id(request),
@@ -760,7 +798,7 @@ async def get_widget_data_batch(
     if not request.widget_ids:
         return DashboardWidgetBatchDataResponse(results=[])
 
-    widgets = (
+    requested_widgets = (
         db.query(DashboardWidget)
         .options(
             joinedload(DashboardWidget.dashboard)
@@ -775,7 +813,7 @@ async def get_widget_data_batch(
         )
         .all()
     )
-    widget_by_id = {widget.id: widget for widget in widgets}
+    widget_by_id = {widget.id: widget for widget in requested_widgets}
     missing_ids = [widget_id for widget_id in request.widget_ids if widget_id not in widget_by_id]
     if missing_ids:
         raise HTTPException(status_code=404, detail=f"Widgets not found: {missing_ids}")
@@ -786,8 +824,20 @@ async def get_widget_data_batch(
         raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
     _ensure_dashboard_dataset_is_refreshable(dashboard)
 
+    all_widgets = (
+        db.query(DashboardWidget)
+        .options(
+            joinedload(DashboardWidget.dashboard)
+            .joinedload(Dashboard.dataset)
+            .joinedload(Dataset.view)
+            .joinedload(View.columns),
+            joinedload(DashboardWidget.dashboard).joinedload(Dashboard.dataset).joinedload(Dataset.datasource),
+        )
+        .filter(DashboardWidget.dashboard_id == dashboard_id)
+        .all()
+    )
     configs_by_widget_id: dict[int, WidgetConfig] = {}
-    for widget in widgets:
+    for widget in all_widgets:
         configs_by_widget_id[widget.id] = _resolve_widget_config(widget, request.global_filters)
 
     executor = get_dashboard_widget_executor()
@@ -795,7 +845,7 @@ async def get_widget_data_batch(
         dashboard_id=dashboard_id,
         dataset_id=dashboard.dataset_id,
         datasource=dashboard.dataset.datasource,
-        widgets=widgets,
+        widgets=requested_widgets,
         configs_by_widget_id=configs_by_widget_id,
         user=current_user,
         runtime_filters=request.global_filters,

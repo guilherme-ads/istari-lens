@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -7,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 WidgetType = Literal["kpi", "line", "bar", "column", "donut", "table", "text", "dre"]
 MetricOp = Literal["count", "sum", "avg", "min", "max", "distinct_count"]
+KpiType = Literal["atomic", "derived"]
 TimeGranularity = Literal["day", "week", "month", "hour"]
 TemporalDimensionGranularity = Literal["month", "week", "weekday", "hour"]
 DreRowType = Literal["result", "deduction", "detail"]
@@ -71,7 +74,32 @@ def is_categorical_type(raw_type: str) -> bool:
 class MetricConfig(BaseModel):
     op: MetricOp
     column: str | None = None
+    alias: str | None = None
     line_y_axis: Literal["left", "right"] = "left"
+
+
+class KpiDependencyRefConfig(BaseModel):
+    source_type: Literal["widget", "column"] = "widget"
+    widget_id: int | None = None
+    column: str | None = None
+    agg: MetricOp | None = None
+    alias: str
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "KpiDependencyRefConfig":
+        if self.source_type == "widget":
+            if self.widget_id is None or self.widget_id <= 0:
+                raise ValueError("KPI dependency widget_id is required for widget source")
+            if self.column is not None or self.agg is not None:
+                raise ValueError("Widget source dependency does not support column/agg")
+            return self
+        if not self.column:
+            raise ValueError("KPI dependency column is required for column source")
+        if self.agg is not None:
+            raise ValueError("Column source dependency does not support agg; use formula functions")
+        if self.widget_id is not None:
+            raise ValueError("Column source dependency does not support widget_id")
+        return self
 
 
 class TimeConfig(BaseModel):
@@ -157,7 +185,14 @@ class WidgetConfig(BaseModel):
     widget_type: WidgetType
     view_name: str
     show_title: bool = True
-    kpi_show_as: Literal["currency_brl", "number_2", "integer"] = "number_2"
+    kpi_show_as: Literal["currency_brl", "number_2", "integer", "percent"] = "number_2"
+    kpi_decimals: int = 2
+    kpi_prefix: str | None = None
+    kpi_suffix: str | None = None
+    kpi_type: KpiType = "atomic"
+    formula: str | None = None
+    dependencies: list[str] = Field(default_factory=list)
+    kpi_dependencies: list[KpiDependencyRefConfig] = Field(default_factory=list)
     composite_metric: CompositeMetricConfig | None = None
     size: WidgetSizeConfig = Field(default_factory=WidgetSizeConfig)
     text_style: TextStyleConfig | None = None
@@ -189,7 +224,50 @@ class WidgetConfig(BaseModel):
         if self.widget_type != "table" and self.limit is not None:
             raise ValueError("Only table widget supports limit")
         if self.widget_type == "kpi":
-            if self.composite_metric is None and len(self.metrics) != 1:
+            if not 0 <= int(self.kpi_decimals) <= 8:
+                raise ValueError("KPI widget kpi_decimals must be between 0 and 8")
+            if self.kpi_type == "derived":
+                if self.composite_metric is not None:
+                    raise ValueError("Derived KPI does not support composite_metric in MVP")
+                if self.metrics:
+                    raise ValueError("Derived KPI does not support inline metrics; use kpi_dependencies")
+                if len(self.kpi_dependencies) < 1:
+                    raise ValueError("Derived KPI requires at least one KPI dependency")
+                if not (self.formula or "").strip():
+                    raise ValueError("Derived KPI requires formula")
+                refs = _extract_formula_metric_refs(self.formula or "")
+                if not refs:
+                    raise ValueError("Derived KPI formula must reference at least one KPI dependency alias")
+                valid_refs = set()
+                seen_aliases: set[str] = set()
+                for dep in self.kpi_dependencies:
+                    alias = dep.alias.strip()
+                    if not alias:
+                        raise ValueError("Derived KPI dependency alias is required")
+                    if not _is_valid_formula_identifier(alias):
+                        raise ValueError(f"Derived KPI dependency alias '{alias}' is invalid")
+                    if alias in seen_aliases:
+                        raise ValueError(f"Derived KPI dependency alias '{alias}' is duplicated")
+                    seen_aliases.add(alias)
+                    valid_refs.add(alias)
+                invalid_refs = sorted(ref for ref in refs if ref not in valid_refs)
+                if invalid_refs:
+                    raise ValueError(f"Derived KPI formula references unknown dependencies: {', '.join(invalid_refs)}")
+                if self.dependencies:
+                    invalid_dependencies = sorted(dep for dep in self.dependencies if dep not in valid_refs)
+                    if invalid_dependencies:
+                        raise ValueError(f"Derived KPI dependencies are invalid: {', '.join(invalid_dependencies)}")
+                    if set(self.dependencies) != refs:
+                        raise ValueError("Derived KPI dependencies must match formula references")
+                self.dependencies = sorted(refs)
+            else:
+                if self.formula is not None and self.formula.strip():
+                    raise ValueError("Atomic KPI does not support formula")
+                if self.dependencies:
+                    raise ValueError("Atomic KPI does not support dependencies")
+                if self.kpi_dependencies:
+                    raise ValueError("Atomic KPI does not support kpi_dependencies")
+            if self.kpi_type != "derived" and self.composite_metric is None and len(self.metrics) != 1:
                 raise ValueError("KPI widget requires exactly one metric when composite_metric is not set")
             if self.composite_metric is not None and self.metrics:
                 raise ValueError("KPI widget with composite_metric does not support metrics")
@@ -448,4 +526,49 @@ def validate_widget_config_against_columns(
 
     if errors:
         raise WidgetConfigValidationError(errors)
+
+
+def _extract_formula_metric_refs(formula: str) -> set[str]:
+    try:
+        root = ast.parse(formula, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError("Invalid derived KPI formula syntax") from exc
+
+    refs: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, ast.Expression):
+            visit(node.body)
+            return
+        if isinstance(node, ast.BinOp):
+            if not isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
+                raise ValueError("Derived KPI formula only supports +, -, *, / and parentheses")
+            visit(node.left)
+            visit(node.right)
+            return
+        if isinstance(node, ast.UnaryOp):
+            if not isinstance(node.op, (ast.UAdd, ast.USub)):
+                raise ValueError("Derived KPI formula only supports unary + and -")
+            visit(node.operand)
+            return
+        if isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name) or node.func.id.upper() not in {"COUNT", "DISTINCT", "SUM", "AVG", "MAX", "MIN"}:
+                raise ValueError("Derived KPI formula only supports COUNT, DISTINCT, SUM, AVG, MAX, MIN")
+            if len(node.args) != 1 or node.keywords:
+                raise ValueError("Derived KPI formula functions require exactly one argument")
+            visit(node.args[0])
+            return
+        if isinstance(node, ast.Name):
+            refs.add(node.id)
+            return
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return
+        raise ValueError("Derived KPI formula contains unsupported tokens")
+
+    visit(root)
+    return refs
+
+
+def _is_valid_formula_identifier(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value))
 

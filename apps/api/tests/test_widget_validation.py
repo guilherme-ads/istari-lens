@@ -401,3 +401,64 @@ def test_kpi_composite_legacy_agg_field_is_still_supported() -> None:
     )
     validate_widget_config_against_columns(config, COLUMN_TYPES)
 
+
+def test_kpi_derived_formula_is_valid() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "kpi",
+            "view_name": "public.vw_recargas",
+            "kpi_type": "derived",
+            "formula": "(clientes_ativos / clientes_totais) * 100",
+            "kpi_dependencies": [
+                {"widget_id": 10, "alias": "clientes_ativos"},
+                {"widget_id": 11, "alias": "clientes_totais"},
+            ],
+            "metrics": [],
+            "dimensions": [],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+    assert config.dependencies == ["clientes_ativos", "clientes_totais"]
+
+
+def test_kpi_derived_formula_invalid_reference_fails() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "kpi_type": "derived",
+                "formula": "clientes_ativos / inexistente",
+                "kpi_dependencies": [
+                    {"widget_id": 1, "alias": "clientes_ativos"},
+                    {"widget_id": 2, "alias": "clientes_totais"},
+                ],
+                "metrics": [],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+
+
+def test_kpi_derived_formula_invalid_syntax_fails() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "kpi_type": "derived",
+                "formula": "clientes_ativos // clientes_totais",
+                "kpi_dependencies": [
+                    {"widget_id": 1, "alias": "clientes_ativos"},
+                    {"widget_id": 2, "alias": "clientes_totais"},
+                ],
+                "metrics": [],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+

@@ -1,4 +1,4 @@
-import { getAuthToken } from "@/lib/auth";
+import { clearAuthSession, getAuthToken } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -48,6 +48,7 @@ async function request<T>(path: string, init: RequestInit = {}, requiresAuth = t
 
     if (requiresAuth && response.status === 401) {
       if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        clearAuthSession();
         window.location.assign("/login");
       }
     }
@@ -301,6 +302,7 @@ export type ApiAdminUserListResponse = {
 export type ApiWidgetMetric = {
   op: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
   column?: string;
+  alias?: string;
   line_y_axis?: "left" | "right";
 };
 
@@ -308,7 +310,19 @@ export type ApiWidgetConfig = {
   widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
   view_name: string;
   show_title?: boolean;
-  kpi_show_as?: "currency_brl" | "number_2" | "integer";
+  kpi_show_as?: "currency_brl" | "number_2" | "integer" | "percent";
+  kpi_decimals?: number;
+  kpi_prefix?: string;
+  kpi_suffix?: string;
+  kpi_type?: "atomic" | "derived";
+  formula?: string;
+  dependencies?: string[];
+  kpi_dependencies?: Array<{
+    source_type?: "widget" | "column";
+    widget_id?: number;
+    column?: string;
+    alias: string;
+  }>;
   composite_metric?: {
     type: "avg_per_time_bucket" | "agg_over_time_bucket";
     inner_agg: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
