@@ -198,6 +198,10 @@ export type ApiDashboard = {
   id: number;
   dataset_id: number;
   created_by_id?: number | null;
+  is_owner: boolean;
+  access_level: "owner" | "edit" | "view";
+  access_source: "owner" | "direct" | "workspace";
+  visibility: "private" | "workspace_view" | "workspace_edit";
   name: string;
   description?: string | null;
   is_active: boolean;
@@ -214,6 +218,10 @@ export type ApiDashboardCatalogItem = {
   dataset_name: string;
   name: string;
   created_by_id?: number | null;
+  is_owner: boolean;
+  access_level: "owner" | "edit" | "view";
+  access_source: "owner" | "direct" | "workspace";
+  visibility: "private" | "workspace_view" | "workspace_edit";
   created_by_name?: string | null;
   created_by_email?: string | null;
   widget_count: number;
@@ -424,6 +432,28 @@ export type ApiDashboardDebugQueriesResponse = {
   final_items: ApiDashboardDebugFinalQueryItem[];
 };
 
+export type ApiDashboardEmailShare = {
+  id: number;
+  dashboard_id: number;
+  email: string;
+  permission: "view" | "edit";
+  created_by_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiDashboardSharingResponse = {
+  dashboard_id: number;
+  visibility: "private" | "workspace_view" | "workspace_edit";
+  shares: ApiDashboardEmailShare[];
+};
+
+export type ApiDashboardShareableUser = {
+  id: number;
+  email: string;
+  full_name?: string | null;
+};
+
 export type ApiLLMIntegrationStatus = {
   provider: "openai";
   configured: boolean;
@@ -618,6 +648,29 @@ export const api = {
   ) => request<ApiDashboard>(`/dashboards/${dashboardId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
   deleteDashboard: (dashboardId: number) => request<void>(`/dashboards/${dashboardId}`, { method: "DELETE" }),
+
+  getDashboardSharing: (dashboardId: number) =>
+    request<ApiDashboardSharingResponse>(`/dashboards/${dashboardId}/sharing`),
+
+  updateDashboardVisibility: (
+    dashboardId: number,
+    payload: { visibility: "private" | "workspace_view" | "workspace_edit" },
+  ) => request<ApiDashboardSharingResponse>(`/dashboards/${dashboardId}/sharing/visibility`, { method: "PUT", body: JSON.stringify(payload) }),
+
+  upsertDashboardEmailShare: (
+    dashboardId: number,
+    payload: { email: string; permission: "view" | "edit" },
+  ) => request<ApiDashboardSharingResponse>(`/dashboards/${dashboardId}/sharing/email`, { method: "POST", body: JSON.stringify(payload) }),
+
+  deleteDashboardEmailShare: (dashboardId: number, shareId: number) =>
+    request<ApiDashboardSharingResponse>(`/dashboards/${dashboardId}/sharing/email/${shareId}`, { method: "DELETE" }),
+
+  listDashboardShareableUsers: (search?: string, limit = 8) => {
+    const query = new URLSearchParams();
+    if (search && search.trim()) query.set("search", search.trim());
+    query.set("limit", String(limit));
+    return request<ApiDashboardShareableUser[]>(`/dashboards/shareable-users?${query.toString()}`);
+  },
 
   createDashboardWidget: (
     dashboardId: number,

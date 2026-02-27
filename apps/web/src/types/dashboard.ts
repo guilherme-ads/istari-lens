@@ -123,6 +123,10 @@ export interface Dashboard {
   id: string;
   title: string;
   datasetId: string;
+  isOwner: boolean;
+  accessLevel: "owner" | "edit" | "view";
+  accessSource: "owner" | "direct" | "workspace";
+  visibility: "private" | "workspace_view" | "workspace_edit";
   nativeFilters: WidgetFilter[];
   sections: DashboardSection[];
   createdAt: string;

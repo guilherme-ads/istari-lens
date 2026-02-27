@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, Link, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ChevronLeft, Pencil, Share2, Database, Plus, Trash2, CalendarIcon, Check, Monitor, FileDown, X, SlidersHorizontal } from "lucide-react";
+import { ChevronLeft, Pencil, Share2, Database, Plus, Trash2, CalendarIcon, Monitor, FileDown, X, SlidersHorizontal, Link2, Globe, Lock, UserRound } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { WidgetRenderer } from "@/components/builder/WidgetRenderer";
 import type { DashboardSection } from "@/types/dashboard";
 import { useCoreData } from "@/hooks/use-core-data";
@@ -21,6 +28,7 @@ import { exportDashboardToPdf } from "@/lib/dashboard-pdf";
 import EmptyState from "@/components/shared/EmptyState";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { getStoredUser } from "@/lib/auth";
 
 type FilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between";
 type DraftGlobalFilter = {
@@ -99,6 +107,7 @@ const getWidgetWidthClass = (sectionColumns: 1 | 2 | 3 | 4, width: 1 | 2 | 3 | 4
 const DashboardViewPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const { datasetId, dashboardId } = useParams<{ datasetId: string; dashboardId: string }>();
   const { datasets, views, dashboards, hasToken, isLoading, isError, errorMessage } = useCoreData();
@@ -106,12 +115,13 @@ const DashboardViewPage = () => {
 
   const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
   const dashboard = useMemo(() => dashboards.find((item) => item.id === dashboardId), [dashboards, dashboardId]);
+  const canEditDashboard = (dashboard?.accessLevel || "view") !== "view";
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
   const [draftFilters, setDraftFilters] = useState<DraftGlobalFilter[]>([
     { id: `gf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
   const [appliedFilters, setAppliedFilters] = useState<AppliedGlobalFilter[]>([]);
-  const [shareSuccess, setShareSuccess] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const sections = dashboard?.sections || [];
   const widgetCount = sections.reduce((total, section) => total + section.widgets.length, 0);
   const widgets = useMemo(() => sections.flatMap((section) => section.widgets), [sections]);
@@ -181,14 +191,55 @@ const DashboardViewPage = () => {
   const previewErrorMessage = widgetsDataQuery.isError
     ? (widgetsDataQuery.error as Error).message || "Falha ao carregar dados"
     : null;
-  const handleShare = async () => {
-    if (!datasetId || !dashboardId) return;
-    const shareUrl = `${window.location.origin}/presentation/datasets/${datasetId}/dashboard/${dashboardId}`;
-    await navigator.clipboard.writeText(shareUrl);
-    setShareSuccess(true);
-    toast({ title: "Link copiado" });
-    setTimeout(() => setShareSuccess(false), 2000);
-  };
+  const sharingQuery = useQuery({
+    queryKey: ["dashboard-sharing", dashboardId],
+    queryFn: () => api.getDashboardSharing(Number(dashboardId)),
+    enabled: shareOpen && !!dashboardId && !!dashboard?.isOwner,
+  });
+
+  const updateVisibilityMutation = useMutation({
+    mutationFn: (visibility: "private" | "workspace_view" | "workspace_edit") =>
+      api.updateDashboardVisibility(Number(dashboardId), { visibility }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-sharing", dashboardId] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-catalog"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      toast({ title: "Compartilhamento atualizado" });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Falha ao atualizar visibilidade";
+      toast({ title: "Erro ao compartilhar", description: message, variant: "destructive" });
+    },
+  });
+
+  const upsertEmailShareMutation = useMutation({
+    mutationFn: (payload: { email: string; permission: "view" | "edit" }) =>
+      api.upsertDashboardEmailShare(Number(dashboardId), payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-sharing", dashboardId] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-catalog"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      toast({ title: "Convite atualizado" });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Falha ao compartilhar por e-mail";
+      toast({ title: "Erro ao compartilhar", description: message, variant: "destructive" });
+    },
+  });
+
+  const deleteEmailShareMutation = useMutation({
+    mutationFn: (shareId: number) => api.deleteDashboardEmailShare(Number(dashboardId), shareId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-sharing", dashboardId] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-catalog"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      toast({ title: "Acesso removido" });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Falha ao remover compartilhamento";
+      toast({ title: "Erro ao compartilhar", description: message, variant: "destructive" });
+    },
+  });
   const handleExportPdf = () => {
     exportDashboardToPdf({
       dashboardTitle: dashboard.title,
@@ -316,21 +367,32 @@ const DashboardViewPage = () => {
                   variant="outline"
                   className="h-8 text-xs"
                   onClick={() => navigate(`/datasets/${datasetId}/builder/${dashboardId}`)}
+                  disabled={!canEditDashboard}
                 >
                   <Pencil className="h-3 w-3 sm:mr-1" />
                   <span className="hidden sm:inline">Editar</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Editar dashboard</TooltipContent>
+              <TooltipContent className="text-xs">
+                {canEditDashboard ? "Editar dashboard" : "Sem permissão de edição"}
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleShare}>
-                  {shareSuccess ? <Check className="h-3 w-3 text-success" /> : <Share2 className="h-3 w-3 sm:mr-1" />}
-                  <span className="hidden sm:inline">{shareSuccess ? "Copiado!" : "Compartilhar"}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => setShareOpen(true)}
+                  disabled={!dashboard.isOwner}
+                >
+                  <Share2 className="h-3 w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Compartilhar</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Compartilhar</TooltipContent>
+              <TooltipContent className="text-xs">
+                {dashboard.isOwner ? "Compartilhar" : "Somente o dono pode compartilhar"}
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -555,7 +617,7 @@ const DashboardViewPage = () => {
             className="flex flex-col items-center justify-center py-24 gap-4"
           >
             <p className="text-sm text-muted-foreground">Este dashboard ainda não possui widgets.</p>
-            <Button variant="outline" onClick={() => navigate(`/datasets/${datasetId}/builder/${dashboardId}`)}>
+            <Button variant="outline" onClick={() => navigate(`/datasets/${datasetId}/builder/${dashboardId}`)} disabled={!canEditDashboard}>
               <Pencil className="h-4 w-4 mr-1.5" /> Editar dashboard
             </Button>
           </motion.div>
@@ -575,7 +637,267 @@ const DashboardViewPage = () => {
           </div>
         )}
       </div>
+
+      {dashboard.isOwner && (
+        <ShareDashboardDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          dashboardTitle={dashboard.title}
+          shareUrl={`${window.location.origin}/presentation/datasets/${datasetId}/dashboard/${dashboardId}`}
+          visibility={sharingQuery.data?.visibility}
+          shares={sharingQuery.data?.shares || []}
+          loading={sharingQuery.isLoading}
+          updatingVisibility={updateVisibilityMutation.isPending}
+          sharingByEmail={upsertEmailShareMutation.isPending}
+          removingShare={deleteEmailShareMutation.isPending}
+          onVisibilityChange={(visibility) => updateVisibilityMutation.mutate(visibility)}
+          onShareByEmail={(payload) => upsertEmailShareMutation.mutate(payload)}
+          onRemoveShare={(shareId) => deleteEmailShareMutation.mutate(shareId)}
+        />
+      )}
     </div>
+  );
+};
+
+const ShareDashboardDialog = ({
+  open,
+  onOpenChange,
+  dashboardTitle,
+  shareUrl,
+  visibility,
+  shares,
+  loading,
+  updatingVisibility,
+  sharingByEmail,
+  removingShare,
+  onVisibilityChange,
+  onShareByEmail,
+  onRemoveShare,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dashboardTitle: string;
+  shareUrl: string;
+  visibility?: "private" | "workspace_view" | "workspace_edit";
+  shares: Array<{ id: number; email: string; permission: "view" | "edit" }>;
+  loading: boolean;
+  updatingVisibility: boolean;
+  sharingByEmail: boolean;
+  removingShare: boolean;
+  onVisibilityChange: (visibility: "private" | "workspace_view" | "workspace_edit") => void;
+  onShareByEmail: (payload: { email: string; permission: "view" | "edit" }) => void;
+  onRemoveShare: (shareId: number) => void;
+}) => {
+  const { toast } = useToast();
+  const currentUser = getStoredUser();
+  const [email, setEmail] = useState("");
+  const [permission, setPermission] = useState<"view" | "edit">("view");
+  const [copied, setCopied] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const normalizedEmail = email.trim().toLowerCase();
+  const shareableUsersQuery = useQuery({
+    queryKey: ["dashboard-shareable-users", normalizedEmail],
+    queryFn: () => api.listDashboardShareableUsers(normalizedEmail, 8),
+    enabled: open && normalizedEmail.length > 0,
+  });
+  const suggestions = (shareableUsersQuery.data || []).filter((user) =>
+    user.email.toLowerCase().includes(normalizedEmail)
+    || (user.full_name || "").toLowerCase().includes(normalizedEmail),
+  );
+  const canInvite = !!selectedEmail && selectedEmail === normalizedEmail;
+
+  const visibilityLabel = visibility === "workspace_edit"
+    ? "Todos podem editar"
+    : visibility === "workspace_view"
+      ? "Todos podem ver"
+      : "Restrito";
+  const visibilityDescription = visibility === "workspace_edit"
+    ? "Todas as pessoas do ambiente podem abrir e editar."
+    : visibility === "workspace_view"
+      ? "Todas as pessoas do ambiente podem abrir e visualizar."
+      : "Somente pessoas convidadas podem abrir este dashboard.";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl p-0 overflow-hidden">
+        <DialogHeader className="px-6 pt-6">
+          <DialogTitle className="text-3xl font-semibold tracking-tight">Compartilhar "{dashboardTitle}"</DialogTitle>
+          <DialogDescription className="sr-only">Defina permissões de acesso para este dashboard.</DialogDescription>
+        </DialogHeader>
+
+        <div className="px-6 pb-6 space-y-6">
+          <div className="grid gap-2 sm:grid-cols-[1fr_170px_auto]">
+            <div className="relative">
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setSelectedEmail(null);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => {
+                  window.setTimeout(() => setShowSuggestions(false), 120);
+                }}
+                placeholder="Adicionar participantes por e-mail"
+                disabled={sharingByEmail}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                className="h-11"
+              />
+              {showSuggestions && normalizedEmail.length > 0 && suggestions.length > 0 && (
+                <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-border bg-popover shadow-lg">
+                  {suggestions.map((user) => (
+                    <button
+                      key={user.id}
+                      type="button"
+                      className="w-full px-3 py-2 text-left hover:bg-accent/10"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setEmail(user.email);
+                        setSelectedEmail(user.email.toLowerCase());
+                        setShowSuggestions(false);
+                      }}
+                    >
+                      <p className="text-sm font-medium truncate">{user.full_name || user.email}</p>
+                      <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {normalizedEmail.length > 0 && !canInvite && (
+                <p className="mt-1 text-xs text-muted-foreground">Selecione um e-mail cadastrado na lista.</p>
+              )}
+            </div>
+            <Select value={permission} onValueChange={(value) => setPermission(value as "view" | "edit")} disabled={sharingByEmail}>
+              <SelectTrigger className="h-11">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="view">Leitor</SelectItem>
+                <SelectItem value="edit">Editor</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              className="h-11"
+              onClick={() => {
+                if (!canInvite) return;
+                onShareByEmail({ email: normalizedEmail, permission });
+                setEmail("");
+                setSelectedEmail(null);
+              }}
+              disabled={sharingByEmail || !canInvite}
+            >
+              Enviar
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold">Pessoas com acesso</h3>
+            <div className="rounded-xl border border-border bg-card">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="h-9 w-9 rounded-full bg-accent/15 text-accent inline-flex items-center justify-center">
+                    <UserRound className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{currentUser?.full_name || "Você"} (você)</p>
+                    <p className="text-sm text-muted-foreground truncate">{currentUser?.email || "-"}</p>
+                  </div>
+                </div>
+                <span className="text-sm text-muted-foreground">Proprietário</span>
+              </div>
+
+              {shares.map((share) => (
+                <div key={share.id} className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{share.email}</p>
+                    <p className="text-sm text-muted-foreground truncate">Convidado por e-mail</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Select
+                      value={share.permission}
+                      onValueChange={(value) => onShareByEmail({ email: share.email, permission: value as "view" | "edit" })}
+                      disabled={sharingByEmail}
+                    >
+                      <SelectTrigger className="h-8 w-[120px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="view">Leitor</SelectItem>
+                        <SelectItem value="edit">Editor</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="ghost" size="icon" disabled={removingShare} onClick={() => onRemoveShare(share.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+
+              {shares.length === 0 && (
+                <div className="px-4 py-3 border-t border-border text-sm text-muted-foreground">
+                  Nenhum convidado adicional.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold">Acesso geral</h3>
+            <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="h-9 w-9 rounded-full bg-background inline-flex items-center justify-center">
+                  {visibility === "private" ? <Lock className="h-4 w-4 text-muted-foreground" /> : <Globe className="h-4 w-4 text-emerald-600" />}
+                </span>
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{visibilityLabel}</p>
+                  <p className="text-sm text-muted-foreground">{visibilityDescription}</p>
+                </div>
+              </div>
+              <Select
+                value={visibility || "private"}
+                onValueChange={(value) => onVisibilityChange(value as "private" | "workspace_view" | "workspace_edit")}
+                disabled={loading || updatingVisibility}
+              >
+                <SelectTrigger className="h-9 w-[210px] bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Restrito</SelectItem>
+                  <SelectItem value="workspace_view">Todos podem ver</SelectItem>
+                  <SelectItem value="workspace_edit">Todos podem editar</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-full px-5"
+              onClick={async () => {
+                await navigator.clipboard.writeText(shareUrl);
+                setCopied(true);
+                toast({ title: "Link copiado" });
+                window.setTimeout(() => setCopied(false), 1800);
+              }}
+            >
+              <Link2 className="h-4 w-4 mr-2" />
+              {copied ? "Copiado!" : "Copiar link"}
+            </Button>
+            <Button type="button" className="h-11 rounded-full px-8" onClick={() => onOpenChange(false)}>
+              Concluído
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

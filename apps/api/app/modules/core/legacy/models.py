@@ -32,6 +32,7 @@ class User(Base):
         back_populates="updated_by_user",
     )
     spreadsheet_imports = relationship("SpreadsheetImport", back_populates="created_by_user")
+    dashboard_email_shares_created = relationship("DashboardEmailShare", back_populates="created_by_user")
 
 
 class DataSource(Base):
@@ -131,6 +132,7 @@ class Dashboard(Base):
     layout_config = Column(JSON, nullable=False, default=list)
     native_filters = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True, index=True)
+    visibility = Column(String(32), nullable=False, default="private", index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -138,9 +140,29 @@ class Dashboard(Base):
     dataset = relationship("Dataset", back_populates="dashboards")
     widgets = relationship("DashboardWidget", back_populates="dashboard", cascade="all, delete-orphan")
     created_by_user = relationship("User", back_populates="dashboards")
+    email_shares = relationship("DashboardEmailShare", back_populates="dashboard", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("dashboard_dataset_idx", "dataset_id"),
+    )
+
+
+class DashboardEmailShare(Base):
+    __tablename__ = "dashboard_email_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_id = Column(Integer, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    permission = Column(String(16), nullable=False, default="view")
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    dashboard = relationship("Dashboard", back_populates="email_shares")
+    created_by_user = relationship("User", back_populates="dashboard_email_shares_created")
+
+    __table_args__ = (
+        Index("dashboard_email_share_unique_idx", "dashboard_id", "email", unique=True),
     )
 
 
