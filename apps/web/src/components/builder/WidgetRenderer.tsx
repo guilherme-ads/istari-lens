@@ -112,6 +112,9 @@ const getMetricLabel = (widget: DashboardWidget): string => {
       : `${aggLabelMap[innerAgg]}(${cfg.value_column || "*"})`;
     return `${aggLabelMap[outerAgg]}(${compositeInnerLabel} por ${cfg.granularity})`;
   }
+  if (widget.config.kpi_type === "derived" && widget.config.formula) {
+    return `FÓRMULA(${widget.config.formula})`;
+  }
   const metric = widget.config.metrics[0];
   if (!metric) return "Metrica";
   if (metric.op === "count") {
@@ -125,29 +128,44 @@ const getMetricLabel = (widget: DashboardWidget): string => {
 
 const formatKpiValueFull = (
   value: number,
-  showAs: "currency_brl" | "number_2" | "integer",
+  showAs: "currency_brl" | "number_2" | "integer" | "percent",
+  decimals = 2,
+  prefix?: string,
+  suffix?: string,
 ): string => {
+  const safeDecimals = Math.max(0, Math.min(8, decimals));
+  const decorate = (text: string) => `${prefix || ""}${text}${suffix || ""}`;
   if (showAs === "currency_brl") {
-    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+    return decorate(new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value));
   }
   if (showAs === "integer") {
-    return Math.trunc(value).toLocaleString("pt-BR");
+    return decorate(Math.trunc(value).toLocaleString("pt-BR"));
   }
-  return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+  if (showAs === "percent") {
+    return decorate(`${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: safeDecimals, maximumFractionDigits: safeDecimals }).format(value)}%`);
+  }
+  return decorate(new Intl.NumberFormat("pt-BR", { minimumFractionDigits: safeDecimals, maximumFractionDigits: safeDecimals }).format(value));
 };
 
 const formatKpiValueCompact = (
   value: number,
-  showAs: "currency_brl" | "number_2" | "integer",
+  showAs: "currency_brl" | "number_2" | "integer" | "percent",
+  _decimals = 2,
+  prefix?: string,
+  suffix?: string,
 ): string => {
+  const decorate = (text: string) => `${prefix || ""}${text}${suffix || ""}`;
   if (showAs === "currency_brl") {
     const sign = value < 0 ? "-" : "";
-    return `${sign}R$ ${formatCompactNumber(Math.abs(value))}`;
+    return decorate(`${sign}R$ ${formatCompactNumber(Math.abs(value))}`);
   }
   if (showAs === "integer") {
-    return formatCompactNumber(Math.trunc(value));
+    return decorate(formatCompactNumber(Math.trunc(value)));
   }
-  return formatCompactNumber(value);
+  if (showAs === "percent") {
+    return decorate(`${formatCompactNumber(value)}%`);
+  }
+  return decorate(formatCompactNumber(value));
 };
 
 const formatCurrencyBRL = (value: number): string =>
@@ -662,13 +680,16 @@ export const WidgetRenderer = ({
   if (type === "kpi") {
     const value = Number(rows[0]?.m0 || 0);
     const showAs = widget.config.kpi_show_as || "number_2";
+    const decimals = widget.config.kpi_decimals ?? 2;
+    const prefix = widget.config.kpi_prefix;
+    const suffix = widget.config.kpi_suffix;
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 py-4">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {widget.title || "KPI"}
         </span>
-        <span className="text-3xl font-extrabold tracking-tight text-foreground" title={formatKpiValueFull(value, showAs)}>
-          {formatKpiValueCompact(value, showAs)}
+        <span className="text-3xl font-extrabold tracking-tight text-foreground" title={formatKpiValueFull(value, showAs, decimals, prefix, suffix)}>
+          {formatKpiValueCompact(value, showAs, decimals, prefix, suffix)}
         </span>
       </div>
     );

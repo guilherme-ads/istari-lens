@@ -35,6 +35,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
         .map((metric) => ({
           op: asString(metric.op, "count") as WidgetConfig["metrics"][number]["op"],
           column: typeof metric.column === "string" ? metric.column : undefined,
+          alias: typeof metric.alias === "string" ? metric.alias : undefined,
           line_y_axis: (asString(metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
         }))
     : [];
@@ -66,9 +67,30 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     widget_type: widgetType as WidgetConfig["widget_type"],
     view_name: asString(raw.view_name),
     show_title: typeof raw.show_title === "boolean" ? raw.show_title : true,
-    kpi_show_as: (["currency_brl", "number_2", "integer"].includes(asString(raw.kpi_show_as, "number_2"))
+    kpi_show_as: (["currency_brl", "number_2", "integer", "percent"].includes(asString(raw.kpi_show_as, "number_2"))
       ? asString(raw.kpi_show_as, "number_2")
-      : "number_2") as "currency_brl" | "number_2" | "integer",
+      : "number_2") as "currency_brl" | "number_2" | "integer" | "percent",
+    kpi_decimals: Math.max(0, Math.min(8, asNumber(raw.kpi_decimals, 2))),
+    kpi_prefix: asString(raw.kpi_prefix) || undefined,
+    kpi_suffix: asString(raw.kpi_suffix) || undefined,
+    kpi_type: (["atomic", "derived"].includes(asString(raw.kpi_type, "atomic"))
+      ? asString(raw.kpi_type, "atomic")
+      : "atomic") as "atomic" | "derived",
+    formula: asString(raw.formula) || undefined,
+    dependencies: Array.isArray(raw.dependencies)
+      ? raw.dependencies.filter((item): item is string => typeof item === "string")
+      : [],
+    kpi_dependencies: Array.isArray(raw.kpi_dependencies)
+      ? raw.kpi_dependencies
+          .filter(isObject)
+          .map((item) => ({
+            source_type: (asString(item.source_type, "widget") === "column" ? "column" : "widget") as "widget" | "column",
+            widget_id: typeof item.widget_id === "number" ? item.widget_id : asNumber(item.widget_id, 0),
+            column: asString(item.column) || undefined,
+            alias: asString(item.alias),
+          }))
+          .filter((item) => item.alias.length > 0 && (item.source_type === "column" ? !!item.column : (item.widget_id || 0) > 0))
+      : [],
     composite_metric: isObject(raw.composite_metric)
       ? {
           type: (asString(raw.composite_metric.type, "agg_over_time_bucket") as "avg_per_time_bucket" | "agg_over_time_bucket"),

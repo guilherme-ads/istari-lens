@@ -1049,6 +1049,7 @@ const BuilderPage = () => {
       />
       <WidgetConfigPanel
         widget={editingWidget}
+        dashboardWidgets={sections.flatMap((section) => section.widgets)}
         view={view}
         sectionColumns={editingWidgetSectionColumns}
         open={configOpen}

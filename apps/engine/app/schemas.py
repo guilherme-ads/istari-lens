@@ -20,6 +20,7 @@ class FilterSpec(BaseModel):
 class MetricSpec(BaseModel):
     field: str | None = None
     agg: MetricAgg
+    alias: str | None = None
     filters: list[FilterSpec] = Field(default_factory=list)
 
 
@@ -52,6 +53,12 @@ class CompositeMetricSpec(BaseModel):
     granularity: TimeGranularity = "day"
 
 
+class DerivedMetricSpec(BaseModel):
+    formula: str
+    dependencies: list[str] = Field(default_factory=list)
+    on_divide_by_zero: Literal["null", "zero"] = "null"
+
+
 class DreRowSpec(BaseModel):
     title: str
     row_type: str
@@ -74,6 +81,7 @@ class QuerySpec(BaseModel):
     time_range: TimeRangeSpec | None = None
     timezone: str | None = None
     composite_metric: CompositeMetricSpec | None = None
+    derived_metric: DerivedMetricSpec | None = None
     dre_rows: list[DreRowSpec] = Field(default_factory=list)
 
 

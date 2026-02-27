@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import re
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -47,6 +49,69 @@ def _metric_with_filters_sql(*, metric_op: str, column: str | None, metric_filte
         return metric_expr
     params.extend(filter_params)
     return f"{metric_expr} FILTER (WHERE {' AND '.join(filter_parts)})"
+
+
+def _compile_derived_formula_sql(
+    formula: str,
+    *,
+    ref_sql_map: dict[str, str],
+    on_divide_by_zero: str,
+) -> tuple[str, set[str]]:
+    try:
+        root = ast.parse(formula, mode="eval")
+    except SyntaxError as exc:
+        raise EngineError(status_code=400, code="invalid_formula", message="Invalid derived KPI formula syntax") from exc
+
+    refs: set[str] = set()
+
+    def render(node: ast.AST) -> str:
+        if isinstance(node, ast.Expression):
+            return render(node.body)
+        if isinstance(node, ast.BinOp):
+            left = render(node.left)
+            right = render(node.right)
+            if isinstance(node.op, ast.Add):
+                return f"({left} + {right})"
+            if isinstance(node.op, ast.Sub):
+                return f"({left} - {right})"
+            if isinstance(node.op, ast.Mult):
+                return f"({left} * {right})"
+            if isinstance(node.op, ast.Div):
+                division = f"(({left})::double precision / NULLIF(({right})::double precision, 0))"
+                if on_divide_by_zero == "zero":
+                    return f"COALESCE({division}, 0)"
+                return division
+            raise EngineError(
+                status_code=400,
+                code="invalid_formula",
+                message="Derived KPI formula only supports +, -, *, / and parentheses",
+            )
+        if isinstance(node, ast.UnaryOp):
+            operand = render(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return f"(+{operand})"
+            if isinstance(node.op, ast.USub):
+                return f"(-{operand})"
+            raise EngineError(status_code=400, code="invalid_formula", message="Unsupported unary operator in formula")
+        if isinstance(node, ast.Name):
+            if node.id not in ref_sql_map:
+                raise EngineError(
+                    status_code=400,
+                    code="invalid_formula",
+                    message=f"Derived KPI formula references unknown metric '{node.id}'",
+                )
+            refs.add(node.id)
+            return ref_sql_map[node.id]
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return str(node.value)
+        raise EngineError(status_code=400, code="invalid_formula", message="Derived KPI formula contains unsupported tokens")
+
+    sql = render(root)
+    return sql, refs
+
+
+def _is_valid_sql_alias_identifier(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value))
 
 
 def _parse_temporal_dimension(value: str) -> tuple[str, str] | None:
@@ -270,6 +335,66 @@ def compile_query(spec: QuerySpec, *, max_rows: int) -> tuple[str, list[Any], in
             f"{where_sql} "
             f"GROUP BY {_quote_ident('time_bucket')}"
             f") AS {_quote_ident('kpi_bucketed')}"
+        )
+        return sql, params, 1
+
+    if spec.widget_type == "kpi" and spec.derived_metric is not None:
+        if not spec.metrics:
+            raise EngineError(status_code=400, code="invalid_spec", message="Derived KPI requires base metrics")
+
+        select_parts: list[str] = []
+        params: list[Any] = []
+        ref_sql_map: dict[str, str] = {}
+        seen_aliases: set[str] = set()
+        for index, metric in enumerate(spec.metrics):
+            legacy_ref = f"m{index}"
+            metric_alias = (metric.alias or "").strip() or legacy_ref
+            if not _is_valid_sql_alias_identifier(metric_alias):
+                raise EngineError(status_code=400, code="invalid_spec", message=f"Invalid derived KPI metric alias '{metric_alias}'")
+            if metric_alias in seen_aliases:
+                raise EngineError(status_code=400, code="invalid_spec", message=f"Duplicated derived KPI metric alias '{metric_alias}'")
+            seen_aliases.add(metric_alias)
+            alias = _quote_ident(metric_alias)
+            metric_expr = _metric_with_filters_sql(
+                metric_op=metric.agg,
+                column=metric.field,
+                metric_filters=metric.filters,
+                params=params,
+            )
+            select_parts.append(f"{metric_expr} AS {alias}")
+            ref_sql_map[metric_alias] = alias
+            ref_sql_map[legacy_ref] = alias
+
+        where_parts, where_params = _apply_filter(spec.filters)
+        params.extend(where_params)
+        where_sql = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        expr_sql, expr_refs = _compile_derived_formula_sql(
+            spec.derived_metric.formula,
+            ref_sql_map=ref_sql_map,
+            on_divide_by_zero=spec.derived_metric.on_divide_by_zero,
+        )
+        if not expr_refs:
+            raise EngineError(
+                status_code=400,
+                code="invalid_formula",
+                message="Derived KPI formula must reference at least one base metric",
+            )
+        if spec.derived_metric.dependencies and set(spec.derived_metric.dependencies) != expr_refs:
+            raise EngineError(
+                status_code=400,
+                code="invalid_formula",
+                message="Derived KPI dependencies do not match formula references",
+            )
+
+        sql = (
+            f"WITH {_quote_ident('kpi_base')} AS ("
+            f"SELECT {', '.join(select_parts)} "
+            f"FROM {_qualified_name(spec.resource_id)}"
+            f"{where_sql}"
+            f") "
+            f"SELECT {expr_sql} AS {_quote_ident('m0')} "
+            f"FROM {_quote_ident('kpi_base')}"
         )
         return sql, params, 1
 
