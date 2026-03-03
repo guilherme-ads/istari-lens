@@ -167,7 +167,7 @@ const LoginPage = () => {
             Conexão segura e criptografada
           </div>
           <p className="text-center text-xs text-muted-foreground/60">
-            {/* Cliente pediu remover "istari" do texto visivel; para reverter, restaurar "istari Lens". */}
+            {/* Cliente pediu remover "istari" do texto visível; para reverter, restaurar "istari Lens". */}
             © 2026 Lens App | Data Intelligence Platform
           </p>
         </div>

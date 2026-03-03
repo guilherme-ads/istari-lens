@@ -285,8 +285,8 @@ const DashboardViewPage = () => {
         <main className="container py-8 flex-1 flex items-center justify-center">
           <EmptyState
             icon={<Database className="h-5 w-5" />}
-            title="Sessão necessaria"
-            description="Para abrir este dashboard em modo apresentação, faca login novamente."
+            title="Sessão necessária"
+            description="Para abrir este dashboard em modo apresentação, faça login novamente."
             action={(
               <Button size="sm" onClick={() => navigate("/login")}>
                 Ir para login

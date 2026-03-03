@@ -503,6 +503,20 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }, false),
 
+  changePassword: (payload: { current_password: string; new_password: string }) =>
+    request<void>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getMe: () => request<ApiUser>("/auth/me"),
+
+  updateMe: (payload: Partial<Pick<ApiUser, "email" | "full_name">>) =>
+    request<ApiUser>("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   listDatasources: () => request<ApiDatasource[]>("/datasources"),
 
   createDatasource: (payload: {

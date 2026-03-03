@@ -82,3 +82,18 @@ export const clearAuthSession = (): void => {
 };
 
 export const getStoredUser = (): StoredUser | null => getActiveSession()?.user ?? null;
+
+export const updateStoredUser = (nextUser: StoredUser): void => {
+  if (typeof window === "undefined") return;
+
+  const localSession = readSessionFromStorage(localStorage);
+  if (localSession) {
+    safeSetItem(localStorage, USER_STORAGE_KEY, JSON.stringify(nextUser));
+    return;
+  }
+
+  const session = readSessionFromStorage(sessionStorage);
+  if (session) {
+    safeSetItem(sessionStorage, USER_STORAGE_KEY, JSON.stringify(nextUser));
+  }
+};
