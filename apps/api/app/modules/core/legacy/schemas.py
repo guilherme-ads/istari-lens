@@ -15,6 +15,14 @@ class UserRegister(BaseModel):
     password: str
     full_name: Optional[str] = None
 
+class UserChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+class UserMeUpdateRequest(BaseModel):
+    email: Optional[str] = Field(default=None, min_length=3, max_length=255)
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

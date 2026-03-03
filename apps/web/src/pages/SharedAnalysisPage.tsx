@@ -53,7 +53,7 @@ const SharedAnalysisPage = () => {
     return (
       <div className="min-h-screen bg-background">
         <main className="container py-8 max-w-5xl">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Carregando analise" description="Aguarde enquanto buscamos os dados compartilhados." />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Carregando análise" description="Aguarde enquanto buscamos os dados compartilhados." />
         </main>
       </div>
     );
@@ -63,7 +63,7 @@ const SharedAnalysisPage = () => {
     return (
       <div className="min-h-screen bg-background">
         <main className="container py-8 max-w-5xl">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Analise não encontrada" description={(sharedQuery.error as Error | undefined)?.message || "Token invalido ou expirado."} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Análise não encontrada" description={(sharedQuery.error as Error | undefined)?.message || "Token inválido ou expirado."} />
         </main>
       </div>
     );
@@ -80,7 +80,7 @@ const SharedAnalysisPage = () => {
             <BrandLogo size="sm" className="text-foreground" />
             <span className="h-4 w-px bg-border" />
             <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <ExternalLink className="h-3 w-3" /> Analise compartilhada
+              <ExternalLink className="h-3 w-3" /> Análise compartilhada
             </span>
           </div>
           <Tooltip>
@@ -112,7 +112,7 @@ const SharedAnalysisPage = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <KpiMiniCard label={yKey || "Metrica"} value={totalMetric.toLocaleString()} icon={TrendingUp} />
+            <KpiMiniCard label={yKey || "Métrica"} value={totalMetric.toLocaleString()} icon={TrendingUp} />
             <KpiMiniCard label="Registros" value={rows.length.toLocaleString()} icon={TrendingUp} />
             <KpiMiniCard label="Colunas" value={columns.length.toLocaleString()} icon={TrendingUp} />
           </div>
@@ -133,7 +133,7 @@ const SharedAnalysisPage = () => {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <EmptyState icon={<Database className="h-5 w-5" />} title="Sem dados para grafico" description="Não foi possivel identificar colunas para visualização." />
+              <EmptyState icon={<Database className="h-5 w-5" />} title="Sem dados para gráfico" description="Não foi possível identificar colunas para visualização." />
             )}
           </div>
 

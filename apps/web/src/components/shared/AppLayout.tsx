@@ -1,7 +1,8 @@
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useState } from "react";
-import { LogOut, Settings, Layers, Home, Menu, X, BarChart3, LayoutDashboard, Users, KeyRound } from "lucide-react";
+import { LogOut, Settings, Layers, Home, Menu, X, BarChart3, LayoutDashboard, Users, KeyRound, UserCog } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
 import BrandLogo from "@/components/shared/BrandLogo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { clearAuthSession, getStoredUser } from "@/lib/auth";
@@ -11,6 +12,7 @@ const AppLayout = () => {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const user = getStoredUser();
+
   const navLinks = [
     { to: "/home", label: "Home", icon: Home },
     { to: "/datasets", label: "Datasets", icon: Layers },
@@ -21,10 +23,12 @@ const AppLayout = () => {
       ]
       : []),
   ];
+
   const handleLogout = () => {
     clearAuthSession();
     navigate("/login");
   };
+
   const isActiveLink = (to: string) => {
     if (to === "/admin") return location.pathname === "/admin";
     if (to === "/api-config") return location.pathname === "/api-config";
@@ -112,6 +116,22 @@ const AppLayout = () => {
             )}
             <Tooltip>
               <TooltipTrigger asChild>
+                <Link
+                  to="/account"
+                  className={`hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors md:flex ${
+                    isActiveLink("/account")
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <UserCog className="h-3.5 w-3.5" />
+                  Conta
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">Minha conta</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
                   onClick={handleLogout}
                   className="hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:flex"
@@ -186,6 +206,18 @@ const AppLayout = () => {
                     </Link>
                   </>
                 )}
+                <Link
+                  to="/account"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+                    isActiveLink("/account")
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <UserCog className="h-4 w-4" />
+                  Conta
+                </Link>
                 <div className="my-1 h-px bg-border" />
                 <button
                   onClick={handleLogout}

@@ -18,6 +18,7 @@ import ApiConfigPage from "./pages/ApiConfigPage";
 import SharedAnalysisPage from "./pages/SharedAnalysisPage";
 import NotFound from "./pages/NotFound";
 import AdminUsersPage from "./pages/AdminUsersPage";
+import AccountPage from "./pages/AccountPage";
 
 const queryClient = new QueryClient();
 
@@ -58,6 +59,7 @@ const App = () => (
             <Route path="/home" element={<OverviewPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
             <Route path="/dashboards" element={<DashboardsPage />} />
+            <Route path="/account" element={<AccountPage />} />
             <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
             <Route path="/datasets/:datasetId/dashboard/:dashboardId" element={<DashboardViewPage />} />
             <Route path="/datasets/:datasetId/builder" element={<BuilderPage />} />
