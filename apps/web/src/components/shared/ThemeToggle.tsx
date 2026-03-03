@@ -1,6 +1,6 @@
 import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -10,7 +10,7 @@ type ThemeToggleProps = {
   showLabel?: boolean;
 };
 
-const ThemeToggle = ({ className, showLabel = false }: ThemeToggleProps) => {
+const ThemeToggle = forwardRef<HTMLButtonElement, ThemeToggleProps>(({ className, showLabel = false }, ref) => {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -23,6 +23,7 @@ const ThemeToggle = ({ className, showLabel = false }: ThemeToggleProps) => {
 
   return (
     <Button
+      ref={ref}
       type="button"
       variant="ghost"
       size={showLabel ? "sm" : "icon"}
@@ -48,6 +49,8 @@ const ThemeToggle = ({ className, showLabel = false }: ThemeToggleProps) => {
       {showLabel && <span className="text-sm font-medium">{isDark ? "Tema escuro" : "Tema claro"}</span>}
     </Button>
   );
-};
+});
+
+ThemeToggle.displayName = "ThemeToggle";
 
 export default ThemeToggle;

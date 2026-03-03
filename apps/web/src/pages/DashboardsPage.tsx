@@ -34,13 +34,14 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { parseApiDate } from "@/lib/datetime";
 
 type CatalogItem = Awaited<ReturnType<typeof api.listDashboardCatalog>>[number];
 
 const formatDateTimeBR = (value?: string | null) => {
   if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
+  const date = parseApiDate(value);
+  if (!date) return "-";
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -74,7 +75,11 @@ const DashboardsPage = () => {
   });
 
   const rows = useMemo(
-    () => (catalogQuery.data || []).slice().sort((a, b) => new Date(b.last_edited_at).getTime() - new Date(a.last_edited_at).getTime()),
+    () => (catalogQuery.data || []).slice().sort((a, b) => {
+      const bTime = parseApiDate(b.last_edited_at)?.getTime() || 0;
+      const aTime = parseApiDate(a.last_edited_at)?.getTime() || 0;
+      return bTime - aTime;
+    }),
     [catalogQuery.data],
   );
 
