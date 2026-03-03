@@ -2,6 +2,7 @@ import type { Dashboard, DashboardSection, DashboardWidget, WidgetConfig } from 
 import type { Datasource, Dataset, View } from "@/types";
 import type { ApiDashboard, ApiDashboardWidget, ApiDataset, ApiDatasource, ApiView } from "@/lib/api";
 import { normalizeText } from "@/lib/text";
+import { normalizeApiDateTime } from "@/lib/datetime";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -238,7 +239,7 @@ export const mapDatasource = (item: ApiDatasource): Datasource => ({
   id: String(item.id),
   name: item.name,
   schemaPattern: item.schema_pattern || "*",
-  lastSync: item.last_synced_at || "Never",
+  lastSync: item.last_synced_at ? normalizeApiDateTime(item.last_synced_at) : "Never",
   status: item.is_active ? "active" : "inactive",
   sourceType: item.source_type === "file_spreadsheet_import" ? "spreadsheet" : "database",
   description: item.description || "",
@@ -265,7 +266,7 @@ export const mapDataset = (item: ApiDataset, dashboardIds: string[] = []): Datas
   description: item.description || "",
   viewId: String(item.view_id),
   dashboardIds,
-  createdAt: item.created_at,
+  createdAt: normalizeApiDateTime(item.created_at),
 });
 
 export const mapDashboard = (item: ApiDashboard): Dashboard => {
@@ -312,8 +313,8 @@ export const mapDashboard = (item: ApiDashboard): Dashboard => {
       value: filter.value,
     })),
     sections,
-    createdAt: item.created_at,
-    updatedAt: item.updated_at,
+    createdAt: normalizeApiDateTime(item.created_at),
+    updatedAt: normalizeApiDateTime(item.updated_at),
   };
 };
 

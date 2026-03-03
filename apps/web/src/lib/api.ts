@@ -517,7 +517,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  listDatasources: () => request<ApiDatasource[]>("/datasources"),
+  listDatasources: () => request<ApiDatasource[]>("/datasources/"),
 
   createDatasource: (payload: {
     name: string;

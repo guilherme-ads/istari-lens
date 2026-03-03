@@ -106,6 +106,56 @@ const OverviewPage = () => {
 
   const recentDatasets = datasetsSorted.slice(0, 6);
   const recentDashboards = dashboardsSorted.slice(0, 6);
+  const suggestions = useMemo(() => {
+    const items: Array<{
+      key: string;
+      icon: typeof PencilLine;
+      title: string;
+      description: string;
+      detail?: string;
+      className?: string;
+      iconClassName?: string;
+      onClick: () => void;
+    }> = [];
+
+    if (lastEditedDashboard) {
+      items.push({
+        key: "continue-editing",
+        icon: PencilLine,
+        title: "Continuar editando",
+        description: lastEditedDashboard.title,
+        detail: `Atualizado ${formatRelativeTime(lastEditedDashboard.updatedAt)}`,
+        onClick: () => navigate(`/datasets/${lastEditedDashboard.datasetId}/dashboard/${lastEditedDashboard.id}`),
+      });
+    }
+
+    if (datasetWithoutDashboard) {
+      items.push({
+        key: "first-dashboard",
+        icon: Sparkles,
+        title: "Criar primeiro dashboard",
+        description: `Dataset ${datasetWithoutDashboard.name}`,
+        detail: "Este dataset ainda nao tem dashboard.",
+        className: "border-warning/40 bg-warning/10",
+        iconClassName: "text-warning",
+        onClick: () => navigate(`/datasets/${datasetWithoutDashboard.id}/builder`),
+      });
+    }
+
+    if (user?.is_admin) {
+      items.push({
+        key: "new-datasource",
+        icon: Database,
+        title: "Conectar nova fonte",
+        description: "Adicione bancos e planilhas para ampliar analises.",
+        className: "border-success/40 bg-success/10",
+        iconClassName: "text-success",
+        onClick: () => navigate("/admin"),
+      });
+    }
+
+    return items;
+  }, [datasetWithoutDashboard, lastEditedDashboard, navigate, user?.is_admin]);
 
   if (isError) {
     return (
@@ -160,72 +210,28 @@ const OverviewPage = () => {
           </motion.div>
         </section>
 
-        <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="space-y-3">
-          <h2 className="text-heading">Sugestoes para voce</h2>
-          <div className="grid gap-3 md:grid-cols-3">
-            <button
-              type="button"
-              onClick={() => {
-                if (!lastEditedDashboard) return;
-                navigate(`/datasets/${lastEditedDashboard.datasetId}/dashboard/${lastEditedDashboard.id}`);
-              }}
-              disabled={!lastEditedDashboard}
-              className="glass-card interactive-card p-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <div className="flex items-center gap-2">
-                <PencilLine className="h-4 w-4 text-accent" />
-                <p className="font-bold text-foreground">Continuar editando</p>
-              </div>
-              {lastEditedDashboard ? (
-                <>
-                  <p className="mt-2 text-body text-muted-foreground line-clamp-1">{lastEditedDashboard.title}</p>
-                  <p className="mt-1 text-caption">Atualizado {formatRelativeTime(lastEditedDashboard.updatedAt)}</p>
-                </>
-              ) : (
-                <p className="mt-2 text-caption">Nenhum dashboard disponivel para continuar.</p>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (!datasetWithoutDashboard) return;
-                navigate(`/datasets/${datasetWithoutDashboard.id}/builder`);
-              }}
-              disabled={!datasetWithoutDashboard}
-              className="glass-card interactive-card border-warning/40 bg-warning/10 p-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-warning" />
-                <p className="font-bold text-foreground">Criar primeiro dashboard</p>
-              </div>
-              {datasetWithoutDashboard ? (
-                <>
-                  <p className="mt-2 text-body text-muted-foreground line-clamp-1">Dataset {datasetWithoutDashboard.name}</p>
-                  <p className="mt-1 text-caption">Este dataset ainda nao tem dashboard.</p>
-                </>
-              ) : (
-                <p className="mt-2 text-caption">Todos os datasets já possuem dashboard.</p>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (!user?.is_admin) return;
-                navigate("/admin");
-              }}
-              disabled={!user?.is_admin}
-              className="glass-card interactive-card border-success/40 bg-success/10 p-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4 text-success" />
-                <p className="font-bold text-foreground">Conectar nova fonte</p>
-              </div>
-              <p className="mt-2 text-body text-muted-foreground">Adicione bancos e planilhas para ampliar analises.</p>
-            </button>
-          </div>
-        </motion.section>
+        {suggestions.length > 0 && (
+          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="space-y-3">
+            <h2 className="text-heading">Sugestoes para voce</h2>
+            <div className="grid gap-3 md:grid-cols-3">
+              {suggestions.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={item.onClick}
+                  className={`glass-card interactive-card p-4 text-left ${item.className || ""}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <item.icon className={`h-4 w-4 ${item.iconClassName || "text-accent"}`} />
+                    <p className="font-bold text-foreground">{item.title}</p>
+                  </div>
+                  <p className="mt-2 text-body text-muted-foreground line-clamp-1">{item.description}</p>
+                  {item.detail && <p className="mt-1 text-caption">{item.detail}</p>}
+                </button>
+              ))}
+            </div>
+          </motion.section>
+        )}
 
         <div className="grid gap-6 lg:grid-cols-2">
           <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass-card p-5">
@@ -330,3 +336,4 @@ const OverviewPage = () => {
 };
 
 export default OverviewPage;
+
