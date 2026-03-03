@@ -50,12 +50,6 @@ const formatDateTimeBR = (value?: string | null) => {
   }).format(date);
 };
 
-const loadBadgeClass = (score: number) => {
-  if (score >= 75) return "bg-destructive/10 text-destructive border-destructive/30";
-  if (score >= 45) return "bg-orange-500/10 text-orange-600 border-orange-300";
-  return "bg-emerald-500/10 text-emerald-600 border-emerald-300";
-};
-
 const normalizeSearchText = (value: string) =>
   value
     .normalize("NFD")
@@ -431,9 +425,6 @@ const DashboardGridCard = ({
       >
         <LayoutDashboard className="h-4 w-4" />
       </button>
-      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${loadBadgeClass(item.load_score)}`}>
-        Carga {item.load_score.toFixed(0)}
-      </span>
     </div>
 
     <div className="space-y-1.5">
@@ -512,9 +503,6 @@ const DashboardListItem = ({
     </div>
     <div className="hidden md:flex items-center gap-4 shrink-0 text-caption">
       <span>{item.widget_count} widgets</span>
-      <span className={`inline-flex rounded-full border px-2 py-0.5 font-semibold ${loadBadgeClass(item.load_score)}`}>
-        {item.load_score.toFixed(0)}
-      </span>
     </div>
     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onOpen}>
       <Eye className="h-4 w-4" />

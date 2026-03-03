@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import type { DashboardWidget } from "@/types/dashboard";
+import type { DashboardWidget, WidgetFilter } from "@/types/dashboard";
 import type { View } from "@/types";
 
 interface WidgetConfigPanelProps {
@@ -509,22 +509,42 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
   const barDim = draft.config.dimensions[0] || "";
   const selectedTableColumns = draft.config.columns || [];
   const getColumnType = (name: string) => columnTypeByName[name] || "text";
-  const activeFilterColumn = draft.config.filters[0]?.column;
-  const isTemporalFilterColumn = !!activeFilterColumn && getColumnType(activeFilterColumn) === "temporal";
-  const activeFilter = draft.config.filters[0];
-  const activeFilterValue = activeFilter?.value;
+  const emptyFilter: WidgetFilter = { column: "", op: "eq", value: "" };
+  const filterRows = draft.config.filters.length > 0 ? draft.config.filters : [emptyFilter];
+  const applyFilterAt = (index: number, nextFilter: WidgetFilter) => {
+    if (draft.config.filters.length === 0) {
+      update({ config: { ...draft.config, filters: [nextFilter] } });
+      return;
+    }
+    update({
+      config: {
+        ...draft.config,
+        filters: draft.config.filters.map((item, itemIndex) => (itemIndex === index ? nextFilter : item)),
+      },
+    });
+  };
+  const addFilterRow = (afterIndex: number) => {
+    if (draft.config.filters.length === 0) {
+      update({ config: { ...draft.config, filters: [emptyFilter, emptyFilter] } });
+      return;
+    }
+    const nextFilters = [...draft.config.filters];
+    nextFilters.splice(afterIndex + 1, 0, emptyFilter);
+    update({ config: { ...draft.config, filters: nextFilters } });
+  };
+  const removeFilterRow = (index: number) => {
+    if (draft.config.filters.length === 0) {
+      update({ config: { ...draft.config, filters: [] } });
+      return;
+    }
+    const nextFilters = draft.config.filters.filter((_, itemIndex) => itemIndex !== index);
+    update({ config: { ...draft.config, filters: nextFilters } });
+  };
   const dreRows = draft.config.dre_rows || [];
   const dreResultRowOptions = dreRows
     .map((row, index) => ({ row, index }))
     .filter((item) => item.row.row_type === "result");
   const effectiveDrePercentBaseRowIndex = resolveDrePercentBaseRowIndex(dreRows, draft.config.dre_percent_base_row_index);
-  const isRelativeTemporalFilter = isTemporalFilterColumn
-    && activeFilter?.op === "between"
-    && typeof activeFilterValue === "object"
-    && !!activeFilterValue
-    && !Array.isArray(activeFilterValue)
-    && "relative" in (activeFilterValue as Record<string, unknown>);
-  const temporalOpUiValue = isRelativeTemporalFilter ? "__relative__" : (activeFilter?.op || "eq");
   const insertFormulaAliasAtCursor = (alias: string) => {
     if (!derivedKpiEnabled) return;
     const currentFormula = draft.config.formula || "";
@@ -1650,206 +1670,198 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
             <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
               <Filter className="h-3 w-3" /> Filtro simples
             </Label>
-            <div className="flex items-center gap-2">
-              <Select
-                value={draft.config.filters[0]?.column || "__none__"}
-                onValueChange={(value) =>
-                  update({
-                    config: {
-                      ...draft.config,
-                      filters: value === "__none__" ? [] : [{
-                        column: value,
-                        op: draft.config.filters[0]?.op || "eq",
-                        value: draft.config.filters[0]?.value || "",
-                      }],
-                    },
-                  })}
-              >
-                <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem filtro" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Sem filtro</SelectItem>
-                  {columns.map((column) => (
-                    <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {draft.config.filters[0] && (
-                <>
-                  <Select
-                    value={isTemporalFilterColumn ? temporalOpUiValue : draft.config.filters[0].op}
-                    onValueChange={(value) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          filters: [{
-                            ...draft.config.filters[0],
-                            op: value === "__relative__" ? "between" : value as typeof draft.config.filters[0]["op"],
-                            value:
-                              value === "__relative__"
-                                ? { relative: "last_7_days" }
-                                : value === "between"
-                                  ? ["", ""]
-                                  : value === "is_null" || value === "not_null"
-                                    ? undefined
-                                    : draft.config.filters[0].value,
-                          }],
-                        },
-                      })}
-                  >
-                    <SelectTrigger className="w-[90px] h-8 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="eq">=</SelectItem>
-                      <SelectItem value="neq">!=</SelectItem>
-                      <SelectItem value="gt">&gt;</SelectItem>
-                      <SelectItem value="lt">&lt;</SelectItem>
-                      <SelectItem value="gte">&gt;=</SelectItem>
-                      <SelectItem value="lte">&lt;=</SelectItem>
-                      {isTemporalFilterColumn ? (
-                        <>
-                          <SelectItem value="between">entre</SelectItem>
-                          <SelectItem value="__relative__">relativa</SelectItem>
-                        </>
-                      ) : (
-                        <>
-                          <SelectItem value="contains">cont</SelectItem>
-                          <SelectItem value="between">entre</SelectItem>
-                        </>
-                      )}
-                      <SelectItem value="in">in</SelectItem>
-                      <SelectItem value="not_in">not in</SelectItem>
-                      <SelectItem value="is_null">nulo</SelectItem>
-                      <SelectItem value="not_null">não nulo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {draft.config.filters[0].op === "is_null" || draft.config.filters[0].op === "not_null" ? (
-                    <div className="w-[150px] h-8" />
-                  ) : isTemporalFilterColumn && isRelativeTemporalFilter ? (
+            <div className="space-y-2">
+              {filterRows.map((filterItem, index) => {
+                const isTemporalFilterColumn = !!filterItem.column && getColumnType(filterItem.column) === "temporal";
+                const isRelativeTemporalFilter = isTemporalFilterColumn
+                  && filterItem.op === "between"
+                  && typeof filterItem.value === "object"
+                  && !!filterItem.value
+                  && !Array.isArray(filterItem.value)
+                  && "relative" in (filterItem.value as Record<string, unknown>);
+                const temporalOpUiValue = isRelativeTemporalFilter ? "__relative__" : filterItem.op;
+                const showOperatorAndValue = !!filterItem.column;
+                return (
+                  <div key={`filter-row-${index}`} className="flex items-center gap-2">
                     <Select
-                      value={String((draft.config.filters[0].value as Record<string, unknown>)?.relative || "last_7_days")}
-                      onValueChange={(value) =>
-                        update({
-                          config: {
-                            ...draft.config,
-                            filters: [{ ...draft.config.filters[0], op: "between", value: { relative: value } }],
-                          },
-                        })}
+                      value={filterItem.column || "__none__"}
+                      onValueChange={(value) => {
+                        if (value === "__none__") {
+                          removeFilterRow(index);
+                          return;
+                        }
+                        applyFilterAt(index, {
+                          column: value,
+                          op: filterItem.op || "eq",
+                          value: filterItem.value || "",
+                        });
+                      }}
                     >
-                      <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem filtro" /></SelectTrigger>
                       <SelectContent>
-                        {relativeDateOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        <SelectItem value="__none__">Sem filtro</SelectItem>
+                        {columns.map((column) => (
+                          <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                  ) : isTemporalFilterColumn && draft.config.filters[0].op === "between" ? (
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="date"
-                        className="w-[140px] h-8 text-xs"
-                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || "")}
-                        onChange={(e) =>
-                          update({
-                            config: {
-                              ...draft.config,
-                              filters: [{
-                                ...draft.config.filters[0],
-                                value: [
-                                  e.target.value,
-                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || ""),
-                                ],
-                              }],
-                            },
-                          })}
-                      />
-                      <Input
-                        type="date"
-                        className="w-[140px] h-8 text-xs"
-                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || "")}
-                        onChange={(e) =>
-                          update({
-                            config: {
-                              ...draft.config,
-                              filters: [{
-                                ...draft.config.filters[0],
-                                value: [
-                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || ""),
-                                  e.target.value,
-                                ],
-                              }],
-                            },
-                          })}
-                      />
-                    </div>
-                  ) : isTemporalFilterColumn ? (
-                    <Input
-                      type="date"
-                      className="w-[150px] h-8 text-xs"
-                      value={String(draft.config.filters[0].value || "")}
-                      onChange={(e) =>
-                        update({
-                          config: {
-                            ...draft.config,
-                            filters: [{ ...draft.config.filters[0], value: e.target.value }],
-                          },
-                        })}
-                    />
-                  ) : draft.config.filters[0].op === "between" ? (
-                    <div className="flex items-center gap-1">
-                      <Input
-                        className="w-[110px] h-8 text-xs"
-                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || "")}
-                        onChange={(e) =>
-                          update({
-                            config: {
-                              ...draft.config,
-                              filters: [{
-                                ...draft.config.filters[0],
-                                value: [
-                                  e.target.value,
-                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || ""),
-                                ],
-                              }],
-                            },
-                          })}
-                      />
-                      <Input
-                        className="w-[110px] h-8 text-xs"
-                        value={String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[1] : "") || "")}
-                        onChange={(e) =>
-                          update({
-                            config: {
-                              ...draft.config,
-                              filters: [{
-                                ...draft.config.filters[0],
-                                value: [
-                                  String((Array.isArray(draft.config.filters[0].value) ? draft.config.filters[0].value[0] : "") || ""),
-                                  e.target.value,
-                                ],
-                              }],
-                            },
-                          })}
-                      />
-                    </div>
-                  ) : (
-                    <Input
-                      className="w-[140px] h-8 text-xs"
-                      value={Array.isArray(draft.config.filters[0].value) ? String((draft.config.filters[0].value as unknown[]).join(",")) : String(draft.config.filters[0].value || "")}
-                      onChange={(e) =>
-                        update({
-                          config: {
-                            ...draft.config,
-                            filters: [{
-                              ...draft.config.filters[0],
-                              value: draft.config.filters[0].op === "in" || draft.config.filters[0].op === "not_in"
-                                ? e.target.value.split(",").map((v) => v.trim()).filter(Boolean)
-                                : e.target.value,
-                            }],
-                          },
-                        })}
-                    />
-                  )}
-                </>
-              )}
+                    {showOperatorAndValue && (
+                      <>
+                        <Select
+                          value={isTemporalFilterColumn ? temporalOpUiValue : filterItem.op}
+                          onValueChange={(value) =>
+                            applyFilterAt(index, {
+                              ...filterItem,
+                              op: value === "__relative__" ? "between" : value as WidgetFilter["op"],
+                              value:
+                                value === "__relative__"
+                                  ? { relative: "last_7_days" }
+                                  : value === "between"
+                                    ? ["", ""]
+                                    : value === "is_null" || value === "not_null"
+                                      ? undefined
+                                      : filterItem.value,
+                            })}
+                        >
+                          <SelectTrigger className="w-[90px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="eq">=</SelectItem>
+                            <SelectItem value="neq">!=</SelectItem>
+                            <SelectItem value="gt">&gt;</SelectItem>
+                            <SelectItem value="lt">&lt;</SelectItem>
+                            <SelectItem value="gte">&gt;=</SelectItem>
+                            <SelectItem value="lte">&lt;=</SelectItem>
+                            {isTemporalFilterColumn ? (
+                              <>
+                                <SelectItem value="between">entre</SelectItem>
+                                <SelectItem value="__relative__">relativa</SelectItem>
+                              </>
+                            ) : (
+                              <>
+                                <SelectItem value="contains">cont</SelectItem>
+                                <SelectItem value="between">entre</SelectItem>
+                              </>
+                            )}
+                            <SelectItem value="in">in</SelectItem>
+                            <SelectItem value="not_in">not in</SelectItem>
+                            <SelectItem value="is_null">nulo</SelectItem>
+                            <SelectItem value="not_null">não nulo</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {filterItem.op === "is_null" || filterItem.op === "not_null" ? (
+                          <div className="w-[150px] h-8" />
+                        ) : isTemporalFilterColumn && isRelativeTemporalFilter ? (
+                          <Select
+                            value={String((filterItem.value as Record<string, unknown>)?.relative || "last_7_days")}
+                            onValueChange={(value) =>
+                              applyFilterAt(index, { ...filterItem, op: "between", value: { relative: value } })}
+                          >
+                            <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {relativeDateOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : isTemporalFilterColumn && filterItem.op === "between" ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="date"
+                              className="w-[140px] h-8 text-xs"
+                              value={String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || "")}
+                              onChange={(e) =>
+                                applyFilterAt(index, {
+                                  ...filterItem,
+                                  value: [
+                                    e.target.value,
+                                    String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || ""),
+                                  ],
+                                })}
+                            />
+                            <Input
+                              type="date"
+                              className="w-[140px] h-8 text-xs"
+                              value={String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || "")}
+                              onChange={(e) =>
+                                applyFilterAt(index, {
+                                  ...filterItem,
+                                  value: [
+                                    String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || ""),
+                                    e.target.value,
+                                  ],
+                                })}
+                            />
+                          </div>
+                        ) : isTemporalFilterColumn ? (
+                          <Input
+                            type="date"
+                            className="w-[150px] h-8 text-xs"
+                            value={String(filterItem.value || "")}
+                            onChange={(e) => applyFilterAt(index, { ...filterItem, value: e.target.value })}
+                          />
+                        ) : filterItem.op === "between" ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              className="w-[110px] h-8 text-xs"
+                              value={String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || "")}
+                              onChange={(e) =>
+                                applyFilterAt(index, {
+                                  ...filterItem,
+                                  value: [
+                                    e.target.value,
+                                    String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || ""),
+                                  ],
+                                })}
+                            />
+                            <Input
+                              className="w-[110px] h-8 text-xs"
+                              value={String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || "")}
+                              onChange={(e) =>
+                                applyFilterAt(index, {
+                                  ...filterItem,
+                                  value: [
+                                    String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || ""),
+                                    e.target.value,
+                                  ],
+                                })}
+                            />
+                          </div>
+                        ) : (
+                          <Input
+                            className="w-[140px] h-8 text-xs"
+                            value={Array.isArray(filterItem.value) ? String((filterItem.value as unknown[]).join(",")) : String(filterItem.value || "")}
+                            onChange={(e) =>
+                              applyFilterAt(index, {
+                                ...filterItem,
+                                value: filterItem.op === "in" || filterItem.op === "not_in"
+                                  ? e.target.value.split(",").map((v) => v.trim()).filter(Boolean)
+                                  : e.target.value,
+                              })}
+                          />
+                        )}
+                      </>
+                    )}
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => addFilterRow(index)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      className="h-8 w-8 shrink-0 destructive-icon-btn"
+                      onClick={() => removeFilterRow(index)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           </div>}
 
