@@ -1,99 +1,117 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useQueries } from "@tanstack/react-query";
 import {
-  Layers, BarChart3, Database, Activity, Plus, ArrowRight,
-  Clock, TrendingUp, FolderOpen, LayoutDashboard,
+  BarChart3,
+  Database,
+  FileSpreadsheet,
+  FolderOpen,
+  LayoutDashboard,
+  Link2,
+  PencilLine,
+  Sparkles,
 } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import EmptyState from "@/components/shared/EmptyState";
 import { useCoreData } from "@/hooks/use-core-data";
-import { api } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
+import { normalizeText } from "@/lib/text";
+
+const getGreeting = (date: Date) => {
+  const hour = date.getHours();
+  if (hour < 12) return "Bom dia";
+  if (hour < 18) return "Boa tarde";
+  return "Boa noite";
+};
+
+const getFirstName = (fullName?: string | null, email?: string | null) => {
+  const trimmed = normalizeText(fullName || "").trim();
+  if (trimmed.length > 0) return trimmed.split(" ")[0];
+  if (email && email.includes("@")) return email.split("@")[0];
+  return "usuario";
+};
+
+const formatRelativeTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const now = Date.now();
+  const diffMs = date.getTime() - now;
+  const abs = Math.abs(diffMs);
+
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+  const year = 365 * day;
+
+  const rtf = new Intl.RelativeTimeFormat("pt-BR", { numeric: "auto" });
+  if (abs < hour) return rtf.format(Math.round(diffMs / minute), "minute");
+  if (abs < day) return rtf.format(Math.round(diffMs / hour), "hour");
+  if (abs < week) return rtf.format(Math.round(diffMs / day), "day");
+  if (abs < month) return rtf.format(Math.round(diffMs / week), "week");
+  if (abs < year) return rtf.format(Math.round(diffMs / month), "month");
+  return rtf.format(Math.round(diffMs / year), "year");
+};
 
 const OverviewPage = () => {
   const navigate = useNavigate();
   const user = getStoredUser();
-  const { datasets, dashboards, datasources, views, hasToken, isLoading, isError, errorMessage } = useCoreData();
+  const { datasets, dashboards, datasources, views, isLoading, isError, errorMessage } = useCoreData();
 
-  const activeDatasources = datasources.filter((d) => d.status === "active");
-  const activeViews = views.filter((v) => v.status === "active");
+  const now = new Date();
+  const firstName = getFirstName(user?.full_name, user?.email);
+  const greeting = getGreeting(now);
 
-  const datasetIdByViewId = useMemo(() => {
-    const map = new Map<string, number>();
-    datasets.forEach((dataset) => {
-      if (!map.has(dataset.viewId)) {
-        map.set(dataset.viewId, Number(dataset.id));
-      }
-    });
-    return map;
-  }, [datasets]);
-
-  const volumeQueries = useQueries({
-    queries: activeViews.map((view) => {
-      const datasetId = datasetIdByViewId.get(view.id);
-      return {
-        queryKey: ["overview", "data-volume", view.id, datasetId],
-        enabled: hasToken && typeof datasetId === "number",
-        staleTime: 60_000,
-        queryFn: async () => {
-          if (typeof datasetId !== "number") return 0;
-
-          const result = await api.previewQuery({
-            datasetId,
-            metrics: [{ field: "*", agg: "count" }],
-            dimensions: [],
-            filters: [],
-            sort: [],
-            limit: 1,
-            offset: 0,
-          });
-
-          const firstRow = result.rows[0];
-          if (!firstRow) return 0;
-
-          const firstMetric = Object.values(firstRow).find((value) => typeof value === "number");
-          return typeof firstMetric === "number" && Number.isFinite(firstMetric) ? firstMetric : 0;
-        },
-      };
-    }),
-  });
-
-  const rowCountByViewId = useMemo(() => {
-    const map = new Map<string, number>();
-    activeViews.forEach((view, index) => {
-      const queriedCount = volumeQueries[index]?.data;
-      map.set(view.id, typeof queriedCount === "number" ? queriedCount : view.rowCount);
-    });
-    return map;
-  }, [activeViews, volumeQueries]);
-
-  const totalRows = useMemo(
-    () => Array.from(rowCountByViewId.values()).reduce((sum, count) => sum + count, 0),
-    [rowCountByViewId],
+  const dashboardsSorted = useMemo(
+    () => [...dashboards].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [dashboards],
   );
 
-  const stats = [
-    { label: "Datasources ativos", value: activeDatasources.length, icon: Database, color: "text-accent" },
-    { label: "Tabelas disponíveis", value: activeViews.length, icon: Activity, color: "text-accent" },
-    { label: "Datasets", value: datasets.length, icon: Layers, color: "text-accent" },
-    { label: "Dashboards", value: dashboards.length, icon: BarChart3, color: "text-accent" },
-  ];
+  const datasetsSorted = useMemo(
+    () => [...datasets].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [datasets],
+  );
 
-  const recentDatasets = [...datasets]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+  const lastEditedDashboard = dashboardsSorted[0];
+  const datasetWithoutDashboard = datasetsSorted.find((dataset) => dataset.dashboardIds.length === 0);
 
-  const recentDashboards = [...dashboards]
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    .slice(0, 5);
+  const totalWidgets = useMemo(
+    () => dashboards.reduce((acc, dashboard) => acc + dashboard.sections.reduce((sum, sec) => sum + sec.widgets.length, 0), 0),
+    [dashboards],
+  );
+
+  const datasetsWithDashboards = useMemo(
+    () => datasets.filter((dataset) => dataset.dashboardIds.length > 0).length,
+    [datasets],
+  );
+
+  const activeDatasources = useMemo(
+    () => datasources.filter((datasource) => datasource.status === "active"),
+    [datasources],
+  );
+
+  const activeSpreadsheetCount = useMemo(
+    () => activeDatasources.filter((datasource) => datasource.sourceType === "spreadsheet").length,
+    [activeDatasources],
+  );
+
+  const activeDatabaseCount = useMemo(
+    () => activeDatasources.filter((datasource) => datasource.sourceType === "database").length,
+    [activeDatasources],
+  );
+
+  const recentDatasets = datasetsSorted.slice(0, 6);
+  const recentDashboards = dashboardsSorted.slice(0, 6);
 
   if (isError) {
     return (
       <div className="bg-background">
         <main className="container py-6">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar visão geral" description={errorMessage} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar visao geral" description={errorMessage} />
         </main>
       </div>
     );
@@ -102,212 +120,210 @@ const OverviewPage = () => {
   return (
     <div className="bg-background">
       <main className="container py-6 space-y-8">
-        {/* Header */}
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Visão Geral</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Acompanhe seus dados, datasets e dashboards em um só lugar.
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-1.5">
+          <h1 className="text-display text-foreground">
+            {greeting}, {firstName}
+          </h1>
+          <p className="text-body text-muted-foreground">
+            Voce tem {dashboards.length} {dashboards.length === 1 ? "dashboard ativo" : "dashboards ativos"}.
           </p>
         </motion.div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {stats.map((stat, i) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.06 }}
-              className="glass-card p-5 flex items-start gap-3"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10">
-                <stat.icon className={`h-5 w-5 ${stat.color}`} />
-              </div>
-              <div>
-                <p className="text-2xl font-extrabold tracking-tight text-foreground">{stat.value}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{stat.label}</p>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-
-        {/* Quick actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="glass-card p-5"
-        >
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">Ações rápidas</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              onClick={() => navigate("/datasets")}
-              className="group flex items-center gap-3 rounded-xl border border-border p-4 text-left hover:border-accent/40 hover:bg-accent/5 transition-all"
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
-                <FolderOpen className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">Explorar Datasets</p>
-                <p className="text-xs text-muted-foreground">Veja todos os datasets disponíveis</p>
-              </div>
-            </button>
-            {user?.is_admin && (
-              <button
-                onClick={() => navigate("/admin")}
-                className="group flex items-center gap-3 rounded-xl border border-border p-4 text-left hover:border-accent/40 hover:bg-accent/5 transition-all"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
-                  <Database className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Gerenciar Fontes</p>
-                  <p className="text-xs text-muted-foreground">Configure datasources e tabelas</p>
-                </div>
-              </button>
-            )}
-            <button
-              onClick={() => navigate("/datasets")}
-              className="group flex items-center gap-3 rounded-xl border border-border p-4 text-left hover:border-accent/40 hover:bg-accent/5 transition-all"
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
-                <Plus className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">Novo Dataset</p>
-                <p className="text-xs text-muted-foreground">Crie um dataset e comece a analisar</p>
-              </div>
-            </button>
-          </div>
-        </motion.div>
-
-        {/* Two-column: recent datasets + dashboards */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Recent Datasets */}
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="glass-card p-5"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-                <Layers className="h-3.5 w-3.5" /> Datasets recentes
-              </h2>
-              <Button variant="ghost" size="sm" className="text-xs text-accent h-7" onClick={() => navigate("/datasets")}>
-                Ver todos <ArrowRight className="h-3 w-3 ml-1" />
-              </Button>
+        <section className="grid gap-4 md:grid-cols-3">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-heading">Dashboards</p>
+              <LayoutDashboard className="h-4 w-4 text-accent" />
             </div>
-            <div className="space-y-2">
-              {recentDatasets.map((ds) => {
-                const view = views.find((v) => v.id === ds.viewId);
-                return (
-                  <button
-                    key={ds.id}
-                    onClick={() => navigate(`/datasets/${ds.id}`)}
-                    className="group w-full flex items-center gap-3 rounded-lg p-3 text-left hover:bg-secondary/50 transition-colors"
-                  >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                      <FolderOpen className="h-3.5 w-3.5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-foreground truncate">{ds.name}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {view ? `${view.schema}.${view.name}` : "—"} · {ds.dashboardIds.length} dashboards
-                      </p>
-                    </div>
-                    <div className="text-xs text-muted-foreground hidden sm:flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {new Date(ds.createdAt).toLocaleDateString("pt-BR")}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{dashboards.length}</p>
+            <p className="mt-1 text-caption">{totalWidgets} widgets criados</p>
           </motion.div>
 
-          {/* Recent Dashboards */}
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.35 }}
-            className="glass-card p-5"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-                <BarChart3 className="h-3.5 w-3.5" /> Dashboards recentes
-              </h2>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="glass-card p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-heading">Datasets</p>
+              <FolderOpen className="h-4 w-4 text-accent" />
             </div>
-            {recentDashboards.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <LayoutDashboard className="h-8 w-8 text-muted-foreground/40 mb-2" />
-                <p className="text-sm text-muted-foreground">Nenhum dashboard criado ainda.</p>
+            <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{datasets.length}</p>
+            <p className="mt-1 text-caption">{datasetsWithDashboards} com dashboards</p>
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-heading">Fontes conectadas</p>
+              <Link2 className="h-4 w-4 text-accent" />
+            </div>
+            <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{activeDatasources.length}</p>
+            <p className="mt-1 text-caption">
+              {activeSpreadsheetCount} {activeSpreadsheetCount === 1 ? "planilha" : "planilhas"} A {activeDatabaseCount} {activeDatabaseCount === 1 ? "banco" : "bancos"}
+            </p>
+          </motion.div>
+        </section>
+
+        <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="space-y-3">
+          <h2 className="text-heading">Sugestoes para voce</h2>
+          <div className="grid gap-3 md:grid-cols-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (!lastEditedDashboard) return;
+                navigate(`/datasets/${lastEditedDashboard.datasetId}/dashboard/${lastEditedDashboard.id}`);
+              }}
+              disabled={!lastEditedDashboard}
+              className="glass-card interactive-card p-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2">
+                <PencilLine className="h-4 w-4 text-accent" />
+                <p className="font-bold text-foreground">Continuar editando</p>
               </div>
+              {lastEditedDashboard ? (
+                <>
+                  <p className="mt-2 text-body text-muted-foreground line-clamp-1">{lastEditedDashboard.title}</p>
+                  <p className="mt-1 text-caption">Atualizado {formatRelativeTime(lastEditedDashboard.updatedAt)}</p>
+                </>
+              ) : (
+                <p className="mt-2 text-caption">Nenhum dashboard disponivel para continuar.</p>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!datasetWithoutDashboard) return;
+                navigate(`/datasets/${datasetWithoutDashboard.id}/builder`);
+              }}
+              disabled={!datasetWithoutDashboard}
+              className="glass-card interactive-card border-warning/40 bg-warning/10 p-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-warning" />
+                <p className="font-bold text-foreground">Criar primeiro dashboard</p>
+              </div>
+              {datasetWithoutDashboard ? (
+                <>
+                  <p className="mt-2 text-body text-muted-foreground line-clamp-1">Dataset {datasetWithoutDashboard.name}</p>
+                  <p className="mt-1 text-caption">Este dataset ainda nao tem dashboard.</p>
+                </>
+              ) : (
+                <p className="mt-2 text-caption">Todos os datasets jA possuem dashboard.</p>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!user?.is_admin) return;
+                navigate("/admin");
+              }}
+              disabled={!user?.is_admin}
+              className="glass-card interactive-card border-success/40 bg-success/10 p-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-success" />
+                <p className="font-bold text-foreground">Conectar nova fonte</p>
+              </div>
+              <p className="mt-2 text-body text-muted-foreground">Adicione bancos e planilhas para ampliar analises.</p>
+            </button>
+          </div>
+        </motion.section>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass-card p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-heading">Datasets recentes</h2>
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-accent" onClick={() => navigate("/datasets")}>
+                Ver todos
+              </Button>
+            </div>
+            {isLoading ? (
+              <p className="text-caption">Carregando datasets...</p>
+            ) : recentDatasets.length === 0 ? (
+              <p className="text-caption">Nenhum dataset encontrado.</p>
             ) : (
               <div className="space-y-2">
-                {recentDashboards.map((dash) => {
-                  const dataset = datasets.find((d) => d.id === dash.datasetId);
-                  const widgetCount = dash.sections.reduce((t, s) => t + s.widgets.length, 0);
+                {recentDatasets.map((dataset) => {
+                  const view = views.find((item) => item.id === dataset.viewId);
+                  const datasource = view ? datasources.find((item) => item.id === view.datasourceId) : undefined;
+                  const isSpreadsheet = datasource?.sourceType === "spreadsheet";
+                  const Icon = isSpreadsheet ? FileSpreadsheet : Database;
+                  const iconClass = isSpreadsheet ? "text-success" : "text-accent";
+
                   return (
-                    <button
-                      key={dash.id}
-                      onClick={() => dataset && navigate(`/datasets/${dataset.id}/dashboard/${dash.id}`)}
-                      className="group w-full flex items-center gap-3 rounded-lg p-3 text-left hover:bg-secondary/50 transition-colors"
-                    >
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                        <LayoutDashboard className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-foreground truncate">{dash.title}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {dataset?.name || "—"} · {widgetCount} widgets
-                        </p>
-                      </div>
-                      <div className="text-xs text-muted-foreground hidden sm:flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {new Date(dash.updatedAt).toLocaleDateString("pt-BR")}
-                      </div>
-                    </button>
+                    <Tooltip key={dataset.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => navigate(`/datasets/${dataset.id}`)}
+                          className="group flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors hover:bg-secondary/50"
+                        >
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary">
+                            <Icon className={`h-4 w-4 ${iconClass}`} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-bold text-foreground">{dataset.name}</p>
+                            <p className="text-caption truncate">
+                              {view ? `${view.schema}.${view.name}` : "-"} A {dataset.dashboardIds.length} {dataset.dashboardIds.length === 1 ? "dashboard" : "dashboards"}
+                            </p>
+                          </div>
+                          <span className="hidden self-start pt-0.5 text-caption sm:inline">{formatRelativeTime(dataset.createdAt)}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="text-caption">
+                        {view ? `Colunas: ${view.columns.length} · Linhas: ${view.rowCount.toLocaleString()}` : "View nao encontrada"}
+                      </TooltipContent>
+                    </Tooltip>
                   );
                 })}
               </div>
             )}
-          </motion.div>
-        </div>
+          </motion.section>
 
-        {/* Data volume */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="glass-card p-5"
-        >
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4 flex items-center gap-2">
-            <TrendingUp className="h-3.5 w-3.5" /> Volume de dados
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {activeViews.map((view) => {
-              const rowCount = rowCountByViewId.get(view.id) || 0;
-              const pct = totalRows > 0 ? Math.round((rowCount / totalRows) * 100) : 0;
-              return (
-                <div key={view.id} className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-foreground truncate">{view.schema}.{view.name}</span>
-                    <span className="text-muted-foreground">{rowCount.toLocaleString()}</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-muted overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ delay: 0.5, duration: 0.6, ease: "easeOut" }}
-                      className="h-full rounded-full bg-accent"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </motion.div>
+          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass-card p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-heading">Dashboards recentes</h2>
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-accent" onClick={() => navigate("/dashboards")}>
+                Ver todos
+              </Button>
+            </div>
+            {isLoading ? (
+              <p className="text-caption">Carregando dashboards...</p>
+            ) : recentDashboards.length === 0 ? (
+              <p className="text-caption">Nenhum dashboard encontrado.</p>
+            ) : (
+              <div className="space-y-2">
+                {recentDashboards.map((dashboard) => {
+                  const dataset = datasets.find((item) => item.id === dashboard.datasetId);
+                  const widgetCount = dashboard.sections.reduce((acc, section) => acc + section.widgets.length, 0);
+                  const sectionCount = dashboard.sections.length;
+
+                  return (
+                    <Tooltip key={dashboard.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => dataset && navigate(`/datasets/${dataset.id}/dashboard/${dashboard.id}`)}
+                          className="group flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors hover:bg-secondary/50"
+                        >
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10">
+                            <BarChart3 className="h-4 w-4 text-accent" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-bold text-foreground">{dashboard.title}</p>
+                            <p className="text-caption truncate">
+                              {dataset?.name || "-"} A {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+                            </p>
+                          </div>
+                          <span className="hidden self-start pt-0.5 text-caption sm:inline">{formatRelativeTime(dashboard.updatedAt)}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="text-caption">
+                        {sectionCount} {sectionCount === 1 ? "seAAo" : "seAAes"} A {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            )}
+          </motion.section>
+        </div>
       </main>
     </div>
   );

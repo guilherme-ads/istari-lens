@@ -165,15 +165,15 @@ const DashboardsPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
         >
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Dashboards</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="text-display text-foreground">Dashboards</h1>
+            <p className="mt-1.5 text-body text-muted-foreground">
               Explore dashboards disponíveis e crie novos a partir de datasets.
             </p>
           </div>
@@ -190,7 +190,7 @@ const DashboardsPage = () => {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="flex flex-wrap gap-4 text-sm"
+          className="flex flex-wrap gap-4 text-body"
         >
           <div className="flex items-center gap-2 text-muted-foreground">
             <LayoutDashboard className="h-4 w-4 text-accent" />
@@ -372,7 +372,7 @@ const CreateDashboardDialog = ({
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Dataset <span className="text-destructive">*</span></Label>
+            <Label className="text-caption font-medium">Dataset <span className="text-destructive">*</span></Label>
             <Select value={datasetId} onValueChange={setDatasetId}>
               <SelectTrigger className="h-9 text-sm">
                 <SelectValue placeholder="Selecione um dataset..." />
@@ -420,7 +420,7 @@ const DashboardGridCard = ({
     initial={{ opacity: 0, y: 14 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ delay, duration: 0.35 }}
-    className="group glass-card p-5 text-left transition-all hover:shadow-card-hover flex flex-col gap-3"
+    className="group glass-card interactive-card p-5 text-left flex flex-col gap-3"
   >
     <div className="flex items-start justify-between">
       <button
@@ -437,9 +437,9 @@ const DashboardGridCard = ({
     </div>
 
     <div className="space-y-1.5">
-      <h3 className="font-semibold text-foreground leading-tight">{item.name}</h3>
-      <code className="text-xs font-mono text-muted-foreground">{item.dataset_name}</code>
-      <p className="text-sm text-muted-foreground line-clamp-2">
+      <h3 className="font-bold text-foreground leading-tight">{item.name}</h3>
+      <code className="text-caption font-mono">{item.dataset_name}</code>
+      <p className="text-body text-muted-foreground line-clamp-2">
         Criado por {item.created_by_name || item.created_by_email || "Não identificado"}
       </p>
     </div>
@@ -453,7 +453,7 @@ const DashboardGridCard = ({
       </span>
     </div>
 
-    <div className="flex items-center justify-between text-xs text-muted-foreground pt-2.5 border-t border-border">
+    <div className="flex items-center justify-between text-caption pt-2.5 border-t border-border">
       <span>{formatDateTimeBR(item.last_edited_at)}</span>
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpen}>
@@ -491,7 +491,7 @@ const DashboardListItem = ({
     initial={{ opacity: 0, x: -8 }}
     animate={{ opacity: 1, x: 0 }}
     transition={{ delay, duration: 0.3 }}
-    className="group glass-card w-full p-4 text-left flex items-center gap-4 transition-all hover:shadow-card-hover"
+    className="group glass-card interactive-card w-full p-4 text-left flex items-center gap-4"
   >
     <button
       type="button"
@@ -503,14 +503,14 @@ const DashboardListItem = ({
     </button>
     <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2">
-        <h3 className="font-semibold text-foreground truncate">{item.name}</h3>
-        <code className="text-xs font-mono text-muted-foreground hidden sm:inline">{item.dataset_name}</code>
+        <h3 className="font-bold text-foreground truncate">{item.name}</h3>
+        <code className="text-caption font-mono hidden sm:inline">{item.dataset_name}</code>
       </div>
-      <p className="text-sm text-muted-foreground truncate mt-0.5">
+      <p className="text-body text-muted-foreground truncate mt-0.5">
         {item.created_by_name || item.created_by_email || "Não identificado"} | {formatDateTimeBR(item.last_edited_at)}
       </p>
     </div>
-    <div className="hidden md:flex items-center gap-4 shrink-0 text-xs text-muted-foreground">
+    <div className="hidden md:flex items-center gap-4 shrink-0 text-caption">
       <span>{item.widget_count} widgets</span>
       <span className={`inline-flex rounded-full border px-2 py-0.5 font-semibold ${loadBadgeClass(item.load_score)}`}>
         {item.load_score.toFixed(0)}
@@ -647,7 +647,7 @@ const ShareDashboardDialog = ({
                   </div>
                 )}
                 {normalizedEmail.length > 0 && !canInvite && (
-                  <p className="mt-1 text-xs text-muted-foreground">Selecione um e-mail cadastrado na lista.</p>
+                  <p className="mt-1 text-caption">Selecione um e-mail cadastrado na lista.</p>
                 )}
               </div>
               <Select value={permission} onValueChange={(value) => setPermission(value as "view" | "edit")} disabled={sharingByEmail}>
@@ -676,7 +676,7 @@ const ShareDashboardDialog = ({
           <div className="space-y-2">
             <Label>Acessos por e-mail</Label>
             {shares.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhum e-mail convidado.</p>
+              <p className="text-body text-muted-foreground">Nenhum e-mail convidado.</p>
             ) : (
               <div className="space-y-2">
                 {shares.map((share) => (

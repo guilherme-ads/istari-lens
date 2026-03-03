@@ -138,15 +138,15 @@ const AdminUsersPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
         >
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Usuários</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Gerencie logins e permissões da plataforma.</p>
+            <h1 className="text-display text-foreground">Usuários</h1>
+            <p className="mt-1.5 text-body text-muted-foreground">Gerencie logins e permissões da plataforma.</p>
           </div>
           <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
@@ -154,7 +154,7 @@ const AdminUsersPage = () => {
           </Button>
         </motion.div>
 
-        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+        <div className="flex flex-wrap gap-4 text-body text-muted-foreground">
           <div><span className="font-semibold text-foreground">{total}</span> usuários</div>
           <div><span className="font-semibold text-foreground">{stats.adminCount}</span> admins na página</div>
           <div><span className="font-semibold text-foreground">{stats.activeCount}</span> ativos na página</div>
@@ -378,7 +378,7 @@ const UserDetailDialog = ({
         <DialogDescription>Informações do login selecionado.</DialogDescription>
       </DialogHeader>
       {user && (
-        <div className="space-y-2 text-sm">
+        <div className="space-y-2 text-body">
           <p><span className="font-semibold">Nome:</span> {user.full_name || "-"}</p>
           <p><span className="font-semibold">Email:</span> {user.email}</p>
           <p><span className="font-semibold">Papel:</span> {user.role}</p>

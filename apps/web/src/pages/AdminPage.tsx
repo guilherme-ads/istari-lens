@@ -1,4 +1,4 @@
-Ôªøimport { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -58,9 +58,9 @@ const StatCard = ({
       <Icon className="h-4 w-4" />
     </div>
     <div className="min-w-0">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="text-2xl font-bold tracking-tight text-foreground leading-tight">{value}</p>
-      {detail && <p className="text-xs text-muted-foreground mt-0.5 truncate">{detail}</p>}
+      <p className="text-caption font-medium">{label}</p>
+      <p className="text-title text-foreground">{value}</p>
+      {detail && <p className="text-caption mt-0.5 truncate">{detail}</p>}
     </div>
   </motion.div>
 );
@@ -259,7 +259,7 @@ const AdminPage = () => {
     return (
       <div className="bg-background">
         <main className="container py-6">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administra√ß√£o" description={errorMessage} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administraÁ„o" description={errorMessage} />
         </main>
       </div>
     );
@@ -267,16 +267,16 @@ const AdminPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
         >
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Gerenciamento</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Configure fontes de dados e gerencie tabelas dispon√≠veis.
+            <h1 className="text-display text-foreground">Fontes de Dados</h1>
+            <p className="mt-1.5 text-body text-muted-foreground">
+              Configure fontes de dados e gerencie tabelas disponÌveis.
             </p>
           </div>
 
@@ -316,9 +316,9 @@ const AdminPage = () => {
                         <Database className="h-5 w-5" />
                       </div>
                       <div>
-                        <p className="font-semibold text-foreground">Banco de Dados</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Conex√£o por URL para sincronizar tabelas existentes.
+                        <p className="font-bold text-foreground">Banco de Dados</p>
+                        <p className="text-caption mt-0.5">
+                          Conex„o por URL para sincronizar tabelas existentes.
                         </p>
                       </div>
                     </div>
@@ -333,8 +333,8 @@ const AdminPage = () => {
                         <FileSpreadsheet className="h-5 w-5" />
                       </div>
                       <div>
-                        <p className="font-semibold text-foreground">Planilha</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
+                        <p className="font-bold text-foreground">Planilha</p>
+                        <p className="text-caption mt-0.5">
                           Upload de arquivo .csv ou .xlsx como nova fonte.
                         </p>
                       </div>
@@ -378,7 +378,7 @@ const AdminPage = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ds-desc">Descri√ß√£o</Label>
+                    <Label htmlFor="ds-desc">DescriÁ„o</Label>
                     <Textarea
                       id="ds-desc"
                       value={formDesc}
@@ -423,7 +423,7 @@ const AdminPage = () => {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard icon={ServerCog} label="Datasources" value={stats.totalDs} detail={`${stats.activeDs} ativos`} delay={0} />
           <StatCard icon={Activity} label="Ativos" value={stats.activeDs} detail={`de ${stats.totalDs} total`} delay={0.05} />
-          <StatCard icon={Layers} label="Tabelas" value={stats.totalTables} detail={`${stats.activeTables} dispon√≠veis`} delay={0.1} />
+          <StatCard icon={Layers} label="Tabelas" value={stats.totalTables} detail={`${stats.activeTables} disponÌveis`} delay={0.1} />
           <StatCard icon={AlertCircle} label="Inativos" value={stats.totalDs - stats.activeDs + stats.totalTables - stats.activeTables} detail="requerem atencao" delay={0.15} />
         </div>
 
@@ -483,23 +483,23 @@ const AdminPage = () => {
               </div>
 
               {isLoading ? (
-                <div className="glass-card p-4 text-sm text-muted-foreground">Carregando...</div>
+                <div className="glass-card p-4 text-body text-muted-foreground">Carregando...</div>
               ) : filteredDs.length === 0 ? (
                 <EmptyState
                   icon={<Database className="h-5 w-5" />}
                   title={dsSearch ? "Nenhum resultado" : "Nenhum datasource registrado"}
-                  description={dsSearch ? "Tente outro termo de busca." : "Clique em Nova Fonte para come√ßar."}
+                  description={dsSearch ? "Tente outro termo de busca." : "Clique em Nova Fonte para comeÁar."}
                 />
               ) : (
                 <div className="glass-card overflow-hidden">
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-muted/30 hover:bg-muted/30">
-                        <TableHead className="font-semibold">Nome</TableHead>
-                        <TableHead className="font-semibold">Tipo</TableHead>
-                        <TableHead className="font-semibold hidden lg:table-cell">Ultimo Sync</TableHead>
-                        <TableHead className="font-semibold">Status</TableHead>
-                        <TableHead className="font-semibold text-right">Acoes</TableHead>
+                        <TableHead className="text-heading">Nome</TableHead>
+                        <TableHead className="text-heading">Tipo</TableHead>
+                        <TableHead className="text-heading hidden lg:table-cell">Ultimo Sync</TableHead>
+                        <TableHead className="text-heading">Status</TableHead>
+                        <TableHead className="text-heading text-right">Acoes</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -509,7 +509,7 @@ const AdminPage = () => {
                             <div>
                               <span className="font-medium text-foreground">{ds.name}</span>
                               {ds.description && (
-                                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1 max-w-[240px]">
+                                <p className="text-caption mt-0.5 line-clamp-1 max-w-[240px]">
                                   {ds.description}
                                 </p>
                               )}
@@ -519,7 +519,7 @@ const AdminPage = () => {
                             <SourceTypePill type={ds.sourceType} />
                           </TableCell>
                           <TableCell className="hidden lg:table-cell">
-                            <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                            <span className="text-caption flex items-center gap-1.5">
                               <Clock className="h-3 w-3" />
                               {ds.lastSync === "Never" ? "Nunca" : new Date(ds.lastSync).toLocaleDateString("pt-BR")}
                             </span>
@@ -530,7 +530,7 @@ const AdminPage = () => {
                           <TableCell>
                             <div className="flex items-center justify-end gap-0.5">
                               <ActionBtn
-                                tooltip={ds.sourceType === "spreadsheet" ? "N√£o se aplica para planilha" : "Sincronizar"}
+                                tooltip={ds.sourceType === "spreadsheet" ? "N„o se aplica para planilha" : "Sincronizar"}
                                 onClick={() => handleSync(ds.id)}
                                 disabled={syncingId === ds.id || ds.sourceType === "spreadsheet"}
                               >
@@ -571,7 +571,7 @@ const AdminPage = () => {
               </div>
 
               {isLoading ? (
-                <div className="glass-card p-4 text-sm text-muted-foreground">Carregando...</div>
+                <div className="glass-card p-4 text-body text-muted-foreground">Carregando...</div>
               ) : filteredTables.length === 0 ? (
                 <EmptyState
                   icon={<Layers className="h-5 w-5" />}
@@ -583,11 +583,11 @@ const AdminPage = () => {
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-muted/30 hover:bg-muted/30">
-                        <TableHead className="font-semibold">Tabela</TableHead>
-                        <TableHead className="font-semibold">Schema</TableHead>
-                        <TableHead className="font-semibold hidden lg:table-cell">Detalhes</TableHead>
-                        <TableHead className="font-semibold">Status</TableHead>
-                        <TableHead className="font-semibold text-right">Acoes</TableHead>
+                        <TableHead className="text-heading">Tabela</TableHead>
+                        <TableHead className="text-heading">Schema</TableHead>
+                        <TableHead className="text-heading hidden lg:table-cell">Detalhes</TableHead>
+                        <TableHead className="text-heading">Status</TableHead>
+                        <TableHead className="text-heading text-right">Acoes</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -597,17 +597,17 @@ const AdminPage = () => {
                             <div>
                               <span className="font-medium text-foreground">{table.name}</span>
                               {table.description && (
-                                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1 max-w-[280px]">
+                                <p className="text-caption mt-0.5 line-clamp-1 max-w-[280px]">
                                   {table.description}
                                 </p>
                               )}
                             </div>
                           </TableCell>
                           <TableCell>
-                            <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">{table.schema}</code>
+                            <code className="text-caption font-mono bg-muted px-1.5 py-0.5 rounded">{table.schema}</code>
                           </TableCell>
                           <TableCell className="hidden lg:table-cell">
-                            <span className="text-xs text-muted-foreground">
+                            <span className="text-caption">
                               {table.columns.length} colunas . {table.rowCount.toLocaleString()} linhas
                             </span>
                           </TableCell>
@@ -646,20 +646,20 @@ const AdminPage = () => {
         title="Confirmar exclusao"
         description={
           deleteTarget?.type === "ds"
-            ? `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta a√ß√£o removera tambem datasets e dashboards vinculados.`
-            : `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta a√ß√£o n√£o pode ser desfeita.`
+            ? `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta aÁ„o removera tambem datasets e dashboards vinculados.`
+            : `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta aÁ„o n„o pode ser desfeita.`
         }
         details={
           deleteTarget?.type === "ds" && deleteImpact ? (
             <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 space-y-2">
-              <p className="text-xs text-foreground">
+              <p className="text-caption text-foreground">
                 Impacto: {deleteImpact.datasets_count} datasets e {deleteImpact.dashboards_count} dashboards serao excluidos.
               </p>
               {deleteImpact.dashboards_count > 0 && (
                 <div className="max-h-40 overflow-auto rounded border border-border bg-background p-2">
                   <ul className="space-y-1">
                     {deleteImpact.dashboards.map((item) => (
-                      <li key={item.dashboard_id} className="text-xs text-muted-foreground">
+                      <li key={item.dashboard_id} className="text-caption">
                         #{item.dashboard_id} . {item.dashboard_name} . {item.dataset_name}
                       </li>
                     ))}
@@ -678,4 +678,7 @@ const AdminPage = () => {
 };
 
 export default AdminPage;
+
+
+
 

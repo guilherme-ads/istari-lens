@@ -19,6 +19,7 @@ import SharedAnalysisPage from "./pages/SharedAnalysisPage";
 import NotFound from "./pages/NotFound";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import AccountPage from "./pages/AccountPage";
+import { ThemeProvider } from "./components/ui/theme-provider";
 
 const queryClient = new QueryClient();
 
@@ -40,11 +41,12 @@ const RedirectIfAuthenticated = ({ children }: { children: JSX.Element }) => {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
           {/* Public pages — no sidebar */}
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
@@ -70,9 +72,10 @@ const App = () => (
           </Route>
 
           <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 
