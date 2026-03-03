@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth", () => ({
   clearAuthSession: vi.fn(),
   getAuthToken: vi.fn(),
+  updateAuthToken: vi.fn(),
+  updateStoredUser: vi.fn(),
 }));
 
 import { api, ApiError } from "@/lib/api";
@@ -44,5 +46,35 @@ describe("api auth behavior", () => {
       writable: true,
       configurable: true,
     });
+  });
+
+  it("refreshes access token and retries request once on 401", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: "Unauthorized" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: "new-token",
+          token_type: "bearer",
+          user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await api.listDatasources();
+    expect(Array.isArray(response)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("/auth/refresh");
+    expect(clearAuthSession).not.toHaveBeenCalled();
   });
 });

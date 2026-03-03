@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.auth.application.security import hash_password
 from app.shared.infrastructure.database import get_db
 from app.modules.auth.adapters.api.dependencies import get_current_admin_user
-from app.modules.core.legacy.models import User
+from app.modules.core.legacy.models import AuthSession, User
 from app.modules.core.legacy.schemas import (
     AdminUserCreateRequest,
     AdminUserListResponse,
@@ -187,6 +187,10 @@ async def delete_user(
 
     user.is_active = False
     user.deleted_at = datetime.utcnow()
+    db.query(AuthSession).filter(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None)).update(
+        {AuthSession.revoked_at: datetime.utcnow()},
+        synchronize_session=False,
+    )
     db.commit()
     return None
 
@@ -204,6 +208,10 @@ async def reset_user_password(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.hashed_password = hash_password(request.password)
+    db.query(AuthSession).filter(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None)).update(
+        {AuthSession.revoked_at: datetime.utcnow()},
+        synchronize_session=False,
+    )
     db.commit()
     db.refresh(user)
     return _to_response(user)
