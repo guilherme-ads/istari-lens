@@ -155,7 +155,7 @@ const OverviewPage = () => {
             </div>
             <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{activeDatasources.length}</p>
             <p className="mt-1 text-caption">
-              {activeSpreadsheetCount} {activeSpreadsheetCount === 1 ? "planilha" : "planilhas"} A {activeDatabaseCount} {activeDatabaseCount === 1 ? "banco" : "bancos"}
+              {activeSpreadsheetCount} {activeSpreadsheetCount === 1 ? "planilha" : "planilhas"} · {activeDatabaseCount} {activeDatabaseCount === 1 ? "banco" : "bancos"}
             </p>
           </motion.div>
         </section>
@@ -205,7 +205,7 @@ const OverviewPage = () => {
                   <p className="mt-1 text-caption">Este dataset ainda nao tem dashboard.</p>
                 </>
               ) : (
-                <p className="mt-2 text-caption">Todos os datasets jA possuem dashboard.</p>
+                <p className="mt-2 text-caption">Todos os datasets já possuem dashboard.</p>
               )}
             </button>
 
@@ -261,7 +261,7 @@ const OverviewPage = () => {
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-bold text-foreground">{dataset.name}</p>
                             <p className="text-caption truncate">
-                              {view ? `${view.schema}.${view.name}` : "-"} A {dataset.dashboardIds.length} {dataset.dashboardIds.length === 1 ? "dashboard" : "dashboards"}
+                              {view ? `${view.schema}.${view.name}` : "-"} · {dataset.dashboardIds.length} {dataset.dashboardIds.length === 1 ? "dashboard" : "dashboards"}
                             </p>
                           </div>
                           <span className="hidden self-start pt-0.5 text-caption sm:inline">{formatRelativeTime(dataset.createdAt)}</span>
@@ -308,14 +308,14 @@ const OverviewPage = () => {
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-bold text-foreground">{dashboard.title}</p>
                             <p className="text-caption truncate">
-                              {dataset?.name || "-"} A {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+                              {dataset?.name || "-"} · {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
                             </p>
                           </div>
                           <span className="hidden self-start pt-0.5 text-caption sm:inline">{formatRelativeTime(dashboard.updatedAt)}</span>
                         </button>
                       </TooltipTrigger>
                       <TooltipContent className="text-caption">
-                        {sectionCount} {sectionCount === 1 ? "seAAo" : "seAAes"} A {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+                        {sectionCount} {sectionCount === 1 ? "seção" : "seções"} · {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
                       </TooltipContent>
                     </Tooltip>
                   );
