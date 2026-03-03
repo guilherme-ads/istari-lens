@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -118,12 +118,20 @@ const BuilderPage = () => {
   const [nativeFilters, setNativeFilters] = useState<DraftNativeFilter[]>([
     { id: `nf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
+  const hydratedDashboardIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!existingDashboard) return;
+    if (hydratedDashboardIdRef.current === existingDashboard.id) return;
+    hydratedDashboardIdRef.current = existingDashboard.id;
     setActiveDashboardId(existingDashboard.id);
     setDashboardTitle(existingDashboard.title);
-    setSections(existingDashboard.sections.length > 0 ? existingDashboard.sections : sections);
+    setSections(() => {
+      if (existingDashboard.sections.length > 0) return existingDashboard.sections;
+      const section = createSection();
+      section.title = "Visao Geral";
+      return [section];
+    });
     setNativeFilters(
       existingDashboard.nativeFilters.length > 0
         ? existingDashboard.nativeFilters.map((filter, index) => {
@@ -456,17 +464,36 @@ const BuilderPage = () => {
   }, [activeDashboardId, editingWidget?.id, persistLayout, queryClient, sections, toast]);
 
   const handleAddSection = useCallback((afterIndex?: number) => {
-    const section = createSection();
-    section.title = `Secao ${sections.length + 1}`;
     setSections((prev) => {
+      const section = createSection();
+      section.title = `Secao ${prev.length + 1}`;
+
+      let next: DashboardSection[];
       if (afterIndex === undefined || afterIndex < 0 || afterIndex >= prev.length) {
-        return [...prev, section];
+        next = [...prev, section];
+      } else {
+        next = [...prev];
+        next.splice(afterIndex, 0, section);
       }
-      const next = [...prev];
-      next.splice(afterIndex, 0, section);
+
+      if (activeDashboardId) {
+        void persistLayout(activeDashboardId, next).catch((error: unknown) => {
+          const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao salvar layout";
+          toast({ title: "Erro ao salvar layout", description: message, variant: "destructive" });
+        });
+      }
       return next;
     });
-  }, [sections.length]);
+  }, [activeDashboardId, persistLayout, toast]);
+
+  const handleSectionsChange = useCallback((nextSections: DashboardSection[]) => {
+    setSections(nextSections);
+    if (!activeDashboardId) return;
+    void persistLayout(activeDashboardId, nextSections).catch((error: unknown) => {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao salvar layout";
+      toast({ title: "Erro ao salvar layout", description: message, variant: "destructive" });
+    });
+  }, [activeDashboardId, persistLayout, toast]);
 
   const handleShare = async () => {
     const targetDashboardId = activeDashboardId || dashboardId;
@@ -1059,7 +1086,7 @@ const BuilderPage = () => {
           <DashboardCanvas
             dashboardId={targetDashboardId}
             sections={sections}
-            onSectionsChange={setSections}
+            onSectionsChange={handleSectionsChange}
             onAddWidget={handleAddWidget}
             onEditWidget={handleEditWidget}
             onDeleteWidget={handleDeleteWidgetFromCard}

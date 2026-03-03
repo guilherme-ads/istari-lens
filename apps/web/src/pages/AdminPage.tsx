@@ -259,7 +259,7 @@ const AdminPage = () => {
     return (
       <div className="bg-background">
         <main className="container py-6">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administraÁ„o" description={errorMessage} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administra√ß√£o" description={errorMessage} />
         </main>
       </div>
     );
@@ -276,7 +276,7 @@ const AdminPage = () => {
           <div>
             <h1 className="text-display text-foreground">Fontes de Dados</h1>
             <p className="mt-1.5 text-body text-muted-foreground">
-              Configure fontes de dados e gerencie tabelas disponÌveis.
+              Configure fontes de dados e gerencie tabelas dispon√≠veis.
             </p>
           </div>
 
@@ -318,7 +318,7 @@ const AdminPage = () => {
                       <div>
                         <p className="font-bold text-foreground">Banco de Dados</p>
                         <p className="text-caption mt-0.5">
-                          Conex„o por URL para sincronizar tabelas existentes.
+                          Conex√£o por URL para sincronizar tabelas existentes.
                         </p>
                       </div>
                     </div>
@@ -378,7 +378,7 @@ const AdminPage = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ds-desc">DescriÁ„o</Label>
+                    <Label htmlFor="ds-desc">Descri√ß√£o</Label>
                     <Textarea
                       id="ds-desc"
                       value={formDesc}
@@ -423,8 +423,8 @@ const AdminPage = () => {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard icon={ServerCog} label="Datasources" value={stats.totalDs} detail={`${stats.activeDs} ativos`} delay={0} />
           <StatCard icon={Activity} label="Ativos" value={stats.activeDs} detail={`de ${stats.totalDs} total`} delay={0.05} />
-          <StatCard icon={Layers} label="Tabelas" value={stats.totalTables} detail={`${stats.activeTables} disponÌveis`} delay={0.1} />
-          <StatCard icon={AlertCircle} label="Inativos" value={stats.totalDs - stats.activeDs + stats.totalTables - stats.activeTables} detail="requerem atencao" delay={0.15} />
+          <StatCard icon={Layers} label="Tabelas" value={stats.totalTables} detail={`${stats.activeTables} dispon√≠veis`} delay={0.1} />
+          <StatCard icon={AlertCircle} label="Inativos" value={stats.totalDs - stats.activeDs + stats.totalTables - stats.activeTables} detail="requerem aten√ß√£o" delay={0.15} />
         </div>
 
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
@@ -488,7 +488,7 @@ const AdminPage = () => {
                 <EmptyState
                   icon={<Database className="h-5 w-5" />}
                   title={dsSearch ? "Nenhum resultado" : "Nenhum datasource registrado"}
-                  description={dsSearch ? "Tente outro termo de busca." : "Clique em Nova Fonte para comeÁar."}
+                  description={dsSearch ? "Tente outro termo de busca." : "Clique em Nova Fonte para come√ßar."}
                 />
               ) : (
                 <div className="glass-card overflow-hidden">
@@ -530,7 +530,7 @@ const AdminPage = () => {
                           <TableCell>
                             <div className="flex items-center justify-end gap-0.5">
                               <ActionBtn
-                                tooltip={ds.sourceType === "spreadsheet" ? "N„o se aplica para planilha" : "Sincronizar"}
+                                tooltip={ds.sourceType === "spreadsheet" ? "N√£o se aplica para planilha" : "Sincronizar"}
                                 onClick={() => handleSync(ds.id)}
                                 disabled={syncingId === ds.id || ds.sourceType === "spreadsheet"}
                               >
@@ -646,8 +646,8 @@ const AdminPage = () => {
         title="Confirmar exclusao"
         description={
           deleteTarget?.type === "ds"
-            ? `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta aÁ„o removera tambem datasets e dashboards vinculados.`
-            : `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta aÁ„o n„o pode ser desfeita.`
+            ? `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta a√ß√£o removera tambem datasets e dashboards vinculados.`
+            : `Tem certeza que deseja remover "${deleteTarget?.name}"? Esta a√ß√£o n√£o pode ser desfeita.`
         }
         details={
           deleteTarget?.type === "ds" && deleteImpact ? (
