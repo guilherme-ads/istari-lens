@@ -6,7 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import BrandLogo from "@/components/shared/BrandLogo";
 import ThemeToggle from "@/components/shared/ThemeToggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearAuthSession, getStoredUser } from "@/lib/auth";
+import { getStoredUser } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 const AppLayout = () => {
   const navigate = useNavigate();
@@ -25,8 +26,8 @@ const AppLayout = () => {
       : []),
   ];
 
-  const handleLogout = () => {
-    clearAuthSession();
+  const handleLogout = async () => {
+    await api.logout();
     navigate("/login");
   };
 
@@ -92,10 +93,10 @@ const AppLayout = () => {
                       }`}
                     >
                       <Users className="h-3.5 w-3.5" />
-                      Usu√°rios
+                      Usu·rios
                     </Link>
                   </TooltipTrigger>
-                  <TooltipContent className="text-xs">Usu√°rios</TooltipContent>
+                  <TooltipContent className="text-xs">Usu·rios</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -147,7 +148,7 @@ const AppLayout = () => {
                   Sair
                 </button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Encerrar sess√£o</TooltipContent>
+              <TooltipContent className="text-xs">Encerrar sess„o</TooltipContent>
             </Tooltip>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -197,7 +198,7 @@ const AppLayout = () => {
                       }`}
                     >
                       <Users className="h-4 w-4" />
-                      Usu√°rios
+                      Usu·rios
                     </Link>
                     <Link
                       to="/api-config"
@@ -248,3 +249,4 @@ const AppLayout = () => {
 };
 
 export default AppLayout;
+

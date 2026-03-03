@@ -63,6 +63,7 @@ def _seed_users() -> tuple[User, User]:
 def _login(client: TestClient, email: str, password: str) -> str:
     response = client.post("/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
+    assert "set-cookie" in response.headers
     return response.json()["access_token"]
 
 
@@ -189,3 +190,31 @@ def test_admin_only_delete_and_reset_password_flow():
     self_delete = client.delete(f"/admin/users/{admin.id}", headers={"Authorization": f"Bearer {admin_token}"})
     assert self_delete.status_code == 400
     assert self_delete.json()["detail"] == "You cannot delete your own user"
+
+
+def test_refresh_rotation_and_logout():
+    _seed_users()
+    client = _make_client()
+
+    _login(client, "user@test.com", "userpass123")
+    refresh = client.post("/auth/refresh")
+    assert refresh.status_code == 200
+    assert "access_token" in refresh.json()
+
+    logout = client.post("/auth/logout")
+    assert logout.status_code == 204
+
+    refresh_after_logout = client.post("/auth/refresh")
+    assert refresh_after_logout.status_code == 401
+
+
+def test_logout_all_revokes_active_sessions():
+    _seed_users()
+    client = _make_client()
+
+    access_token = _login(client, "user@test.com", "userpass123")
+    logout_all = client.post("/auth/logout-all", headers={"Authorization": f"Bearer {access_token}"})
+    assert logout_all.status_code == 204
+
+    refresh_after_logout_all = client.post("/auth/refresh")
+    assert refresh_after_logout_all.status_code == 401
