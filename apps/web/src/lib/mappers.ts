@@ -1,12 +1,13 @@
 import type { Dashboard, DashboardSection, DashboardWidget, WidgetConfig } from "@/types/dashboard";
 import type { Datasource, Dataset, View } from "@/types";
 import type { ApiDashboard, ApiDashboardWidget, ApiDataset, ApiDatasource, ApiView } from "@/lib/api";
+import { normalizeText } from "@/lib/text";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const asString = (value: unknown, fallback = ""): string =>
-  typeof value === "string" ? value : fallback;
+  typeof value === "string" ? normalizeText(value) : fallback;
 
 const asNumber = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;

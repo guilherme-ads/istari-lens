@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { api, ApiError } from "@/lib/api";
 import { getStoredUser, updateStoredUser } from "@/lib/auth";
+import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
 
 const getPasswordStrength = (password: string) => {
   if (!password) return { score: 0, label: "" };
@@ -163,13 +164,14 @@ const AccountPage = () => {
     <div className="bg-background min-h-full">
       <main className="container max-w-3xl py-8 space-y-8">
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Minha conta</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <ContextualBreadcrumb className="mb-3" items={[{ label: "Conta" }]} />
+          <h1 className="text-display text-foreground">Minha conta</h1>
+          <p className="mt-1.5 text-body text-muted-foreground">
             Gerencie seus dados pessoais e segurança.
           </p>
         </motion.div>
 
-        <div className="space-y-6">
+        <div className="space-y-8">
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6">
             <div className="flex items-start gap-5">
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-accent/10 border border-accent/20">
@@ -178,11 +180,11 @@ const AccountPage = () => {
 
               <div className="flex-1 min-w-0 space-y-2">
                 <div>
-                  <h2 className="text-lg font-semibold text-foreground truncate">{fullName || "-"}</h2>
-                  <p className="text-sm text-muted-foreground truncate">{email || "-"}</p>
+                  <h2 className="text-title text-foreground truncate">{fullName || "-"}</h2>
+                  <p className="text-body text-muted-foreground truncate">{email || "-"}</p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-3 text-caption">
                   <Badge variant="secondary" className="gap-1 font-medium">
                     <Shield className="h-3 w-3" />
                     {roleLabel}
@@ -206,9 +208,9 @@ const AccountPage = () => {
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/10">
                   <User className="h-3.5 w-3.5 text-accent" />
                 </div>
-                <h3 className="text-sm font-semibold text-foreground">Informações do perfil</h3>
+                <h3 className="text-title text-foreground">Informações do perfil</h3>
               </div>
-              <p className="text-xs text-muted-foreground ml-9">Atualize seus dados pessoais.</p>
+              <p className="text-caption ml-9">Atualize seus dados pessoais.</p>
             </div>
 
             <Separator />
@@ -216,7 +218,7 @@ const AccountPage = () => {
             <div className="p-6 space-y-5">
               <div className="grid gap-5 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="name" className="text-xs text-muted-foreground">Nome completo</Label>
+                  <Label htmlFor="name" className="text-caption">Nome completo</Label>
                   <Input
                     id="name"
                     value={fullName}
@@ -225,7 +227,7 @@ const AccountPage = () => {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs text-muted-foreground">E-mail</Label>
+                  <Label htmlFor="email" className="text-caption">E-mail</Label>
                   <div className="relative">
                     <Input
                       id="email"
@@ -238,7 +240,7 @@ const AccountPage = () => {
                     <Mail className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
                   </div>
                   {!isAdmin && (
-                    <p className="text-[11px] text-muted-foreground">Somente administradores podem alterar e-mail.</p>
+                    <p className="text-caption">Somente administradores podem alterar e-mail.</p>
                   )}
                 </div>
               </div>
@@ -263,16 +265,16 @@ const AccountPage = () => {
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/10">
                   <Key className="h-3.5 w-3.5 text-accent" />
                 </div>
-                <h3 className="text-sm font-semibold text-foreground">Alterar senha</h3>
+                <h3 className="text-title text-foreground">Alterar senha</h3>
               </div>
-              <p className="text-xs text-muted-foreground ml-9">Redefina sua senha de acesso à plataforma.</p>
+              <p className="text-caption ml-9">Redefina sua senha de acesso à plataforma.</p>
             </div>
 
             <Separator />
 
             <div className="p-6 space-y-5">
               <div className="space-y-1.5">
-                <Label htmlFor="current-password" className="text-xs text-muted-foreground">Senha atual</Label>
+                <Label htmlFor="current-password" className="text-caption">Senha atual</Label>
                 <div className="relative">
                   <Input
                     id="current-password"
@@ -295,7 +297,7 @@ const AccountPage = () => {
 
               <div className="grid gap-5 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="new-password" className="text-xs text-muted-foreground">Nova senha</Label>
+                  <Label htmlFor="new-password" className="text-caption">Nova senha</Label>
                   <div className="relative">
                     <Input
                       id="new-password"
@@ -318,8 +320,8 @@ const AccountPage = () => {
                   {newPassword && (
                     <div className="space-y-1 pt-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-muted-foreground">Força da senha</span>
-                        <span className="text-[11px] font-medium text-muted-foreground">{strength.label}</span>
+                        <span className="text-caption">Força da senha</span>
+                        <span className="text-caption font-medium">{strength.label}</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                         <div
@@ -332,7 +334,7 @@ const AccountPage = () => {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="confirm-password" className="text-xs text-muted-foreground">Confirmar nova senha</Label>
+                  <Label htmlFor="confirm-password" className="text-caption">Confirmar nova senha</Label>
                   <Input
                     id="confirm-password"
                     type={showNew ? "text" : "password"}
@@ -346,12 +348,12 @@ const AccountPage = () => {
                       {passwordsMatch ? (
                         <>
                           <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                          <span className="text-[11px] text-emerald-600 font-medium">Senhas coincidem</span>
+                          <span className="text-caption text-emerald-600 font-medium">Senhas coincidem</span>
                         </>
                       ) : (
                         <>
                           <AlertCircle className="h-3.5 w-3.5 text-destructive" />
-                          <span className="text-[11px] text-destructive font-medium">Senhas não coincidem</span>
+                          <span className="text-caption text-destructive font-medium">Senhas não coincidem</span>
                         </>
                       )}
                     </div>
@@ -380,3 +382,5 @@ const AccountPage = () => {
 };
 
 export default AccountPage;
+
+

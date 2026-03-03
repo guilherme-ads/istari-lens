@@ -14,7 +14,7 @@ const LoadingButton = ({ loading, loadingText, children, disabled, className, ..
     className={cn(className)}
     {...props}
   >
-    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin animate-in zoom-in-75 duration-200" />}
     {loading && loadingText ? loadingText : children}
   </Button>
 );

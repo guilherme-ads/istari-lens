@@ -1,8 +1,8 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import EmptyState from "./EmptyState";
 import { Database } from "lucide-react";
 import { ReactNode } from "react";
+import SkeletonTable from "@/components/shared/SkeletonTable";
 
 export interface DataTableColumn<T> {
   key: string;
@@ -15,6 +15,8 @@ interface DataTableProps<T> {
   columns: DataTableColumn<T>[];
   data: T[];
   loading?: boolean;
+  loadingRows?: number;
+  loadingColumns?: number;
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
@@ -24,18 +26,14 @@ function DataTable<T extends Record<string, any>>({
   columns,
   data,
   loading = false,
+  loadingRows = 5,
+  loadingColumns,
   emptyTitle = "Nenhum dado encontrado",
-  emptyDescription = "Não há registros para exibir.",
+  emptyDescription = "Nao ha registros para exibir.",
   emptyAction,
 }: DataTableProps<T>) {
   if (loading) {
-    return (
-      <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-12 w-full rounded-md" />
-        ))}
-      </div>
-    );
+    return <SkeletonTable rows={loadingRows} columns={loadingColumns || Math.max(columns.length, 1)} />;
   }
 
   if (data.length === 0) {

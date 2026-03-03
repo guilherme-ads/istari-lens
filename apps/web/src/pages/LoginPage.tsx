@@ -73,10 +73,10 @@ const LoginPage = () => {
             <BarChart3 className="h-7 w-7 text-accent-foreground" />
           </motion.div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <h1 className="text-display text-foreground">
               Bem-vindo ao <BrandLogo size="lg" className="inline" />
             </h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
+            <p className="mt-1.5 text-body text-muted-foreground">
               Entre com suas credenciais para acessar a plataforma
             </p>
           </div>
