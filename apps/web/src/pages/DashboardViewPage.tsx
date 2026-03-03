@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams, Link, useLocation } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronLeft, Pencil, Share2, Database, Plus, Trash2, CalendarIcon, Monitor, FileDown, X, SlidersHorizontal, Link2, Globe, Lock, UserRound } from "lucide-react";
 import type { DateRange } from "react-day-picker";
@@ -26,9 +26,13 @@ import { useCoreData } from "@/hooks/use-core-data";
 import { api } from "@/lib/api";
 import { exportDashboardToPdf } from "@/lib/dashboard-pdf";
 import EmptyState from "@/components/shared/EmptyState";
+import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
+import SkeletonCard from "@/components/shared/SkeletonCard";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getStoredUser } from "@/lib/auth";
+import { useSimulatedLoading } from "@/hooks/use-simulated-loading";
 
 type FilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between";
 type DraftGlobalFilter = {
@@ -111,6 +115,8 @@ const DashboardViewPage = () => {
   const { toast } = useToast();
   const { datasetId, dashboardId } = useParams<{ datasetId: string; dashboardId: string }>();
   const { datasets, views, dashboards, hasToken, isLoading, isError, errorMessage } = useCoreData();
+  const { isLoading: isSimulatedLoading } = useSimulatedLoading();
+  const showLoadingSkeleton = isLoading || isSimulatedLoading;
   const isPresentationMode = location.pathname.startsWith("/presentation/");
 
   const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
@@ -285,8 +291,8 @@ const DashboardViewPage = () => {
         <main className="container py-8 flex-1 flex items-center justify-center">
           <EmptyState
             icon={<Database className="h-5 w-5" />}
-            title="Sessão necessaria"
-            description="Para abrir este dashboard em modo apresentação, faca login novamente."
+            title="Sessão necessária"
+            description="Para abrir este dashboard em modo apresentação, faça login novamente."
             action={(
               <Button size="sm" onClick={() => navigate("/login")}>
                 Ir para login
@@ -308,11 +314,20 @@ const DashboardViewPage = () => {
     );
   }
 
-  if (isLoading) {
+  if (showLoadingSkeleton) {
     return (
       <div className="bg-background min-h-screen">
-        <main className="container py-6">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Carregando dashboard" description="Aguarde enquanto buscamos os dados." />
+        <main className="container py-6 space-y-6">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
+            <Skeleton className="h-4 w-72 max-w-full" />
+            <Skeleton className="h-8 w-96 max-w-full" />
+            <Skeleton className="h-4 w-64 max-w-full" />
+          </motion.div>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 }} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <SkeletonCard key={`dashboard-widget-skeleton-${index}`} variant="widget" />
+            ))}
+          </motion.div>
         </main>
       </div>
     );
@@ -323,7 +338,7 @@ const DashboardViewPage = () => {
       <div className="bg-background min-h-screen flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Dashboard não encontrado</h2>
+            <h2 className="text-title text-foreground">Dashboard não encontrado</h2>
             <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}` : "/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
             </Button>
@@ -341,15 +356,14 @@ const DashboardViewPage = () => {
             <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => navigate(`/datasets/${datasetId}`)}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <div className="flex items-center gap-1.5 min-w-0 text-xs">
-              <Link to="/datasets" className="text-muted-foreground hover:text-foreground transition-colors hidden sm:inline">
-                Datasets
-              </Link>
-              <span className="text-muted-foreground hidden sm:inline">/</span>
-              <Link to={`/datasets/${datasetId}`} className="text-muted-foreground hover:text-foreground transition-colors hidden sm:inline truncate max-w-[120px]">
-                {dataset.name}
-              </Link>
-            </div>
+            <ContextualBreadcrumb
+              className="hidden sm:block min-w-0"
+              items={[
+                { label: "Datasets", href: "/datasets" },
+                { label: dataset.name, href: `/datasets/${datasetId}` },
+                { label: dashboard.title },
+              ]}
+            />
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -425,8 +439,8 @@ const DashboardViewPage = () => {
         <div className="mb-6 py-1">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="min-w-0 lg:w-[28%]">
-              <h1 className="text-2xl font-extrabold text-foreground truncate">{dashboard.title}</h1>
-              <p className="text-xs text-muted-foreground mt-1">Identificador principal do dashboard</p>
+              <h1 className="text-display text-foreground truncate">{dashboard.title}</h1>
+              <p className="text-caption mt-1">Identificador principal do dashboard</p>
             </div>
             <div className="min-w-0 flex-1">
               {appliedFilters.length > 0 && (
@@ -566,7 +580,7 @@ const DashboardViewPage = () => {
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            className="h-8 w-8 destructive-icon-btn"
                             disabled={draftFilters.length === 1}
                             onClick={() => setDraftFilters((prev) => prev.filter((item) => item.id !== filter.id))}
                           >
@@ -722,7 +736,7 @@ const ShareDashboardDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl p-0 overflow-hidden">
         <DialogHeader className="px-6 pt-6">
-          <DialogTitle className="text-3xl font-semibold tracking-tight">Compartilhar "{dashboardTitle}"</DialogTitle>
+          <DialogTitle className="text-title">Compartilhar "{dashboardTitle}"</DialogTitle>
           <DialogDescription className="sr-only">Defina permissões de acesso para este dashboard.</DialogDescription>
         </DialogHeader>
 
@@ -797,7 +811,7 @@ const ShareDashboardDialog = ({
           </div>
 
           <div className="space-y-3">
-            <h3 className="text-lg font-semibold">Pessoas com acesso</h3>
+            <h3 className="text-title">Pessoas com acesso</h3>
             <div className="rounded-xl border border-border bg-card">
               <div className="flex items-center justify-between px-4 py-3">
                 <div className="flex items-center gap-3 min-w-0">
@@ -848,7 +862,7 @@ const ShareDashboardDialog = ({
           </div>
 
           <div className="space-y-3">
-            <h3 className="text-lg font-semibold">Acesso geral</h3>
+            <h3 className="text-title">Acesso geral</h3>
             <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <span className="h-9 w-9 rounded-full bg-background inline-flex items-center justify-center">
@@ -930,18 +944,18 @@ const ViewSection = ({
       transition={{ delay, duration: 0.35 }}
       data-pdf-section-id={section.id}
     >
-      {section.showTitle !== false && section.title && <h3 className="text-sm font-semibold text-foreground mb-3">{section.title}</h3>}
+      {section.showTitle !== false && section.title && <h3 className="text-heading text-foreground mb-3">{section.title}</h3>}
       <div className={`grid ${gridCols} gap-4`}>
         {section.widgets.map((widget) => (
           <div
             key={widget.id}
             data-pdf-widget-id={widget.id}
             data-pdf-widget-type={widget.config.widget_type}
-            className={`glass-card self-start flex flex-col overflow-hidden ${getWidgetWidthClass(section.columns, widget.config.size?.width || 1)}`}
+            className={`glass-card interactive-card self-start flex flex-col overflow-hidden ${getWidgetWidthClass(section.columns, widget.config.size?.width || 1)}`}
           >
             {widget.config.show_title !== false && (
               <div className="px-4 py-2.5 border-b border-border/50">
-                <h4 className="text-sm font-semibold text-foreground truncate">{widget.title || "Sem título"}</h4>
+                <h4 className="text-body font-semibold text-foreground truncate">{widget.title || "Sem título"}</h4>
               </div>
             )}
             <div className={`p-3 flex items-center justify-center ${widget.config.size?.height === 0.5 ? "min-h-[100px]" : "min-h-[180px]"}`}>

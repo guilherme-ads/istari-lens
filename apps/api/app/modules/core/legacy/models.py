@@ -33,6 +33,23 @@ class User(Base):
     )
     spreadsheet_imports = relationship("SpreadsheetImport", back_populates="created_by_user")
     dashboard_email_shares_created = relationship("DashboardEmailShare", back_populates="created_by_user")
+    auth_sessions = relationship("AuthSession", back_populates="user", cascade="all, delete-orphan")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+
+    user = relationship("User", back_populates="auth_sessions")
 
 
 class DataSource(Base):

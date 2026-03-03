@@ -18,6 +18,8 @@ import ApiConfigPage from "./pages/ApiConfigPage";
 import SharedAnalysisPage from "./pages/SharedAnalysisPage";
 import NotFound from "./pages/NotFound";
 import AdminUsersPage from "./pages/AdminUsersPage";
+import AccountPage from "./pages/AccountPage";
+import { ThemeProvider } from "./components/ui/theme-provider";
 
 const queryClient = new QueryClient();
 
@@ -39,11 +41,12 @@ const RedirectIfAuthenticated = ({ children }: { children: JSX.Element }) => {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
           {/* Public pages — no sidebar */}
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
@@ -58,6 +61,7 @@ const App = () => (
             <Route path="/home" element={<OverviewPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
             <Route path="/dashboards" element={<DashboardsPage />} />
+            <Route path="/account" element={<AccountPage />} />
             <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
             <Route path="/datasets/:datasetId/dashboard/:dashboardId" element={<DashboardViewPage />} />
             <Route path="/datasets/:datasetId/builder" element={<BuilderPage />} />
@@ -68,9 +72,10 @@ const App = () => (
           </Route>
 
           <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

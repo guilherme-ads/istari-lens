@@ -132,7 +132,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
     animate={{ opacity: 1, scale: 1 }}
     exit={{ opacity: 0, scale: 0.95 }}
     className={`glass-card group relative self-start flex flex-col overflow-hidden transition-all ${
-      readOnly ? "" : "cursor-pointer hover:ring-2 hover:ring-accent/30"
+      readOnly ? "" : "interactive-card cursor-pointer hover:ring-2 hover:ring-accent/30"
     } ${getWidgetWidthClass(sectionColumns, widget.config.size?.width || 1)}`}
     onClick={() => !readOnly && onEdit()}
   >
@@ -198,7 +198,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-destructive hover:text-destructive"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 destructive-icon-btn"
                   onClick={(e) => { e.stopPropagation(); onDelete(); }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -224,7 +224,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+          className="h-7 w-7 shrink-0 destructive-icon-btn"
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
         >
           <Trash2 className="h-3.5 w-3.5" />

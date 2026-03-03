@@ -73,10 +73,10 @@ const LoginPage = () => {
             <BarChart3 className="h-7 w-7 text-accent-foreground" />
           </motion.div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <h1 className="text-display text-foreground">
               Bem-vindo ao <BrandLogo size="lg" className="inline" />
             </h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
+            <p className="mt-1.5 text-body text-muted-foreground">
               Entre com suas credenciais para acessar a plataforma
             </p>
           </div>
@@ -167,7 +167,7 @@ const LoginPage = () => {
             Conexão segura e criptografada
           </div>
           <p className="text-center text-xs text-muted-foreground/60">
-            {/* Cliente pediu remover "istari" do texto visivel; para reverter, restaurar "istari Lens". */}
+            {/* Cliente pediu remover "istari" do texto visível; para reverter, restaurar "istari Lens". */}
             © 2026 Lens App | Data Intelligence Platform
           </p>
         </div>

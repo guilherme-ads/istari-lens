@@ -53,7 +53,7 @@ const SharedAnalysisPage = () => {
     return (
       <div className="min-h-screen bg-background">
         <main className="container py-8 max-w-5xl">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Carregando analise" description="Aguarde enquanto buscamos os dados compartilhados." />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Carregando análise" description="Aguarde enquanto buscamos os dados compartilhados." />
         </main>
       </div>
     );
@@ -63,7 +63,7 @@ const SharedAnalysisPage = () => {
     return (
       <div className="min-h-screen bg-background">
         <main className="container py-8 max-w-5xl">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Analise não encontrada" description={(sharedQuery.error as Error | undefined)?.message || "Token invalido ou expirado."} />
+          <EmptyState icon={<Database className="h-5 w-5" />} title="Análise não encontrada" description={(sharedQuery.error as Error | undefined)?.message || "Token inválido ou expirado."} />
         </main>
       </div>
     );
@@ -80,7 +80,7 @@ const SharedAnalysisPage = () => {
             <BrandLogo size="sm" className="text-foreground" />
             <span className="h-4 w-px bg-border" />
             <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <ExternalLink className="h-3 w-3" /> Analise compartilhada
+              <ExternalLink className="h-3 w-3" /> Análise compartilhada
             </span>
           </div>
           <Tooltip>
@@ -98,7 +98,7 @@ const SharedAnalysisPage = () => {
       <main className="container py-8 max-w-5xl">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">{sharedQuery.data.analysis.name}</h1>
+            <h1 className="text-display text-foreground">{sharedQuery.data.analysis.name}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
@@ -112,14 +112,14 @@ const SharedAnalysisPage = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <KpiMiniCard label={yKey || "Metrica"} value={totalMetric.toLocaleString()} icon={TrendingUp} />
+            <KpiMiniCard label={yKey || "Métrica"} value={totalMetric.toLocaleString()} icon={TrendingUp} />
             <KpiMiniCard label="Registros" value={rows.length.toLocaleString()} icon={TrendingUp} />
             <KpiMiniCard label="Colunas" value={columns.length.toLocaleString()} icon={TrendingUp} />
           </div>
 
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Visualização</h2>
+              <h2 className="text-title text-foreground">Visualização</h2>
               <span className="text-xs text-muted-foreground">{rows.length} registros</span>
             </div>
             {xKey && yKey ? (
@@ -133,17 +133,17 @@ const SharedAnalysisPage = () => {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <EmptyState icon={<Database className="h-5 w-5" />} title="Sem dados para grafico" description="Não foi possivel identificar colunas para visualização." />
+              <EmptyState icon={<Database className="h-5 w-5" />} title="Sem dados para gráfico" description="Não foi possível identificar colunas para visualização." />
             )}
           </div>
 
           <div className="glass-card overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <h2 className="text-sm font-semibold text-foreground">Dados detalhados</h2>
+              <h2 className="text-title text-foreground">Dados detalhados</h2>
               <span className="text-xs text-muted-foreground">{rows.length} registros</span>
             </div>
             {rows.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">Nenhum dado retornado.</div>
+              <div className="p-4 text-body text-muted-foreground">Nenhum dado retornado.</div>
             ) : (
               <Table>
                 <TableHeader>

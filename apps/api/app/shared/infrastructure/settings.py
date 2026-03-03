@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     encryption_key: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+    refresh_token_expire_days: int = 14
+    refresh_cookie_name: str = "istari_refresh_token"
+    refresh_cookie_secure: bool = False
+    refresh_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    refresh_cookie_path: str = "/auth"
 
     # =========================
     # Bootstrap

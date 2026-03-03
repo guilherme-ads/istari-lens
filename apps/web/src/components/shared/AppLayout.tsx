@@ -1,16 +1,20 @@
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useState } from "react";
-import { LogOut, Settings, Layers, Home, Menu, X, BarChart3, LayoutDashboard, Users, KeyRound } from "lucide-react";
+import { LogOut, Settings, Layers, Home, Menu, X, BarChart3, LayoutDashboard, Users, KeyRound, UserCog } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
 import BrandLogo from "@/components/shared/BrandLogo";
+import ThemeToggle from "@/components/shared/ThemeToggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearAuthSession, getStoredUser } from "@/lib/auth";
+import { getStoredUser } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 const AppLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const user = getStoredUser();
+
   const navLinks = [
     { to: "/home", label: "Home", icon: Home },
     { to: "/datasets", label: "Datasets", icon: Layers },
@@ -21,10 +25,12 @@ const AppLayout = () => {
       ]
       : []),
   ];
-  const handleLogout = () => {
-    clearAuthSession();
+
+  const handleLogout = async () => {
+    await api.logout();
     navigate("/login");
   };
+
   const isActiveLink = (to: string) => {
     if (to === "/admin") return location.pathname === "/admin";
     if (to === "/api-config") return location.pathname === "/api-config";
@@ -51,12 +57,12 @@ const AppLayout = () => {
                     <TooltipTrigger asChild>
                       <Link
                         to={link.to}
-                        className={`relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                          isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                        className={`group relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all duration-200 ease-out ${
+                          isActive ? "bg-accent/10 text-foreground border-l-2 border-accent" : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground"
                         }`}
                       >
                         <link.icon className="h-3.5 w-3.5" />
-                        {link.label}
+                        <span className="transition-transform duration-200 ease-out group-hover:translate-x-[2px]">{link.label}</span>
                         {isActive && (
                           <motion.div
                             layoutId="nav-indicator"
@@ -87,10 +93,10 @@ const AppLayout = () => {
                       }`}
                     >
                       <Users className="h-3.5 w-3.5" />
-                      Usu√°rios
+                      Usu·rios
                     </Link>
                   </TooltipTrigger>
-                  <TooltipContent className="text-xs">Usu√°rios</TooltipContent>
+                  <TooltipContent className="text-xs">Usu·rios</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -112,6 +118,28 @@ const AppLayout = () => {
             )}
             <Tooltip>
               <TooltipTrigger asChild>
+                <Link
+                  to="/account"
+                  className={`hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors md:flex ${
+                    isActiveLink("/account")
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <UserCog className="h-3.5 w-3.5" />
+                  Conta
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">Minha conta</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ThemeToggle className="hidden md:inline-flex" />
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">Alternar tema</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
                   onClick={handleLogout}
                   className="hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:flex"
@@ -120,7 +148,7 @@ const AppLayout = () => {
                   Sair
                 </button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Encerrar sess√£o</TooltipContent>
+              <TooltipContent className="text-xs">Encerrar sess„o</TooltipContent>
             </Tooltip>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -149,12 +177,12 @@ const AppLayout = () => {
                       key={link.to}
                       to={link.to}
                       onClick={() => setMobileMenuOpen(false)}
-                      className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
-                        isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      className={`group flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+                        isActive ? "bg-accent/10 text-foreground border-l-2 border-accent" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
                       <link.icon className="h-4 w-4" />
-                      {link.label}
+                      <span className="transition-transform duration-200 ease-out group-hover:translate-x-[2px]">{link.label}</span>
                     </Link>
                   );
                 })}
@@ -165,19 +193,19 @@ const AppLayout = () => {
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
                         isActiveLink("/admin/users")
-                          ? "bg-secondary text-foreground"
+                          ? "bg-accent/10 text-foreground border-l-2 border-accent"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
                       <Users className="h-4 w-4" />
-                      Usu√°rios
+                      Usu·rios
                     </Link>
                     <Link
                       to="/api-config"
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
                         isActiveLink("/api-config")
-                          ? "bg-secondary text-foreground"
+                          ? "bg-accent/10 text-foreground border-l-2 border-accent"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
@@ -186,6 +214,19 @@ const AppLayout = () => {
                     </Link>
                   </>
                 )}
+                <Link
+                  to="/account"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+                    isActiveLink("/account")
+                      ? "bg-accent/10 text-foreground border-l-2 border-accent"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <UserCog className="h-4 w-4" />
+                  Conta
+                </Link>
+                <ThemeToggle showLabel className="w-full justify-start text-muted-foreground hover:bg-secondary hover:text-foreground" />
                 <div className="my-1 h-px bg-border" />
                 <button
                   onClick={handleLogout}
@@ -208,3 +249,4 @@ const AppLayout = () => {
 };
 
 export default AppLayout;
+

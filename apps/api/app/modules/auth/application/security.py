@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import hashlib
+import secrets
 from typing import Optional
 import jwt
 from passlib.context import CryptContext
@@ -42,4 +44,12 @@ def decode_token(token: str) -> Optional[dict]:
         return payload
     except jwt.InvalidTokenError:
         return None
+
+
+def generate_refresh_token() -> str:
+    return secrets.token_urlsafe(64)
+
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 

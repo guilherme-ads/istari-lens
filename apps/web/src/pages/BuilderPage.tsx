@@ -1,5 +1,5 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Plus, Save, Share2, ChevronLeft, Check, LayoutDashboard, Eye, Pencil, Monitor, Trash2, CalendarIcon, Code2, RefreshCw } from "lucide-react";
@@ -28,6 +28,7 @@ import { api, ApiError } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
 import { sectionsToLayoutConfig } from "@/lib/mappers";
 import EmptyState from "@/components/shared/EmptyState";
+import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
 import { cn } from "@/lib/utils";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 
@@ -117,12 +118,20 @@ const BuilderPage = () => {
   const [nativeFilters, setNativeFilters] = useState<DraftNativeFilter[]>([
     { id: `nf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
+  const hydratedDashboardIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!existingDashboard) return;
+    if (hydratedDashboardIdRef.current === existingDashboard.id) return;
+    hydratedDashboardIdRef.current = existingDashboard.id;
     setActiveDashboardId(existingDashboard.id);
     setDashboardTitle(existingDashboard.title);
-    setSections(existingDashboard.sections.length > 0 ? existingDashboard.sections : sections);
+    setSections(() => {
+      if (existingDashboard.sections.length > 0) return existingDashboard.sections;
+      const section = createSection();
+      section.title = "Visao Geral";
+      return [section];
+    });
     setNativeFilters(
       existingDashboard.nativeFilters.length > 0
         ? existingDashboard.nativeFilters.map((filter, index) => {
@@ -455,17 +464,36 @@ const BuilderPage = () => {
   }, [activeDashboardId, editingWidget?.id, persistLayout, queryClient, sections, toast]);
 
   const handleAddSection = useCallback((afterIndex?: number) => {
-    const section = createSection();
-    section.title = `Secao ${sections.length + 1}`;
     setSections((prev) => {
+      const section = createSection();
+      section.title = `Secao ${prev.length + 1}`;
+
+      let next: DashboardSection[];
       if (afterIndex === undefined || afterIndex < 0 || afterIndex >= prev.length) {
-        return [...prev, section];
+        next = [...prev, section];
+      } else {
+        next = [...prev];
+        next.splice(afterIndex, 0, section);
       }
-      const next = [...prev];
-      next.splice(afterIndex, 0, section);
+
+      if (activeDashboardId) {
+        void persistLayout(activeDashboardId, next).catch((error: unknown) => {
+          const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao salvar layout";
+          toast({ title: "Erro ao salvar layout", description: message, variant: "destructive" });
+        });
+      }
       return next;
     });
-  }, [sections.length]);
+  }, [activeDashboardId, persistLayout, toast]);
+
+  const handleSectionsChange = useCallback((nextSections: DashboardSection[]) => {
+    setSections(nextSections);
+    if (!activeDashboardId) return;
+    void persistLayout(activeDashboardId, nextSections).catch((error: unknown) => {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao salvar layout";
+      toast({ title: "Erro ao salvar layout", description: message, variant: "destructive" });
+    });
+  }, [activeDashboardId, persistLayout, toast]);
 
   const handleShare = async () => {
     const targetDashboardId = activeDashboardId || dashboardId;
@@ -547,8 +575,8 @@ const BuilderPage = () => {
       <div className="bg-background flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Dataset não encontrado</h2>
-            <p className="text-sm text-muted-foreground">O dataset solicitado não existe.</p>
+            <h2 className="text-title text-foreground">Dataset não encontrado</h2>
+            <p className="text-body text-muted-foreground">O dataset solicitado não existe.</p>
             <Button variant="outline" onClick={() => navigate("/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar aos Datasets
             </Button>
@@ -563,8 +591,8 @@ const BuilderPage = () => {
       <div className="bg-background flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Dashboard não encontrado</h2>
-            <p className="text-sm text-muted-foreground">Você não tem permissão para editar este dashboard ou ele não existe.</p>
+            <h2 className="text-title text-foreground">Dashboard não encontrado</h2>
+            <p className="text-body text-muted-foreground">Você não tem permissão para editar este dashboard ou ele não existe.</p>
             <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
             </Button>
@@ -579,8 +607,8 @@ const BuilderPage = () => {
       <div className="bg-background flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">Acesso negado</h2>
-            <p className="text-sm text-muted-foreground">Você tem acesso somente de visualização para este dashboard.</p>
+            <h2 className="text-title text-foreground">Acesso negado</h2>
+            <p className="text-body text-muted-foreground">Você tem acesso somente de visualização para este dashboard.</p>
             <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Ir para visualização
             </Button>
@@ -598,22 +626,17 @@ const BuilderPage = () => {
             <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => navigate("/datasets")}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <Link to="/datasets" className="text-xs text-muted-foreground hover:text-foreground transition-colors hidden sm:inline">
-                  Datasets
-                </Link>
-                <span className="text-xs text-muted-foreground hidden sm:inline">/</span>
-                <span className="text-xs text-muted-foreground hidden sm:inline truncate max-w-[120px]">
-                  {dataset.name}
-                </span>
-                <span className="text-xs text-muted-foreground hidden sm:inline">/</span>
-                <span className="text-sm font-semibold text-foreground truncate">{dashboardTitle}</span>
-              </div>
-            </div>
+            <ContextualBreadcrumb
+              className="hidden sm:block min-w-0"
+              items={[
+                { label: "Datasets", href: "/datasets" },
+                { label: dataset.name, href: `/datasets/${datasetId}` },
+                { label: "Builder" },
+              ]}
+            />
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+          <div className="flex items-center gap-2 text-caption shrink-0">
             <span className="hidden sm:inline">
               {view.schema}.{view.name} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
             </span>
@@ -724,16 +747,16 @@ const BuilderPage = () => {
         <div className="glass-card mb-6 p-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 lg:w-1/3">
-              <label className="text-xs font-semibold text-muted-foreground">Titulo do dashboard</label>
+              <label className="text-heading">Titulo do dashboard</label>
               <Input
                 value={dashboardTitle}
                 onChange={(e) => setDashboardTitle(e.target.value)}
-                className="h-9 mt-1 text-sm font-semibold"
+                className="h-9 mt-1.5 text-title"
                 placeholder="Titulo do dashboard"
               />
             </div>
             <div className="lg:w-2/3">
-              <Label className="text-xs font-semibold text-muted-foreground">Filtro nativo (oculto no front)</Label>
+              <Label className="text-heading">Filtro nativo (oculto no front)</Label>
               <div className="mt-2 space-y-2">
                 {nativeFilters.map((filter, filterIndex) => {
                   const selectedColumn = (viewColumnsQuery.data || []).find((column) => column.column_name === filter.column);
@@ -926,7 +949,7 @@ const BuilderPage = () => {
           <div className="glass-card mb-6 p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-foreground">Dev Mode QuerySpec</h3>
+                <h3 className="text-title text-foreground">Dev Mode QuerySpec</h3>
                 <p className="text-xs text-muted-foreground">
                   {devModeSqlView === "widget"
                     ? "QuerySpec efetiva por widget para este dashboard."
@@ -1051,8 +1074,8 @@ const BuilderPage = () => {
             <div className="h-16 w-16 rounded-2xl bg-accent/10 flex items-center justify-center">
               <LayoutDashboard className="h-8 w-8 text-accent" />
             </div>
-            <h2 className="text-lg font-semibold text-foreground">Comece seu dashboard</h2>
-            <p className="text-sm text-muted-foreground text-center max-w-md">
+            <h2 className="text-title text-foreground">Comece seu dashboard</h2>
+            <p className="text-body text-muted-foreground text-center max-w-md">
               Adicione secoes e widgets para montar seu dashboard usando dados de <strong>{view.schema}.{view.name}</strong>.
             </p>
             <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => handleAddSection()}>
@@ -1063,7 +1086,7 @@ const BuilderPage = () => {
           <DashboardCanvas
             dashboardId={targetDashboardId}
             sections={sections}
-            onSectionsChange={setSections}
+            onSectionsChange={handleSectionsChange}
             onAddWidget={handleAddWidget}
             onEditWidget={handleEditWidget}
             onDeleteWidget={handleDeleteWidgetFromCard}
@@ -1105,3 +1128,5 @@ const BuilderPage = () => {
 };
 
 export default BuilderPage;
+
+

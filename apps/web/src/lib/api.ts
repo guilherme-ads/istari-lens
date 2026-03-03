@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, updateAuthToken, updateStoredUser } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -14,7 +14,44 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, requiresAuth = true): Promise<T> {
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const response = await request<AuthLoginResponse>(
+          "/auth/refresh",
+          { method: "POST" },
+          false,
+          true,
+          false,
+        );
+        updateAuthToken(response.access_token);
+        updateStoredUser({
+          id: response.user.id,
+          email: response.user.email,
+          full_name: response.user.full_name,
+          is_admin: response.user.is_admin,
+        });
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  requiresAuth = true,
+  includeCredentials = false,
+  retryOn401 = true,
+): Promise<T> {
   const token = getAuthToken();
   const headers = new Headers(init.headers);
 
@@ -29,6 +66,7 @@ async function request<T>(path: string, init: RequestInit = {}, requiresAuth = t
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers,
+    credentials: includeCredentials ? "include" : init.credentials,
   });
 
   if (response.status === 204) {
@@ -47,6 +85,12 @@ async function request<T>(path: string, init: RequestInit = {}, requiresAuth = t
           : undefined;
 
     if (requiresAuth && response.status === 401) {
+      if (retryOn401) {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          return request<T>(path, init, requiresAuth, includeCredentials, false);
+        }
+      }
       if (typeof window !== "undefined" && window.location.pathname !== "/login") {
         clearAuthSession();
         window.location.assign("/login");
@@ -501,9 +545,36 @@ export const api = {
     request<AuthLoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
-    }, false),
+    }, false, true),
 
-  listDatasources: () => request<ApiDatasource[]>("/datasources"),
+  changePassword: (payload: { current_password: string; new_password: string }) =>
+    request<void>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  logout: async () => {
+    try {
+      await request<void>("/auth/logout", { method: "POST" }, false, true, false);
+    } finally {
+      clearAuthSession();
+    }
+  },
+
+  logoutAll: async () => {
+    await request<void>("/auth/logout-all", { method: "POST" }, true, true);
+    clearAuthSession();
+  },
+
+  getMe: () => request<ApiUser>("/auth/me"),
+
+  updateMe: (payload: Partial<Pick<ApiUser, "email" | "full_name">>) =>
+    request<ApiUser>("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  listDatasources: () => request<ApiDatasource[]>("/datasources/"),
 
   createDatasource: (payload: {
     name: string;

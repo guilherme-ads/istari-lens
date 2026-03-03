@@ -82,3 +82,33 @@ export const clearAuthSession = (): void => {
 };
 
 export const getStoredUser = (): StoredUser | null => getActiveSession()?.user ?? null;
+
+export const updateAuthToken = (token: string): void => {
+  if (typeof window === "undefined") return;
+
+  const localSession = readSessionFromStorage(localStorage);
+  if (localSession) {
+    safeSetItem(localStorage, TOKEN_STORAGE_KEY, token);
+    return;
+  }
+
+  const session = readSessionFromStorage(sessionStorage);
+  if (session) {
+    safeSetItem(sessionStorage, TOKEN_STORAGE_KEY, token);
+  }
+};
+
+export const updateStoredUser = (nextUser: StoredUser): void => {
+  if (typeof window === "undefined") return;
+
+  const localSession = readSessionFromStorage(localStorage);
+  if (localSession) {
+    safeSetItem(localStorage, USER_STORAGE_KEY, JSON.stringify(nextUser));
+    return;
+  }
+
+  const session = readSessionFromStorage(sessionStorage);
+  if (session) {
+    safeSetItem(sessionStorage, USER_STORAGE_KEY, JSON.stringify(nextUser));
+  }
+};

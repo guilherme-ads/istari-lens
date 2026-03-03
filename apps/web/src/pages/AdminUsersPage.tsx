@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Eye, Pencil, Plus, Search, Trash2, Users } from "lucide-react";
+import { Eye, KeyRound, Pencil, Plus, Search, Trash2, Users } from "lucide-react";
 
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import EmptyState from "@/components/shared/EmptyState";
@@ -52,6 +52,7 @@ const AdminUsersPage = () => {
   const [detailUser, setDetailUser] = useState<ApiAdminUser | null>(null);
   const [editUser, setEditUser] = useState<ApiAdminUser | null>(null);
   const [deleteUser, setDeleteUser] = useState<ApiAdminUser | null>(null);
+  const [resetUser, setResetUser] = useState<ApiAdminUser | null>(null);
 
   const listQuery = useQuery({
     queryKey: ["admin-users", search, page, sortField, sortDir],
@@ -103,6 +104,19 @@ const AdminUsersPage = () => {
     },
   });
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ id, password }: { id: number; password: string }) => api.resetAdminUserPassword(id, { password }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      setResetUser(null);
+      toast({ title: "Senha redefinida" });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao redefinir senha";
+      toast({ title: "Erro ao redefinir senha", description: message, variant: "destructive" });
+    },
+  });
+
   const tableError = (listQuery.error as Error | undefined)?.message || "Erro ao carregar usuários";
   const canPrev = page > 1;
   const canNext = page < totalPages;
@@ -124,15 +138,15 @@ const AdminUsersPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
         >
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Usuários</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Gerencie logins e permissões da plataforma.</p>
+            <h1 className="text-display text-foreground">Usuários</h1>
+            <p className="mt-1.5 text-body text-muted-foreground">Gerencie logins e permissões da plataforma.</p>
           </div>
           <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
@@ -140,7 +154,7 @@ const AdminUsersPage = () => {
           </Button>
         </motion.div>
 
-        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+        <div className="flex flex-wrap gap-4 text-body text-muted-foreground">
           <div><span className="font-semibold text-foreground">{total}</span> usuários</div>
           <div><span className="font-semibold text-foreground">{stats.adminCount}</span> admins na página</div>
           <div><span className="font-semibold text-foreground">{stats.activeCount}</span> ativos na página</div>
@@ -203,6 +217,15 @@ const AdminUsersPage = () => {
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="h-8 w-8"
+                          onClick={() => setResetUser(user)}
+                          aria-label="Redefinir senha"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           onClick={() => setDeleteUser(user)}
                           aria-label="Excluir usuário"
@@ -244,6 +267,12 @@ const AdminUsersPage = () => {
         submitting={updateMutation.isPending}
         onOpenChange={(open) => !open && setEditUser(null)}
         onSubmit={(id, payload) => updateMutation.mutate({ id, payload })}
+      />
+      <UserResetPasswordDialog
+        user={resetUser}
+        submitting={resetPasswordMutation.isPending}
+        onOpenChange={(open) => !open && setResetUser(null)}
+        onSubmit={(id, password) => resetPasswordMutation.mutate({ id, password })}
       />
       <ConfirmDialog
         open={!!deleteUser}
@@ -349,7 +378,7 @@ const UserDetailDialog = ({
         <DialogDescription>Informações do login selecionado.</DialogDescription>
       </DialogHeader>
       {user && (
-        <div className="space-y-2 text-sm">
+        <div className="space-y-2 text-body">
           <p><span className="font-semibold">Nome:</span> {user.full_name || "-"}</p>
           <p><span className="font-semibold">Email:</span> {user.email}</p>
           <p><span className="font-semibold">Papel:</span> {user.role}</p>
@@ -362,6 +391,60 @@ const UserDetailDialog = ({
     </DialogContent>
   </Dialog>
 );
+
+const UserResetPasswordDialog = ({
+  user,
+  submitting,
+  onOpenChange,
+  onSubmit,
+}: {
+  user: ApiAdminUser | null;
+  submitting: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (id: number, password: string) => void;
+}) => {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  useEffect(() => {
+    if (!user) {
+      setPassword("");
+      setConfirmPassword("");
+    }
+  }, [user]);
+
+  const valid = password.length >= 8 && password === confirmPassword;
+
+  return (
+    <Dialog open={!!user} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Redefinir senha</DialogTitle>
+          <DialogDescription>
+            Defina uma nova senha para {user?.full_name || user?.email}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <Label>Nova senha (mínimo 8 caracteres)</Label>
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Confirmar nova senha</Label>
+            <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+          </div>
+          <Button
+            className="w-full"
+            disabled={!user?.id || !valid || submitting}
+            onClick={() => user?.id && onSubmit(user.id, password)}
+          >
+            {submitting ? "Redefinindo..." : "Redefinir senha"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 const UserEditDialog = ({
   user,

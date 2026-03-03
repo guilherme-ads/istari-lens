@@ -93,11 +93,11 @@ const ApiConfigPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container space-y-6 py-6">
+      <main className="container space-y-8 py-6">
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-foreground"><KeyRound className="h-5 w-5 text-accent" />Configuração de APIs</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Configure e gerencie credenciais de providers LLM.</p>
+            <h1 className="flex items-center gap-2 text-display text-foreground"><KeyRound className="h-5 w-5 text-accent" />Configuração de APIs</h1>
+            <p className="mt-1.5 text-body text-muted-foreground">Configure e gerencie credenciais de providers LLM.</p>
           </div>
           {isAdmin && (
             <Sheet open={createApiSheetOpen} onOpenChange={setCreateApiSheetOpen}>
@@ -123,19 +123,19 @@ const ApiConfigPage = () => {
         </motion.div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">Provider</p><p className="text-lg font-bold tracking-tight text-foreground">{activeIntegration?.provider?.toUpperCase() || "OpenAI"}</p><p className="mt-0.5 text-xs text-muted-foreground">Provider atualmente ativo</p></div>
-          <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">Status</p><p className="text-lg font-bold tracking-tight text-foreground">{llmConfigured ? "Configurada" : "Não configurada"}</p><p className="mt-0.5 text-xs text-muted-foreground">{llmConfigured ? "Credenciais validadas" : "Necessita chave de API"}</p></div>
-          <div className="glass-card p-4"><p className="text-xs font-medium text-muted-foreground">APIs cadastradas</p><p className="text-lg font-bold tracking-tight text-foreground">{integrationsQuery.data?.items.length || 0}</p><p className="mt-0.5 text-xs text-muted-foreground">{inactiveIntegrations.length} desativada(s)</p></div>
+          <div className="glass-card p-4"><p className="text-caption font-medium">Provider</p><p className="text-title text-foreground">{activeIntegration?.provider?.toUpperCase() || "OpenAI"}</p><p className="mt-0.5 text-caption">Provider atualmente ativo</p></div>
+          <div className="glass-card p-4"><p className="text-caption font-medium">Status</p><p className="text-title text-foreground">{llmConfigured ? "Configurada" : "Não configurada"}</p><p className="mt-0.5 text-caption">{llmConfigured ? "Credenciais validadas" : "Necessita chave de API"}</p></div>
+          <div className="glass-card p-4"><p className="text-caption font-medium">APIs cadastradas</p><p className="text-title text-foreground">{integrationsQuery.data?.items.length || 0}</p><p className="mt-0.5 text-caption">{inactiveIntegrations.length} desativada(s)</p></div>
         </div>
 
         {!isAdmin ? (
-          <div className="glass-card max-w-xl p-6"><p className="text-sm font-semibold text-foreground">Acesso restrito</p><p className="mt-1 text-sm text-muted-foreground">Somente administradores podem alterar configurações de APIs.</p></div>
+          <div className="glass-card max-w-xl p-6"><p className="text-title text-foreground">Acesso restrito</p><p className="mt-1.5 text-body text-muted-foreground">Somente administradores podem alterar configurações de APIs.</p></div>
         ) : (
           <div className="glass-card space-y-6 p-6">
-            <div><h2 className="text-base font-semibold text-foreground">APIs configuradas</h2><p className="mt-1 text-sm text-muted-foreground">Apenas uma API pode ficar ativa por vez.</p></div>
+            <div><h2 className="text-title text-foreground">APIs configuradas</h2><p className="mt-1.5 text-body text-muted-foreground">Apenas uma API pode ficar ativa por vez.</p></div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">API ativa</h3>
+              <h3 className="text-heading text-foreground">API ativa</h3>
               <div className="overflow-hidden rounded-lg border border-border">
                 <Table>
                   <TableHeader><TableRow className="bg-muted/30 hover:bg-muted/30"><TableHead className="font-semibold">Provider</TableHead><TableHead className="font-semibold">Modelo</TableHead><TableHead className="font-semibold">Chave</TableHead><TableHead className="font-semibold">Saldo estimado</TableHead><TableHead className="font-semibold">Atualizada</TableHead><TableHead className="font-semibold">Status</TableHead><TableHead className="text-right font-semibold">Acoes</TableHead></TableRow></TableHeader>
@@ -164,7 +164,7 @@ const ApiConfigPage = () => {
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">APIs desativadas</h3>
+              <h3 className="text-heading text-foreground">APIs desativadas</h3>
               <div className="overflow-hidden rounded-lg border border-border">
                 <Table>
                   <TableHeader><TableRow className="bg-muted/30 hover:bg-muted/30"><TableHead className="font-semibold">Provider</TableHead><TableHead className="font-semibold">Modelo</TableHead><TableHead className="font-semibold">Chave</TableHead><TableHead className="font-semibold">Saldo estimado</TableHead><TableHead className="font-semibold">Atualizada</TableHead><TableHead className="font-semibold">Status</TableHead><TableHead className="text-right font-semibold">Acoes</TableHead></TableRow></TableHeader>

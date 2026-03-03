@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight, Search, LayoutGrid, List,
   Layers, BarChart3, FolderOpen, Plus, Trash2,
@@ -24,6 +24,8 @@ import { api, ApiError } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
 import type { Dataset, Datasource, View } from "@/types";
 import { useToast } from "@/hooks/use-toast";
+import { useSimulatedLoading } from "@/hooks/use-simulated-loading";
+import SkeletonCard from "@/components/shared/SkeletonCard";
 
 const DatasetsPage = () => {
   const navigate = useNavigate();
@@ -35,6 +37,8 @@ const DatasetsPage = () => {
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
   const isAdmin = !!getStoredUser()?.is_admin;
   const { datasets: allDatasets, views, datasources, isLoading, isError, errorMessage } = useCoreData();
+  const { isLoading: isSimulatedLoading } = useSimulatedLoading();
+  const showLoadingSkeleton = isLoading || isSimulatedLoading;
 
   const datasets = useMemo(() => {
     if (!search) return allDatasets;
@@ -92,15 +96,15 @@ const DatasetsPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
         >
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Datasets</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="text-display text-foreground">Datasets</h1>
+            <p className="mt-1.5 text-body text-muted-foreground">
               Explore os datasets disponíveis e crie dashboards.
             </p>
           </div>
@@ -121,12 +125,12 @@ const DatasetsPage = () => {
         >
           <div className="flex items-center gap-2 text-muted-foreground">
             <Layers className="h-4 w-4 text-accent" />
-            <span className="font-semibold text-foreground">{isLoading ? "..." : datasets.length}</span> datasets
+            <span className="font-semibold text-foreground">{showLoadingSkeleton ? "..." : datasets.length}</span> datasets
           </div>
           <div className="h-4 w-px bg-border hidden sm:block" />
           <div className="flex items-center gap-2 text-muted-foreground">
             <BarChart3 className="h-4 w-4 text-accent" />
-            <span className="font-semibold text-foreground">{isLoading ? "..." : totalDashboards}</span> dashboards
+            <span className="font-semibold text-foreground">{showLoadingSkeleton ? "..." : totalDashboards}</span> dashboards
           </div>
         </motion.div>
 
@@ -177,51 +181,75 @@ const DatasetsPage = () => {
             title="Erro ao carregar datasets"
             description={errorMessage}
           />
-        ) : isLoading ? (
-          <EmptyState
-            icon={<FolderOpen className="h-5 w-5" />}
-            title="Carregando datasets"
-            description="Aguarde enquanto buscamos os dados."
-          />
-        ) : datasets.length === 0 ? (
-          <EmptyState
-            icon={<FolderOpen className="h-5 w-5" />}
-            title={search ? "Nenhum resultado encontrado" : "Nenhum dataset disponível"}
-            description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dataset para começar."}
-            action={
-              !search ? (
-                <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
-                  <Plus className="h-3.5 w-3.5 mr-1.5" /> Criar dataset
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : viewMode === "grid" ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {datasets.map((dataset, i) => (
-              <DatasetGridCard
-                key={dataset.id}
-                dataset={dataset}
-                views={views}
-                delay={i * 0.04}
-                onClick={() => navigate(`/datasets/${dataset.id}`)}
-                onDelete={isAdmin ? () => setDeleteTarget(dataset) : undefined}
-              />
-            ))}
-          </div>
         ) : (
-          <div className="space-y-2">
-            {datasets.map((dataset, i) => (
-              <DatasetListItem
-                key={dataset.id}
-                dataset={dataset}
-                views={views}
-                delay={i * 0.03}
-                onClick={() => navigate(`/datasets/${dataset.id}`)}
-                onDelete={isAdmin ? () => setDeleteTarget(dataset) : undefined}
-              />
-            ))}
-          </div>
+          <AnimatePresence mode="wait">
+            {showLoadingSkeleton ? (
+              <motion.div
+                key="datasets-skeleton"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+              >
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <SkeletonCard key={`dataset-skeleton-${index}`} variant="dataset" />
+                ))}
+              </motion.div>
+            ) : datasets.length === 0 ? (
+              <motion.div key="datasets-empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <EmptyState
+                  icon={<FolderOpen className="h-5 w-5" />}
+                  title={search ? "Nenhum resultado encontrado" : "Nenhum dataset disponível"}
+                  description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dataset para começar."}
+                  action={
+                    !search ? (
+                      <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+                        <Plus className="h-3.5 w-3.5 mr-1.5" /> Criar dataset
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              </motion.div>
+            ) : viewMode === "grid" ? (
+              <motion.div
+                key="datasets-grid"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+              >
+                {datasets.map((dataset, i) => (
+                  <DatasetGridCard
+                    key={dataset.id}
+                    dataset={dataset}
+                    views={views}
+                    delay={i * 0.04}
+                    onClick={() => navigate(`/datasets/${dataset.id}`)}
+                    onDelete={isAdmin ? () => setDeleteTarget(dataset) : undefined}
+                  />
+                ))}
+              </motion.div>
+            ) : (
+              <motion.div
+                key="datasets-list"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-2"
+              >
+                {datasets.map((dataset, i) => (
+                  <DatasetListItem
+                    key={dataset.id}
+                    dataset={dataset}
+                    views={views}
+                    delay={i * 0.03}
+                    onClick={() => navigate(`/datasets/${dataset.id}`)}
+                    onDelete={isAdmin ? () => setDeleteTarget(dataset) : undefined}
+                  />
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
       </main>
 
@@ -287,15 +315,15 @@ const CreateDatasetDialog = ({
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Nome <span className="text-destructive">*</span></Label>
+            <Label className="text-caption font-medium">Nome <span className="text-destructive">*</span></Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Sales Pipeline" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Descrição</Label>
+            <Label className="text-caption font-medium">Descrição</Label>
             <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descreva o propósito deste dataset..." rows={2} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Fonte de dados <span className="text-destructive">*</span></Label>
+            <Label className="text-caption font-medium">Fonte de dados <span className="text-destructive">*</span></Label>
             <Select
               value={datasourceId}
               onValueChange={(value) => {
@@ -316,7 +344,7 @@ const CreateDatasetDialog = ({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-muted-foreground">Tabela <span className="text-destructive">*</span></Label>
+            <Label className="text-caption font-medium">Tabela <span className="text-destructive">*</span></Label>
             <Select value={viewId} onValueChange={setViewId} disabled={!datasourceId}>
               <SelectTrigger className="h-9 text-sm">
                 <SelectValue placeholder={datasourceId ? "Selecione uma tabela..." : "Selecione um datasource primeiro"} />
@@ -325,7 +353,7 @@ const CreateDatasetDialog = ({
                 {activeViews.map((v) => (
                   <SelectItem key={v.id} value={v.id}>
                     <span className="font-medium">{v.schema}.{v.name}</span>
-                    <span className="text-muted-foreground text-xs ml-2">({v.columns.length} cols)</span>
+                    <span className="text-caption ml-2">({v.columns.length} cols)</span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -374,7 +402,7 @@ const DatasetGridCard = ({
       }}
       role="button"
       tabIndex={0}
-      className="group glass-card p-5 text-left transition-all hover:shadow-card-hover flex flex-col gap-3 cursor-pointer"
+      className="group glass-card interactive-card p-5 text-left flex flex-col gap-3 cursor-pointer"
     >
       <div className="flex items-start justify-between">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
@@ -386,7 +414,7 @@ const DatasetGridCard = ({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-destructive hover:text-destructive"
+              className="h-7 w-7 destructive-icon-btn"
               onClick={(event) => {
                 event.stopPropagation();
                 onDelete();
@@ -399,9 +427,9 @@ const DatasetGridCard = ({
         </div>
       </div>
       <div className="space-y-1.5">
-        <h3 className="font-semibold text-foreground leading-tight">{dataset.name}</h3>
-        {view && <code className="text-xs font-mono text-muted-foreground">{view.schema}.{view.name}</code>}
-        <p className="text-sm text-muted-foreground line-clamp-2">{dataset.description}</p>
+        <h3 className="font-bold text-foreground leading-tight">{dataset.name}</h3>
+        {view && <code className="text-caption font-mono">{view.schema}.{view.name}</code>}
+        <p className="text-body text-muted-foreground line-clamp-2">{dataset.description}</p>
       </div>
       {view && (
         <div className="flex flex-wrap gap-1 mt-auto">
@@ -417,7 +445,7 @@ const DatasetGridCard = ({
           )}
         </div>
       )}
-      <div className="flex items-center justify-between text-xs text-muted-foreground pt-2.5 border-t border-border">
+      <div className="flex items-center justify-between text-caption pt-2.5 border-t border-border">
         <span className="flex items-center gap-2">
           {view && <span>{view.rowCount.toLocaleString()} linhas</span>}
           <span>. {dashboardCount} {dashboardCount === 1 ? "dashboard" : "dashboards"}</span>
@@ -460,20 +488,20 @@ const DatasetListItem = ({
       }}
       role="button"
       tabIndex={0}
-      className="group glass-card w-full p-4 text-left flex items-center gap-4 transition-all hover:shadow-card-hover cursor-pointer"
+      className="group glass-card interactive-card w-full p-4 text-left flex items-center gap-4 cursor-pointer"
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
         <FolderOpen className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-foreground truncate">{dataset.name}</h3>
-          {view && <code className="text-xs font-mono text-muted-foreground hidden sm:inline">{view.schema}.{view.name}</code>}
+          <h3 className="font-bold text-foreground truncate">{dataset.name}</h3>
+          {view && <code className="text-caption font-mono hidden sm:inline">{view.schema}.{view.name}</code>}
           {view && <StatusBadge status={view.status} className="hidden sm:inline-flex" />}
         </div>
-        <p className="text-sm text-muted-foreground truncate mt-0.5">{dataset.description}</p>
+        <p className="text-body text-muted-foreground truncate mt-0.5">{dataset.description}</p>
       </div>
-      <div className="hidden md:flex items-center gap-4 shrink-0 text-xs text-muted-foreground">
+      <div className="hidden md:flex items-center gap-4 shrink-0 text-caption">
         {view && <span>{view.columns.length} colunas</span>}
         <span>{dashboardCount} dashboards</span>
       </div>
@@ -481,7 +509,7 @@ const DatasetListItem = ({
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 text-destructive hover:text-destructive"
+          className="h-8 w-8 destructive-icon-btn"
           onClick={(event) => {
             event.stopPropagation();
             onDelete();
@@ -497,3 +525,5 @@ const DatasetListItem = ({
 };
 
 export default DatasetsPage;
+
+
