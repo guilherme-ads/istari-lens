@@ -145,6 +145,9 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
             row_type: (["result", "deduction", "detail"].includes(asString(item.row_type, "result"))
               ? asString(item.row_type, "result")
               : "result") as "result" | "deduction" | "detail",
+            impact: (["add", "subtract"].includes(asString(item.impact, ""))
+              ? asString(item.impact, "")
+              : (asString(item.row_type, "result") === "deduction" ? "subtract" : "add")) as "add" | "subtract",
             metrics: Array.isArray(item.metrics)
               ? item.metrics
                   .filter(isObject)

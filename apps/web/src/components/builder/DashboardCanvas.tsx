@@ -232,7 +232,12 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
       </div>
     )}
     <div className={`p-3 flex items-center justify-center ${widget.config.size?.height === 0.5 ? "min-h-[100px]" : "min-h-[180px]"}`}>
-      <WidgetRenderer widget={widget} dashboardId={dashboardId} heightMultiplier={widget.config.size?.height || 1} />
+      <WidgetRenderer
+        widget={widget}
+        dashboardId={dashboardId}
+        heightMultiplier={widget.config.size?.height || 1}
+        hideTableExport={!readOnly}
+      />
     </div>
   </motion.div>
 ));

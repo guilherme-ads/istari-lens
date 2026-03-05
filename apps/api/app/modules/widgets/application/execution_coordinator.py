@@ -541,6 +541,7 @@ def _to_engine_query_spec(config: WidgetConfig) -> dict[str, Any]:
             {
                 "title": row.title,
                 "row_type": row.row_type,
+                "impact": getattr(row, "impact", "add"),
                 "metrics": [{"field": metric.column, "agg": metric.op} for metric in row.metrics],
             }
             for row in config.dre_rows

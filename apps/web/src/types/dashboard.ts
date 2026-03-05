@@ -90,6 +90,7 @@ export interface WidgetConfig {
   dre_rows?: Array<{
     title: string;
     row_type: "result" | "deduction" | "detail";
+    impact?: "add" | "subtract";
     metrics: WidgetMetric[];
   }>;
   dre_percent_base_row_index?: number;
@@ -241,6 +242,7 @@ export const createDefaultWidgetConfig = (params: {
         {
           title: "Faturamento",
           row_type: "result",
+          impact: "add",
           metrics: [{ op: "sum", column: numeric?.name || fallback?.name }],
         },
       ],
