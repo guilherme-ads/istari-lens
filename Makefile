@@ -1,4 +1,4 @@
-.PHONY: help install dev dev-up dev-down lint test clean
+.PHONY: help install dev dev-up dev-down lint test clean migrate migrate-status release-check
 
 help:
 	@echo "Istari Lens - Development Commands"
@@ -9,6 +9,9 @@ help:
 	@echo "make lint        - Run linters (ESLint, Ruff)"
 	@echo "make format      - Format code (Prettier, Black)"
 	@echo "make test        - Run tests"
+	@echo "make migrate     - Run Alembic migrations in Docker (api container)"
+	@echo "make migrate-status - Show current Alembic revision in Docker"
+	@echo "make release-check - Build web + run API migrations in Docker"
 	@echo "make clean       - Clean up caches and build files"
 	@echo "make logs        - View docker-compose logs"
 
@@ -34,6 +37,18 @@ format:
 
 test:
 	pnpm test
+
+migrate:
+	docker compose up -d app_db
+	docker compose run --rm api alembic upgrade head
+
+migrate-status:
+	docker compose up -d app_db
+	docker compose run --rm api alembic current
+
+release-check:
+	pnpm --filter web build
+	$(MAKE) migrate
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

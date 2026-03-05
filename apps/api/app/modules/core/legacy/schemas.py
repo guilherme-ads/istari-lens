@@ -79,11 +79,13 @@ class ViewUpdateRequest(BaseModel):
 class DatasetResponse(BaseModel):
     id: int
     datasource_id: int
-    view_id: int
+    view_id: Optional[int] = None
     name: str
     description: Optional[str]
+    base_query_spec: Optional[dict[str, Any]] = None
+    semantic_columns: List[dict[str, Any]] = Field(default_factory=list)
     is_active: bool
-    view: ViewResponse
+    view: Optional[ViewResponse] = None
     created_at: datetime
     updated_at: datetime
 
@@ -135,15 +137,26 @@ class AdminUserResetPasswordRequest(BaseModel):
 
 class DatasetCreateRequest(BaseModel):
     datasource_id: int
-    view_id: int
+    view_id: Optional[int] = None
     name: str
     description: Optional[str] = None
+    base_query_spec: Optional[dict[str, Any]] = None
+    semantic_columns: List[dict[str, Any]] = Field(default_factory=list)
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_source_config(self) -> "DatasetCreateRequest":
+        if self.view_id is None and self.base_query_spec is None:
+            raise ValueError("Either view_id or base_query_spec is required")
+        return self
 
 
 class DatasetUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    view_id: Optional[int] = None
+    base_query_spec: Optional[dict[str, Any]] = None
+    semantic_columns: Optional[List[dict[str, Any]]] = None
     is_active: Optional[bool] = None
 
 

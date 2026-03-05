@@ -41,6 +41,7 @@ from app.modules.widgets.domain.config import (
 router = APIRouter(prefix="/dashboards", tags=["dashboards"])
 
 ACCESS_RANK = {"view": 1, "edit": 2, "owner": 3}
+DATASET_WIDGET_VIEW_NAME = "__dataset_base"
 
 
 def _normalize_email(value: str) -> str:
@@ -250,15 +251,47 @@ def _ensure_dashboard_dataset_is_refreshable(dashboard: Dashboard) -> None:
         raise HTTPException(status_code=409, detail="Dashboard dataset is inactive; data refresh is disabled")
     if not dataset.datasource or not dataset.datasource.is_active:
         raise HTTPException(status_code=409, detail="Dashboard datasource is inactive; data refresh is disabled")
-    if not dataset.view or not dataset.view.is_active:
-        raise HTTPException(status_code=409, detail="Dashboard table is inactive; data refresh is disabled")
+    if dataset.base_query_spec is None and (not dataset.view or not dataset.view.is_active):
+        raise HTTPException(status_code=409, detail="Dashboard dataset has no active base query or legacy view")
+
+
+def _semantic_raw_type(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized == "temporal":
+        return "timestamp"
+    if normalized in {"numeric", "boolean", "text"}:
+        return normalized
+    return value or "text"
+
+
+def _dataset_column_types(dataset: Dataset) -> dict[str, str]:
+    semantic = dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else []
+    columns: dict[str, str] = {}
+    for item in semantic:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        data_type = item.get("type")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        item_raw_type = item.get("raw_type")
+        if isinstance(item_raw_type, str) and item_raw_type.strip():
+            raw_type = item_raw_type.strip()
+        else:
+            raw_type = _semantic_raw_type(str(data_type) if isinstance(data_type, str) else "text")
+        columns[name] = raw_type
+    if columns:
+        return columns
+    if dataset.view:
+        return {column.column_name: column.column_type for column in dataset.view.columns}
+    raise HTTPException(status_code=400, detail="Dataset has no semantic columns and no legacy view columns")
 
 
 def _view_column_types(dashboard: Dashboard) -> dict[str, str]:
     dataset = dashboard.dataset
-    if not dataset or not dataset.view:
-        raise HTTPException(status_code=400, detail="Dashboard dataset/view is unavailable")
-    return {column.column_name: column.column_type for column in dataset.view.columns}
+    if not dataset:
+        raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
+    return _dataset_column_types(dataset)
 
 
 def _validate_dashboard_native_filters(filters: list[FilterConfig], dashboard: Dashboard) -> None:
@@ -277,16 +310,14 @@ def _validate_native_filters_against_column_types(filters: list[FilterConfig], c
             status_code=400,
             detail={
                 "message": "Dashboard native filters validation failed",
-                "field_errors": {field: ["Column does not exist in dataset view"] for field in invalid},
+                "field_errors": {field: ["Column does not exist in dataset semantic model"] for field in invalid},
             },
         )
 
 
-def _view_full_name(dashboard: Dashboard) -> str:
-    dataset = dashboard.dataset
-    if not dataset or not dataset.view:
-        raise HTTPException(status_code=400, detail="Dashboard dataset/view is unavailable")
-    return f"{dataset.view.schema_name}.{dataset.view.view_name}"
+def _dataset_widget_view_name(dashboard: Dashboard) -> str:
+    _ = dashboard
+    return DATASET_WIDGET_VIEW_NAME
 
 
 def _parse_widget_config(payload: DashboardWidgetCreateRequest | DashboardWidgetUpdateRequest) -> WidgetConfig:
@@ -317,8 +348,8 @@ def _resolve_widget_config(
     if isinstance(payload, dict) and "widget_type" not in payload and "type" in payload:
         payload = _adapt_legacy_query_config(payload)
         dashboard = widget.dashboard
-        if dashboard and dashboard.dataset and dashboard.dataset.view:
-            payload["view_name"] = f"{dashboard.dataset.view.schema_name}.{dashboard.dataset.view.view_name}"
+        if dashboard:
+            payload["view_name"] = _dataset_widget_view_name(dashboard)
 
     config = WidgetConfig.model_validate(payload)
     dashboard_native_filters: list[FilterConfig] = native_filters_override or []
@@ -327,7 +358,12 @@ def _resolve_widget_config(
 
     if config.widget_type != "text":
         merged_filters = [*dashboard_native_filters, *config.filters, *(global_filters or [])]
-        config = config.model_copy(update={"filters": merged_filters})
+        config = config.model_copy(
+            update={
+                "filters": merged_filters,
+                "view_name": _dataset_widget_view_name(widget.dashboard),
+            }
+        )
         try:
             validate_widget_config_against_columns(config, _view_column_types(widget.dashboard))
         except WidgetConfigValidationError as exc:
@@ -373,7 +409,7 @@ def _adapt_legacy_query_config(raw: dict) -> dict:
 
     return {
         "widget_type": widget_type,
-        "view_name": raw.get("view_name", ""),
+        "view_name": raw.get("view_name", DATASET_WIDGET_VIEW_NAME),
         "metrics": metrics,
         "dimensions": raw.get("dimensions", []),
         "filters": filters,
@@ -386,17 +422,7 @@ def _adapt_legacy_query_config(raw: dict) -> dict:
 
 
 def _validate_and_normalize_config(config: WidgetConfig, dashboard: Dashboard) -> WidgetConfig:
-    expected_view = _view_full_name(dashboard)
-    if config.view_name != expected_view:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Widget config validation failed",
-                "field_errors": {
-                    "view_name": [f"Expected '{expected_view}' for this dashboard dataset view"],
-                },
-            },
-        )
+    config = config.model_copy(update={"view_name": _dataset_widget_view_name(dashboard)})
     try:
         validate_widget_config_against_columns(config, _view_column_types(dashboard))
         _validate_kpi_dependency_refs(config, dashboard)
@@ -413,7 +439,7 @@ def _validate_kpi_dependency_refs(config: WidgetConfig, dashboard: Dashboard) ->
     for index, dep in enumerate(config.kpi_dependencies):
         if dep.source_type == "column":
             if dep.column not in _view_column_types(dashboard):
-                field_errors.setdefault(f"kpi_dependencies[{index}].column", []).append("Column dependency not found in dataset view")
+                field_errors.setdefault(f"kpi_dependencies[{index}].column", []).append("Column dependency not found in dataset semantic model")
             continue
         if dep.widget_id not in widget_by_id:
             field_errors.setdefault(f"kpi_dependencies[{index}].widget_id", []).append("Widget dependency not found in dashboard")
@@ -512,6 +538,7 @@ async def debug_dashboard_queries(
     if dashboard.dataset:
         executor = get_dashboard_widget_executor()
         units = executor.preview_final_execution_units(
+            dataset=dashboard.dataset,
             datasource=dashboard.dataset.datasource,
             dataset_id=dashboard.dataset_id,
             widgets=resolved_widgets,
@@ -698,14 +725,12 @@ async def create_dashboard(
         raise HTTPException(status_code=400, detail="Dataset is inactive")
     if not dataset.datasource or not dataset.datasource.is_active:
         raise HTTPException(status_code=400, detail="Dataset datasource is inactive")
-    if not dataset.view:
-        raise HTTPException(status_code=400, detail="Dataset view is unavailable")
-    if not dataset.view.is_active:
-        raise HTTPException(status_code=400, detail="Dataset view is inactive")
+    if dataset.base_query_spec is None and (not dataset.view or not dataset.view.is_active):
+        raise HTTPException(status_code=400, detail="Dataset has no active base query or legacy view")
 
     _validate_native_filters_against_column_types(
         request.native_filters,
-        {column.column_name: column.column_type for column in dataset.view.columns},
+        _dataset_column_types(dataset),
     )
 
     dashboard = Dashboard(
@@ -1099,6 +1124,7 @@ async def get_widget_data(
     result_by_widget = await executor.execute_widgets(
         dashboard_id=dashboard_id,
         dataset_id=dashboard.dataset_id,
+        dataset=dashboard.dataset,
         datasource=dashboard.dataset.datasource,
         widgets=widgets_for_execution,
         configs_by_widget_id=configs_by_widget_id,
@@ -1188,6 +1214,7 @@ async def get_widget_data_batch(
     result_by_widget = await executor.execute_widgets(
         dashboard_id=dashboard_id,
         dataset_id=dashboard.dataset_id,
+        dataset=dashboard.dataset,
         datasource=dashboard.dataset.datasource,
         widgets=requested_widgets,
         configs_by_widget_id=configs_by_widget_id,

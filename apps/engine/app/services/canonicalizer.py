@@ -193,6 +193,7 @@ def canonicalize_query_spec(spec: QuerySpec) -> dict[str, Any]:
     time_range_payload = _normalize_value(payload.get("time_range")) if payload.get("time_range") else None
     composite_payload = _normalize_value(payload.get("composite_metric")) if payload.get("composite_metric") else None
     dre_rows_payload = [_normalize_value(item) for item in payload.get("dre_rows", [])]
+    base_query_payload = _normalize_value(payload.get("base_query")) if payload.get("base_query") else None
 
     group_by: list[str] = []
     if isinstance(time_payload, dict) and time_payload.get("signature"):
@@ -218,6 +219,7 @@ def canonicalize_query_spec(spec: QuerySpec) -> dict[str, Any]:
         "bucket": (time_payload or {}).get("granularity") if isinstance(time_payload, dict) else "day",
         "composite_metric": composite_payload,
         "dre_rows": dre_rows_payload,
+        "base_query": base_query_payload,
     }
 
 

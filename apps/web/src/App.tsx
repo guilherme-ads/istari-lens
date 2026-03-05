@@ -10,6 +10,7 @@ import AppLayout from "./components/shared/AppLayout";
 import OverviewPage from "./pages/OverviewPage";
 import AdminPage from "./pages/AdminPage";
 import DatasetsPage from "./pages/DatasetsPage";
+import NewDatasetPage from "./pages/NewDatasetPage";
 import DashboardsPage from "./pages/DashboardsPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DashboardViewPage from "./pages/DashboardViewPage";
@@ -60,6 +61,8 @@ const App = () => (
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route path="/home" element={<OverviewPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
+            <Route path="/datasets/new" element={<NewDatasetPage />} />
+            <Route path="/datasets/:datasetId/edit" element={<NewDatasetPage />} />
             <Route path="/dashboards" element={<DashboardsPage />} />
             <Route path="/account" element={<AccountPage />} />
             <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />

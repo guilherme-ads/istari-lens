@@ -122,9 +122,11 @@ class Dataset(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     datasource_id = Column(Integer, ForeignKey("datasources.id"), nullable=False)
-    view_id = Column(Integer, ForeignKey("views.id"), nullable=False)
+    view_id = Column(Integer, ForeignKey("views.id"), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
+    base_query_spec = Column(JSON, nullable=True)
+    semantic_columns = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

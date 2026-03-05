@@ -15,6 +15,9 @@ const asNumber = (value: unknown, fallback = 0): number =>
 
 const normalizeColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
   const value = (rawType || "").toLowerCase();
+  if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
+    return value;
+  }
   if (["int", "numeric", "decimal", "real", "double", "float", "money"].some((token) => value.includes(token))) {
     return "numeric";
   }
@@ -262,9 +265,18 @@ export const mapView = (item: ApiView): View => ({
 
 export const mapDataset = (item: ApiDataset, dashboardIds: string[] = []): Dataset => ({
   id: String(item.id),
+  datasourceId: String(item.datasource_id),
   name: item.name,
   description: item.description || "",
-  viewId: String(item.view_id),
+  viewId: item.view_id != null ? String(item.view_id) : undefined,
+  baseQuerySpec: item.base_query_spec || null,
+  semanticColumns: (item.semantic_columns || [])
+    .filter((col) => typeof col?.name === "string" && typeof col?.type === "string")
+    .map((col) => ({
+      name: String(col.name),
+      type: normalizeColumnType(String(col.type)),
+      source: typeof col.source === "string" ? col.source : undefined,
+    })),
   dashboardIds,
   createdAt: normalizeApiDateTime(item.created_at),
 });

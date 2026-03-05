@@ -34,6 +34,22 @@ const relativeDateOptions = [
   { value: "this_month", label: "Este mes" },
   { value: "last_month", label: "Mes passado" },
 ] as const;
+const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
+  const value = (rawType || "").toLowerCase();
+  if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
+    return value;
+  }
+  if (["int", "numeric", "decimal", "real", "double", "float", "money"].some((token) => value.includes(token))) {
+    return "numeric";
+  }
+  if (["date", "time", "timestamp"].some((token) => value.includes(token))) {
+    return "temporal";
+  }
+  if (value.includes("bool")) {
+    return "boolean";
+  }
+  return "text";
+};
 const aggLabelMap = {
   count: "CONTAGEM",
   distinct_count: "CONTAGEM ÚNICA",
@@ -184,11 +200,23 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
   }, [widget]);
 
   const columns = view?.columns || [];
-  const numericColumns = useMemo(() => columns.filter((column) => column.type === "numeric"), [columns]);
-  const temporalColumns = useMemo(() => columns.filter((column) => column.type === "temporal"), [columns]);
-  const categoricalColumns = useMemo(() => columns.filter((column) => column.type === "text" || column.type === "boolean"), [columns]);
+  const numericColumns = useMemo(
+    () => columns.filter((column) => normalizeSemanticColumnType(column.type) === "numeric"),
+    [columns],
+  );
+  const temporalColumns = useMemo(
+    () => columns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal"),
+    [columns],
+  );
+  const categoricalColumns = useMemo(
+    () => columns.filter((column) => {
+      const normalized = normalizeSemanticColumnType(column.type);
+      return normalized === "text" || normalized === "boolean";
+    }),
+    [columns],
+  );
   const columnTypeByName = useMemo(
-    () => Object.fromEntries(columns.map((column) => [column.name, column.type])),
+    () => Object.fromEntries(columns.map((column) => [column.name, normalizeSemanticColumnType(column.type)])),
     [columns],
   );
   const categoricalDimensionOptions = useMemo(

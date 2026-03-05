@@ -155,7 +155,7 @@ def client() -> Generator[TestClient, None, None]:
     dataset = Dataset(datasource_id=datasource.id, view_id=view.id, name="vw_recargas", is_active=True)
     session.add(dataset)
     session.flush()
-    dashboard = Dashboard(dataset_id=dataset.id, name="Main", layout_config=[])
+    dashboard = Dashboard(dataset_id=dataset.id, name="Main", layout_config=[], created_by_id=user.id)
     session.add(dashboard)
     session.commit()
 

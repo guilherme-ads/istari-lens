@@ -67,6 +67,7 @@ class DreRowSpec(BaseModel):
 
 class QuerySpec(BaseModel):
     resource_id: str
+    base_query: dict[str, Any] | None = None
     widget_type: WidgetType = "table"
     metrics: list[MetricSpec] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
