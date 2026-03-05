@@ -34,7 +34,8 @@ import { useToast } from "@/hooks/use-toast";
 import { getStoredUser } from "@/lib/auth";
 import { useSimulatedLoading } from "@/hooks/use-simulated-loading";
 
-type FilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between";
+type FilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative";
+type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_year" | "this_month" | "last_month";
 type DraftGlobalFilter = {
   id: string;
   column: string;
@@ -42,11 +43,12 @@ type DraftGlobalFilter = {
   value: string;
   dateValue?: Date;
   dateRange?: DateRange;
+  relativePreset?: RelativeDatePreset;
 };
 type AppliedGlobalFilter = {
   column: string;
   op: FilterOp;
-  value: string | string[];
+  value: string | string[] | { relative: RelativeDatePreset };
 };
 
 const commonOps: Array<{ value: FilterOp; label: string }> = [
@@ -67,12 +69,48 @@ const temporalOps: Array<{ value: FilterOp; label: string }> = [
   { value: "gte", label: ">=" },
   { value: "lte", label: "<=" },
   { value: "between", label: "entre datas" },
+  { value: "relative", label: "data relativa" },
+];
+
+const relativeDateOptions: Array<{ value: RelativeDatePreset; label: string }> = [
+  { value: "today", label: "Hoje" },
+  { value: "yesterday", label: "Ontem" },
+  { value: "last_7_days", label: "Ultimos 7 dias" },
+  { value: "last_30_days", label: "Ultimos 30 dias" },
+  { value: "this_year", label: "Este ano" },
+  { value: "this_month", label: "Este mes" },
+  { value: "last_month", label: "Mes passado" },
 ];
 
 const formatDateBR = (date: Date) =>
   new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 
 const dateToApi = (date: Date) => date.toISOString().slice(0, 10);
+
+const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
+  const value = (rawType || "").toLowerCase();
+  if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
+    return value;
+  }
+  if (["int", "numeric", "decimal", "real", "double", "float", "money"].some((token) => value.includes(token))) {
+    return "numeric";
+  }
+  if (["date", "time", "timestamp"].some((token) => value.includes(token))) {
+    return "temporal";
+  }
+  if (value.includes("bool")) {
+    return "boolean";
+  }
+  return "text";
+};
+
+const mergeColumnType = (currentType: string, nextType: string): "numeric" | "temporal" | "text" | "boolean" => {
+  const current = normalizeSemanticColumnType(currentType);
+  const next = normalizeSemanticColumnType(nextType);
+  if (current !== "text" && next === "text") return current;
+  if (current === "text" && next !== "text") return next;
+  return next;
+};
 
 const operatorLabel: Record<FilterOp, string> = {
   eq: "=",
@@ -83,13 +121,18 @@ const operatorLabel: Record<FilterOp, string> = {
   lte: "<=",
   contains: "contém",
   between: "entre",
+  relative: "relativa",
 };
 
 const appliedFilterSignature = (filter: AppliedGlobalFilter) =>
   `${filter.column}|${filter.op}|${JSON.stringify(filter.value)}`;
 
 const appliedFilterLabel = (filter: AppliedGlobalFilter) => {
-  const valueLabel = Array.isArray(filter.value) ? filter.value.join(" .. ") : String(filter.value);
+  const valueLabel = typeof filter.value === "object" && filter.value !== null && !Array.isArray(filter.value)
+    ? String((filter.value as { relative?: string }).relative || "")
+    : Array.isArray(filter.value)
+      ? filter.value.join(" .. ")
+      : String(filter.value);
   return `${filter.column} ${operatorLabel[filter.op]} ${valueLabel}`;
 };
 
@@ -123,6 +166,28 @@ const DashboardViewPage = () => {
   const dashboard = useMemo(() => dashboards.find((item) => item.id === dashboardId), [dashboards, dashboardId]);
   const canEditDashboard = (dashboard?.accessLevel || "view") !== "view";
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
+  const datasetSourceLabel = useMemo(() => {
+    if (view) return `${view.schema}.${view.name}`;
+    const primaryResource = (dataset?.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource;
+    return String(primaryResource || "__dataset_base");
+  }, [dataset, view]);
+  const effectiveColumns = useMemo(
+    () => {
+      const merged = new Map<string, { name: string; type: string }>();
+      const upsert = (columnName: string, columnType: string) => {
+        const current = merged.get(columnName);
+        if (!current) {
+          merged.set(columnName, { name: columnName, type: normalizeSemanticColumnType(columnType) });
+          return;
+        }
+        merged.set(columnName, { name: columnName, type: mergeColumnType(current.type, columnType) });
+      };
+      (view?.columns || []).forEach((column) => upsert(column.name, column.type));
+      (dataset?.semanticColumns || []).forEach((column) => upsert(column.name, column.type));
+      return Array.from(merged.values());
+    },
+    [view?.columns, dataset?.semanticColumns],
+  );
   const [draftFilters, setDraftFilters] = useState<DraftGlobalFilter[]>([
     { id: `gf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
@@ -133,11 +198,21 @@ const DashboardViewPage = () => {
   const widgets = useMemo(() => sections.flatMap((section) => section.widgets), [sections]);
 
   const preparedGlobalFilters = useMemo<AppliedGlobalFilter[]>(() => {
-    const temporalColumnNames = new Set((view?.columns || []).filter((column) => column.type === "temporal").map((column) => column.name));
+    const temporalColumnNames = new Set(
+      effectiveColumns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal").map((column) => column.name),
+    );
     const parsedFilters: AppliedGlobalFilter[] = [];
     for (const filter of draftFilters) {
       if (!filter.column) continue;
       const isTemporal = temporalColumnNames.has(filter.column);
+      if (isTemporal && filter.op === "relative") {
+        parsedFilters.push({
+          column: filter.column,
+          op: "between",
+          value: { relative: (filter.relativePreset || "last_7_days") as RelativeDatePreset },
+        });
+        continue;
+      }
       if (isTemporal && filter.op === "between") {
         if (!filter.dateRange?.from || !filter.dateRange?.to) continue;
         parsedFilters.push({
@@ -164,7 +239,7 @@ const DashboardViewPage = () => {
       });
     }
     return parsedFilters;
-  }, [draftFilters, view?.columns]);
+  }, [draftFilters, effectiveColumns]);
 
   const widgetsDataQuery = useQuery({
     queryKey: [
@@ -262,10 +337,16 @@ const DashboardViewPage = () => {
       let removed = false;
       return prev.filter((item) => {
         if (removed || !item.column) return true;
-        const selectedColumn = (view?.columns || []).find((column) => column.name === item.column);
-        const isTemporal = selectedColumn?.type === "temporal";
+        const selectedColumn = (effectiveColumns || []).find((column) => column.name === item.column);
+        const isTemporal = !!selectedColumn && normalizeSemanticColumnType(selectedColumn.type) === "temporal";
         let normalized: AppliedGlobalFilter | null = null;
-        if (isTemporal && item.op === "between" && item.dateRange?.from && item.dateRange?.to) {
+        if (isTemporal && item.op === "relative") {
+          normalized = {
+            column: item.column,
+            op: "between",
+            value: { relative: (item.relativePreset || "last_7_days") as RelativeDatePreset },
+          };
+        } else if (isTemporal && item.op === "between" && item.dateRange?.from && item.dateRange?.to) {
           normalized = { column: item.column, op: "between", value: [dateToApi(item.dateRange.from), dateToApi(item.dateRange.to)] };
         } else if (isTemporal && item.dateValue) {
           normalized = { column: item.column, op: item.op, value: dateToApi(item.dateValue) };
@@ -367,12 +448,10 @@ const DashboardViewPage = () => {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {view && (
-              <span className="text-xs text-muted-foreground hidden sm:inline">
-                <Database className="h-3 w-3 inline mr-1" />
-                {view.schema}.{view.name}
-              </span>
-            )}
+            <span className="text-xs text-muted-foreground hidden sm:inline">
+              <Database className="h-3 w-3 inline mr-1" />
+              {datasetSourceLabel}
+            </span>
             <div className="h-4 w-px bg-border hidden sm:block" />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -475,8 +554,8 @@ const DashboardViewPage = () => {
                   <div className="space-y-3">
                     <Label className="text-xs font-semibold text-muted-foreground">Filtros globais</Label>
                     {draftFilters.map((filter) => {
-                      const selectedColumn = (view?.columns || []).find((column) => column.name === filter.column);
-                      const isTemporal = selectedColumn?.type === "temporal";
+                      const selectedColumn = (effectiveColumns || []).find((column) => column.name === filter.column);
+                      const isTemporal = !!selectedColumn && normalizeSemanticColumnType(selectedColumn.type) === "temporal";
                       const operatorOptions = isTemporal ? temporalOps : commonOps;
                       return (
                         <div key={filter.id} className="grid grid-cols-1 md:grid-cols-[1fr_150px_1fr_auto] gap-2 items-center">
@@ -484,13 +563,21 @@ const DashboardViewPage = () => {
                             value={filter.column || "__none__"}
                             onValueChange={(value) =>
                               setDraftFilters((prev) => prev.map((item) => item.id === filter.id
-                                ? { ...item, column: value === "__none__" ? "" : value, op: "eq", value: "", dateValue: undefined, dateRange: undefined }
+                                ? {
+                                    ...item,
+                                    column: value === "__none__" ? "" : value,
+                                    op: "eq",
+                                    value: "",
+                                    dateValue: undefined,
+                                    dateRange: undefined,
+                                    relativePreset: "last_7_days",
+                                  }
                                 : item))}
                           >
                             <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="__none__">Sem coluna</SelectItem>
-                              {(view?.columns || []).map((column) => (
+                              {(effectiveColumns || []).map((column) => (
                                 <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
                               ))}
                             </SelectContent>
@@ -499,7 +586,14 @@ const DashboardViewPage = () => {
                             value={filter.op}
                             onValueChange={(value) =>
                               setDraftFilters((prev) => prev.map((item) => item.id === filter.id
-                                ? { ...item, op: value as FilterOp, value: "", dateValue: undefined, dateRange: undefined }
+                                ? {
+                                    ...item,
+                                    op: value as FilterOp,
+                                    value: "",
+                                    dateValue: undefined,
+                                    dateRange: undefined,
+                                    relativePreset: "last_7_days",
+                                  }
                                 : item))}
                             disabled={!filter.column}
                           >
@@ -522,7 +616,27 @@ const DashboardViewPage = () => {
                             />
                           )}
 
-                          {isTemporal && filter.op !== "between" && (
+                          {isTemporal && filter.op === "relative" && (
+                            <Select
+                              value={filter.relativePreset || "last_7_days"}
+                              onValueChange={(value) =>
+                                setDraftFilters((prev) => prev.map((item) => item.id === filter.id
+                                  ? { ...item, relativePreset: value as RelativeDatePreset }
+                                  : item))}
+                              disabled={!filter.column}
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {relativeDateOptions.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+
+                          {isTemporal && filter.op !== "between" && filter.op !== "relative" && (
                             <Popover>
                               <PopoverTrigger asChild>
                                 <Button

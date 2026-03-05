@@ -9,8 +9,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.modules.core.legacy.models import DashboardWidget, DataSource, User
+from app.modules.core.legacy.models import DashboardWidget, DataSource, Dataset, User
 from app.modules.core.legacy.schemas import DashboardWidgetDataResponse
+from app.modules.datasets import compose_engine_query_spec_with_dataset
 from app.modules.engine import get_engine_client, resolve_datasource_access
 from app.modules.widgets.domain.config import FilterConfig, MetricConfig, WidgetConfig
 
@@ -56,6 +57,7 @@ class DashboardWidgetExecutionCoordinator:
         *,
         dashboard_id: int,
         dataset_id: int,
+        dataset: Dataset | None,
         datasource: DataSource | None,
         widgets: list[DashboardWidget],
         configs_by_widget_id: dict[int, WidgetConfig],
@@ -68,7 +70,7 @@ class DashboardWidgetExecutionCoordinator:
 
         access = resolve_datasource_access(
             datasource=datasource,
-            dataset=None,
+            dataset=dataset,
             current_user=user,
         )
         available_widget_ids = set(configs_by_widget_id.keys())
@@ -85,6 +87,7 @@ class DashboardWidgetExecutionCoordinator:
             batched_results = await self._execute_engine_batch(
                 dashboard_id=dashboard_id,
                 dataset_id=dataset_id,
+                dataset=dataset,
                 access=access,
                 widget_ids=requested_non_derived_ids,
                 configs_by_widget_id=configs_by_widget_id,
@@ -102,6 +105,7 @@ class DashboardWidgetExecutionCoordinator:
                 widget_id=widget.id,
                 dashboard_id=dashboard_id,
                 dataset_id=dataset_id,
+                dataset=dataset,
                 access=access,
                 available_widget_ids=available_widget_ids,
                 configs_by_widget_id=configs_by_widget_id,
@@ -117,6 +121,7 @@ class DashboardWidgetExecutionCoordinator:
     def preview_final_execution_units(
         self,
         *,
+        dataset: Dataset | None,
         datasource: DataSource | None,
         dataset_id: int,
         widgets: list[DashboardWidget],
@@ -141,7 +146,10 @@ class DashboardWidgetExecutionCoordinator:
                     "kpi_dependencies": [item.model_dump(mode="json") for item in config.kpi_dependencies],
                 }
             else:
-                query_spec = _to_engine_query_spec(config)
+                query_spec = _compose_dataset_query_spec(
+                    dataset=dataset,
+                    query_spec=_to_engine_query_spec(config),
+                )
             fingerprint_key = _fingerprint_key(config)
             units.append(
                 DebugExecutionUnit(
@@ -161,12 +169,22 @@ class DashboardWidgetExecutionCoordinator:
         *,
         dashboard_id: int,
         dataset_id: int,
+        dataset: Dataset | None,
         access: Any,
         widget_ids: list[int],
         configs_by_widget_id: dict[int, WidgetConfig],
         correlation_id: str | None,
     ) -> dict[int, WidgetExecutionResult]:
-        batch_queries = [{"request_id": str(widget_id), "spec": _to_engine_query_spec(configs_by_widget_id[widget_id])} for widget_id in widget_ids]
+        batch_queries = [
+            {
+                "request_id": str(widget_id),
+                "spec": _compose_dataset_query_spec(
+                    dataset=dataset,
+                    query_spec=_to_engine_query_spec(configs_by_widget_id[widget_id]),
+                ),
+            }
+            for widget_id in widget_ids
+        ]
         try:
             batch_payload = await get_engine_client().execute_query_batch(
                 datasource_id=access.datasource_id,
@@ -211,6 +229,7 @@ class DashboardWidgetExecutionCoordinator:
         widget_id: int,
         dashboard_id: int,
         dataset_id: int,
+        dataset: Dataset | None,
         access: Any,
         available_widget_ids: set[int],
         configs_by_widget_id: dict[int, WidgetConfig],
@@ -248,7 +267,10 @@ class DashboardWidgetExecutionCoordinator:
                     datasource_id=access.datasource_id,
                     workspace_id=access.workspace_id,
                     dataset_id=dataset_id,
-                    query_spec=_to_engine_query_spec(config),
+                    query_spec=_compose_dataset_query_spec(
+                        dataset=dataset,
+                        query_spec=_to_engine_query_spec(config),
+                    ),
                     datasource_url=access.datasource_url,
                     actor_user_id=access.actor_user_id,
                     correlation_id=correlation_id,
@@ -303,6 +325,7 @@ class DashboardWidgetExecutionCoordinator:
                     widget_id=dep.widget_id,
                     dashboard_id=dashboard_id,
                     dataset_id=dataset_id,
+                    dataset=dataset,
                     access=access,
                     available_widget_ids=available_widget_ids,
                     configs_by_widget_id=configs_by_widget_id,
@@ -323,6 +346,7 @@ class DashboardWidgetExecutionCoordinator:
             owner_config=config,
             dashboard_id=dashboard_id,
             dataset_id=dataset_id,
+            dataset=dataset,
             access=access,
             correlation_id=correlation_id,
             engine_result_cache=engine_result_cache,
@@ -355,6 +379,7 @@ class DashboardWidgetExecutionCoordinator:
         owner_config: WidgetConfig,
         dashboard_id: int,
         dataset_id: int,
+        dataset: Dataset | None,
         access: Any,
         correlation_id: str | None,
         engine_result_cache: dict[str, WidgetExecutionResult],
@@ -380,7 +405,10 @@ class DashboardWidgetExecutionCoordinator:
                 datasource_id=access.datasource_id,
                 workspace_id=access.workspace_id,
                 dataset_id=dataset_id,
-                query_spec=_to_engine_query_spec(virtual_config),
+                query_spec=_compose_dataset_query_spec(
+                    dataset=dataset,
+                    query_spec=_to_engine_query_spec(virtual_config),
+                ),
                 datasource_url=access.datasource_url,
                 actor_user_id=access.actor_user_id,
                 correlation_id=correlation_id,
@@ -415,6 +443,7 @@ class DashboardWidgetExecutionCoordinator:
         owner_config: WidgetConfig,
         dashboard_id: int,
         dataset_id: int,
+        dataset: Dataset | None,
         access: Any,
         correlation_id: str | None,
         engine_result_cache: dict[str, WidgetExecutionResult],
@@ -437,6 +466,7 @@ class DashboardWidgetExecutionCoordinator:
                 owner_config=owner_config,
                 dashboard_id=dashboard_id,
                 dataset_id=dataset_id,
+                dataset=dataset,
                 access=access,
                 correlation_id=correlation_id,
                 engine_result_cache=engine_result_cache,
@@ -447,6 +477,15 @@ class DashboardWidgetExecutionCoordinator:
             func_values[(func_name.upper(), alias)] = _extract_kpi_scalar(execution.payload)
         return _evaluate_derived_formula(ast_root, scalar_values, column_deps, func_values), total_exec_ms, any_cache_hit
 
+
+def _compose_dataset_query_spec(
+    *,
+    dataset: Dataset | None,
+    query_spec: dict[str, Any],
+) -> dict[str, Any]:
+    if dataset is None:
+        return query_spec
+    return compose_engine_query_spec_with_dataset(dataset=dataset, query_spec=query_spec)
 
 
 def _to_engine_query_spec(config: WidgetConfig) -> dict[str, Any]:

@@ -47,6 +47,7 @@ export const useCoreData = () => {
 
     const inferred = new Map<string, ReturnType<typeof mapView>>();
     (datasetsQuery.data || []).forEach((dataset) => {
+      if (!dataset.view) return;
       const mapped = mapView(dataset.view);
       inferred.set(mapped.id, mapped);
     });

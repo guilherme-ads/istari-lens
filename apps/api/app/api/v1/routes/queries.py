@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.shared.infrastructure.database import get_db
-from app.modules.core.legacy.models import Dataset, User, View
+from app.modules.core.legacy.models import Dataset, User
 from app.modules.core.legacy.schemas import (
     QueryPreviewBatchItemResponse,
     QueryPreviewBatchRequest,
@@ -22,20 +22,21 @@ def _resolve_correlation_id(request: Request) -> str | None:
     return request.headers.get("x-correlation-id") or request.headers.get("x-request-id")
 
 
-def _validate_dataset_and_view(spec: QuerySpec, db: Session) -> tuple[Dataset, View]:
+def _validate_dataset(spec: QuerySpec, db: Session) -> Dataset:
     dataset = db.query(Dataset).filter(Dataset.id == spec.datasetId).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     if not dataset.is_active:
         raise HTTPException(status_code=400, detail="Dataset is inactive")
 
-    view = dataset.view
-    if not view or not view.is_active:
-        raise HTTPException(status_code=400, detail="Dataset view is inactive")
     if not dataset.datasource or not dataset.datasource.is_active:
         raise HTTPException(status_code=400, detail="Dataset datasource is inactive")
+    if dataset.base_query_spec is None:
+        view = dataset.view
+        if not view or not view.is_active:
+            raise HTTPException(status_code=400, detail="Dataset has no active base_query_spec or legacy view")
 
-    return dataset, view
+    return dataset
 
 
 async def execute_preview_query(
@@ -45,7 +46,7 @@ async def execute_preview_query(
     correlation_id: str | None = None,
 ) -> QueryPreviewResponse:
     _ = current_user
-    dataset, view = _validate_dataset_and_view(spec, db)
+    dataset = _validate_dataset(spec, db)
     access = resolve_datasource_access(
         datasource=dataset.datasource,
         dataset=dataset,
@@ -55,7 +56,7 @@ async def execute_preview_query(
         datasource_id=access.datasource_id,
         workspace_id=access.workspace_id,
         dataset_id=access.dataset_id,
-        query_spec=to_engine_query_spec(spec, view=view),
+        query_spec=to_engine_query_spec(spec, dataset=dataset),
         datasource_url=access.datasource_url,
         actor_user_id=access.actor_user_id,
         correlation_id=correlation_id,
@@ -100,11 +101,11 @@ async def preview_query_batch(
     correlation_id = _resolve_correlation_id(http_request)
     indexed_queries: list[dict[str, object]] = []
     for item in request.queries:
-        dataset, view = _validate_dataset_and_view(item.spec, db)
+        dataset = _validate_dataset(item.spec, db)
         indexed_queries.append(
             {
                 "request_id": item.widget_id,
-                "spec": to_engine_query_spec(item.spec, view=view),
+                "spec": to_engine_query_spec(item.spec, dataset=dataset),
                 "access": resolve_datasource_access(
                     datasource=dataset.datasource,
                     dataset=dataset,

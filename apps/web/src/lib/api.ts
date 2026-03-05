@@ -214,13 +214,58 @@ export type ApiSpreadsheetImportConfirmSummary = {
 export type ApiDataset = {
   id: number;
   datasource_id: number;
-  view_id: number;
+  view_id?: number | null;
   name: string;
   description?: string | null;
+  base_query_spec?: Record<string, unknown> | null;
+  semantic_columns?: Array<{
+    name: string;
+    type: "numeric" | "temporal" | "text" | "boolean";
+    source?: string;
+  }>;
   is_active: boolean;
-  view: ApiView;
+  view?: ApiView | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ApiDatasetBaseQuerySpec = {
+  version: 1;
+  source: {
+    datasource_id: number;
+  };
+  base: {
+    primary_resource: string;
+    resources: Array<{
+      id: string;
+      resource_id: string;
+    }>;
+    joins: Array<{
+      type: "inner" | "left";
+      left_resource: string;
+      right_resource: string;
+      on: Array<{
+        left_column: string;
+        right_column: string;
+      }>;
+    }>;
+  };
+  preprocess: {
+    columns: {
+      include: Array<{
+        resource: string;
+        column: string;
+        alias: string;
+      }>;
+      exclude: Array<string | { alias?: string; resource?: string; column?: string }>;
+    };
+    computed_columns: Array<{
+      alias: string;
+      expr: Record<string, unknown>;
+      data_type: "numeric" | "temporal" | "text" | "boolean";
+    }>;
+    filters: Array<{ field: string; op: string; value?: unknown }>;
+  };
 };
 
 export type ApiDashboardWidget = {
@@ -684,8 +729,26 @@ export const api = {
 
   listDatasets: () => request<ApiDataset[]>("/datasets"),
 
-  createDataset: (payload: { datasource_id: number; view_id: number; name: string; description?: string; is_active?: boolean }) =>
+  createDataset: (payload: {
+    datasource_id: number;
+    name: string;
+    description?: string;
+    is_active?: boolean;
+    view_id?: number;
+    base_query_spec?: ApiDatasetBaseQuerySpec;
+  }) =>
     request<ApiDataset>("/datasets", { method: "POST", body: JSON.stringify(payload) }),
+
+  updateDataset: (
+    datasetId: number,
+    payload: Partial<{
+      name: string;
+      description: string;
+      is_active: boolean;
+      view_id: number;
+      base_query_spec: ApiDatasetBaseQuerySpec;
+    }>,
+  ) => request<ApiDataset>(`/datasets/${datasetId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
   deleteDataset: (datasetId: number) => request<void>(`/datasets/${datasetId}`, { method: "DELETE" }),
 

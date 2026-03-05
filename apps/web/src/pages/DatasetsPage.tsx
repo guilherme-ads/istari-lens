@@ -13,16 +13,10 @@ import EmptyState from "@/components/shared/EmptyState";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api, ApiError } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
-import type { Dataset, Datasource, View } from "@/types";
+import type { Dataset, View } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import { useSimulatedLoading } from "@/hooks/use-simulated-loading";
 import SkeletonCard from "@/components/shared/SkeletonCard";
@@ -33,10 +27,9 @@ const DatasetsPage = () => {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
   const isAdmin = !!getStoredUser()?.is_admin;
-  const { datasets: allDatasets, views, datasources, isLoading, isError, errorMessage } = useCoreData();
+  const { datasets: allDatasets, views, isLoading, isError, errorMessage } = useCoreData();
   const { isLoading: isSimulatedLoading } = useSimulatedLoading();
   const showLoadingSkeleton = isLoading || isSimulatedLoading;
 
@@ -45,8 +38,8 @@ const DatasetsPage = () => {
     const q = search.toLowerCase();
     return allDatasets.filter(
       (d) =>
-        d.name.toLowerCase().includes(q) ||
-        d.description.toLowerCase().includes(q),
+        d.name.toLowerCase().includes(q)
+        || d.description.toLowerCase().includes(q),
     );
   }, [allDatasets, search]);
 
@@ -54,29 +47,6 @@ const DatasetsPage = () => {
     () => allDatasets.reduce((s, d) => s + d.dashboardIds.length, 0),
     [allDatasets],
   );
-
-  const createDataset = useMutation({
-    mutationFn: (payload: { name: string; description: string; datasourceId: string; viewId: string }) => {
-      return api.createDataset({
-        datasource_id: Number(payload.datasourceId),
-        view_id: Number(payload.viewId),
-        name: payload.name,
-        description: payload.description,
-      });
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["datasets"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboards"] }),
-      ]);
-      toast({ title: "Dataset criado com sucesso" });
-      setCreateOpen(false);
-    },
-    onError: (error: unknown) => {
-      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao criar dataset";
-      toast({ title: "Erro ao criar dataset", description: message, variant: "destructive" });
-    },
-  });
 
   const deleteDataset = useMutation({
     mutationFn: (datasetId: string) => api.deleteDataset(Number(datasetId)),
@@ -86,7 +56,7 @@ const DatasetsPage = () => {
         queryClient.invalidateQueries({ queryKey: ["dashboards"] }),
       ]);
       setDeleteTarget(null);
-      toast({ title: "Dataset excluído com sucesso" });
+      toast({ title: "Dataset excluido com sucesso" });
     },
     onError: (error: unknown) => {
       const message = error instanceof ApiError ? error.detail || error.message : "Falha ao excluir dataset";
@@ -105,16 +75,18 @@ const DatasetsPage = () => {
           <div>
             <h1 className="text-display text-foreground">Datasets</h1>
             <p className="mt-1.5 text-body text-muted-foreground">
-              Explore os datasets disponíveis e crie dashboards.
+              Explore os datasets disponiveis e crie dashboards.
             </p>
           </div>
-          <Button
-            className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0"
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Novo Dataset
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+              onClick={() => navigate("/datasets/new")}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Novo Dataset
+            </Button>
+          </div>
         </motion.div>
 
         <motion.div
@@ -143,7 +115,7 @@ const DatasetsPage = () => {
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar por nome ou descrição..."
+              placeholder="Buscar por nome ou descricao..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 h-9"
@@ -199,11 +171,11 @@ const DatasetsPage = () => {
               <motion.div key="datasets-empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <EmptyState
                   icon={<FolderOpen className="h-5 w-5" />}
-                  title={search ? "Nenhum resultado encontrado" : "Nenhum dataset disponível"}
-                  description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dataset para começar."}
+                  title={search ? "Nenhum resultado encontrado" : "Nenhum dataset disponivel"}
+                  description={search ? "Tente ajustar sua busca." : "Crie seu primeiro dataset para comecar."}
                   action={
                     !search ? (
-                      <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+                      <Button variant="outline" size="sm" onClick={() => navigate("/datasets/new")}>
                         <Plus className="h-3.5 w-3.5 mr-1.5" /> Criar dataset
                       </Button>
                     ) : undefined
@@ -253,21 +225,13 @@ const DatasetsPage = () => {
         )}
       </main>
 
-      <CreateDatasetDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        datasources={datasources}
-        views={views}
-        submitting={createDataset.isPending}
-        onCreate={({ name, description, datasourceId, viewId }) => createDataset.mutate({ name, description, datasourceId, viewId })}
-      />
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
         }}
         title="Excluir dataset?"
-        description={`Esta ação excluirá "${deleteTarget?.name}" e os dashboards vinculados.`}
+        description={`Esta acao excluira "${deleteTarget?.name}" e os dashboards vinculados.`}
         confirmLabel={deleteDataset.isPending ? "Excluindo..." : "Excluir"}
         destructive
         onConfirm={() => {
@@ -276,99 +240,6 @@ const DatasetsPage = () => {
         }}
       />
     </div>
-  );
-};
-
-const CreateDatasetDialog = ({
-  open,
-  onOpenChange,
-  datasources,
-  views,
-  submitting,
-  onCreate,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  datasources: Datasource[];
-  views: View[];
-  submitting: boolean;
-  onCreate: (payload: { name: string; description: string; datasourceId: string; viewId: string }) => void;
-}) => {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [datasourceId, setDatasourceId] = useState("");
-  const [viewId, setViewId] = useState("");
-  const activeDatasources = datasources.filter((ds) => ds.status === "active");
-  const activeViews = views.filter((v) => v.status === "active" && (!datasourceId || v.datasourceId === datasourceId));
-
-  const handleCreate = () => {
-    if (!name || !datasourceId || !viewId) return;
-    onCreate({ name, description, datasourceId, viewId });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Novo Dataset</DialogTitle>
-          <DialogDescription>Selecione a fonte de dados e a tabela para criar um novo dataset.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4 pt-2">
-          <div className="space-y-1.5">
-            <Label className="text-caption font-medium">Nome <span className="text-destructive">*</span></Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Sales Pipeline" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-caption font-medium">Descrição</Label>
-            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descreva o propósito deste dataset..." rows={2} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-caption font-medium">Fonte de dados <span className="text-destructive">*</span></Label>
-            <Select
-              value={datasourceId}
-              onValueChange={(value) => {
-                setDatasourceId(value);
-                setViewId("");
-              }}
-            >
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder="Selecione um datasource..." />
-              </SelectTrigger>
-              <SelectContent>
-                {activeDatasources.map((ds) => (
-                  <SelectItem key={ds.id} value={ds.id}>
-                    {ds.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-caption font-medium">Tabela <span className="text-destructive">*</span></Label>
-            <Select value={viewId} onValueChange={setViewId} disabled={!datasourceId}>
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder={datasourceId ? "Selecione uma tabela..." : "Selecione um datasource primeiro"} />
-              </SelectTrigger>
-              <SelectContent>
-                {activeViews.map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    <span className="font-medium">{v.schema}.{v.name}</span>
-                    <span className="text-caption ml-2">({v.columns.length} cols)</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
-            disabled={!name || !datasourceId || !viewId || submitting}
-            onClick={handleCreate}
-          >
-            {submitting ? "Criando..." : "Criar Dataset"}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 };
 
@@ -387,6 +258,13 @@ const DatasetGridCard = ({
 }) => {
   const view = views.find((v) => v.id === dataset.viewId);
   const dashboardCount = dataset.dashboardIds.length;
+  const sourceLabel = view
+    ? `${view.schema}.${view.name}`
+    : String((dataset.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource || "dataset semantico");
+  const previewColumns = dataset.semanticColumns.length > 0
+    ? dataset.semanticColumns.slice(0, 4).map((item) => item.name)
+    : (view?.columns || []).slice(0, 4).map((item) => item.name);
+  const totalColumns = dataset.semanticColumns.length > 0 ? dataset.semanticColumns.length : (view?.columns.length || 0);
 
   return (
     <motion.div
@@ -428,19 +306,19 @@ const DatasetGridCard = ({
       </div>
       <div className="space-y-1.5">
         <h3 className="font-bold text-foreground leading-tight">{dataset.name}</h3>
-        {view && <code className="text-caption font-mono">{view.schema}.{view.name}</code>}
+        <code className="text-caption font-mono">{sourceLabel}</code>
         <p className="text-body text-muted-foreground line-clamp-2">{dataset.description}</p>
       </div>
-      {view && (
+      {previewColumns.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-auto">
-          {view.columns.slice(0, 4).map((col) => (
-            <span key={col.name} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-              {col.name}
+          {previewColumns.map((col) => (
+            <span key={`${dataset.id}-${col}`} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+              {col}
             </span>
           ))}
-          {view.columns.length > 4 && (
+          {totalColumns > 4 && (
             <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-              +{view.columns.length - 4}
+              +{totalColumns - 4}
             </span>
           )}
         </div>
@@ -473,6 +351,10 @@ const DatasetListItem = ({
 }) => {
   const view = views.find((v) => v.id === dataset.viewId);
   const dashboardCount = dataset.dashboardIds.length;
+  const sourceLabel = view
+    ? `${view.schema}.${view.name}`
+    : String((dataset.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource || "dataset semantico");
+  const totalColumns = dataset.semanticColumns.length > 0 ? dataset.semanticColumns.length : (view?.columns.length || 0);
 
   return (
     <motion.div
@@ -496,13 +378,13 @@ const DatasetListItem = ({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="font-bold text-foreground truncate">{dataset.name}</h3>
-          {view && <code className="text-caption font-mono hidden sm:inline">{view.schema}.{view.name}</code>}
+          <code className="text-caption font-mono hidden sm:inline">{sourceLabel}</code>
           {view && <StatusBadge status={view.status} className="hidden sm:inline-flex" />}
         </div>
         <p className="text-body text-muted-foreground truncate mt-0.5">{dataset.description}</p>
       </div>
       <div className="hidden md:flex items-center gap-4 shrink-0 text-caption">
-        {view && <span>{view.columns.length} colunas</span>}
+        <span>{totalColumns} colunas</span>
         <span>{dashboardCount} dashboards</span>
       </div>
       {onDelete && (
@@ -525,5 +407,3 @@ const DatasetListItem = ({
 };
 
 export default DatasetsPage;
-
-

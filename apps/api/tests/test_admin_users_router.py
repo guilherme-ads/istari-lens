@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -8,6 +9,8 @@ from app.shared.infrastructure.database import get_db
 from app.modules.auth.adapters.api.dependencies import get_current_admin_user
 from app.modules.core.legacy.models import Base, User
 from app.api.v1.routes import admin_users
+
+_ORIGINAL_HASH_PASSWORD = admin_users.hash_password
 
 
 engine = create_engine(
@@ -71,6 +74,14 @@ def _make_client(as_admin: bool = True) -> tuple[TestClient, User]:
 
 def _patch_hashing() -> None:
     admin_users.hash_password = lambda password: f"hashed:{password}"  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _restore_hash_password_after_test():
+    try:
+        yield
+    finally:
+        admin_users.hash_password = _ORIGINAL_HASH_PASSWORD  # type: ignore[assignment]
 
 
 def test_list_users_with_search_pagination_and_sort():

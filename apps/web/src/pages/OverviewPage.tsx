@@ -249,7 +249,10 @@ const OverviewPage = () => {
               <div className="space-y-2">
                 {recentDatasets.map((dataset) => {
                   const view = views.find((item) => item.id === dataset.viewId);
-                  const datasource = view ? datasources.find((item) => item.id === view.datasourceId) : undefined;
+                  const datasource = datasources.find((item) => item.id === (view ? view.datasourceId : dataset.datasourceId));
+                  const datasetSourceLabel = view
+                    ? `${view.schema}.${view.name}`
+                    : String((dataset.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource || "dataset semantico");
                   const isSpreadsheet = datasource?.sourceType === "spreadsheet";
                   const Icon = isSpreadsheet ? FileSpreadsheet : Database;
                   const iconClass = isSpreadsheet ? "text-success" : "text-accent";
@@ -267,14 +270,14 @@ const OverviewPage = () => {
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-bold text-foreground">{dataset.name}</p>
                             <p className="text-caption truncate">
-                              {view ? `${view.schema}.${view.name}` : "-"} · {dataset.dashboardIds.length} {dataset.dashboardIds.length === 1 ? "dashboard" : "dashboards"}
+                              {datasetSourceLabel} · {dataset.dashboardIds.length} {dataset.dashboardIds.length === 1 ? "dashboard" : "dashboards"}
                             </p>
                           </div>
                           <span className="hidden self-start pt-0.5 text-caption sm:inline">{formatRelativeTime(dataset.createdAt)}</span>
                         </button>
                       </TooltipTrigger>
                       <TooltipContent className="text-caption">
-                        {view ? `Colunas: ${view.columns.length} · Linhas: ${view.rowCount.toLocaleString()}` : "View nao encontrada"}
+                        Colunas: {(dataset.semanticColumns.length > 0 ? dataset.semanticColumns.length : (view?.columns.length || 0))} - Linhas: {view ? view.rowCount.toLocaleString() : "-"}
                       </TooltipContent>
                     </Tooltip>
                   );

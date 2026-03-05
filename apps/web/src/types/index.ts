@@ -30,9 +30,16 @@ export interface Column {
 
 export interface Dataset {
   id: string;
+  datasourceId: string;
   name: string;
   description: string;
-  viewId: string;
+  viewId?: string;
+  baseQuerySpec?: Record<string, unknown> | null;
+  semanticColumns: Array<{
+    name: string;
+    type: "numeric" | "temporal" | "text" | "boolean";
+    source?: string;
+  }>;
   dashboardIds: string[];
   createdAt: string;
 }

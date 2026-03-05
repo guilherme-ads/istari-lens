@@ -98,6 +98,31 @@ Deploy:
 docker-compose -f docker-compose.prod.yml up -d
 ```
 
+### Railway (Docker runtime)
+
+No runtime do Railway, a API ja sobe com `apps/api/entrypoint.sh`, que executa:
+
+```bash
+alembic upgrade head
+```
+
+antes de iniciar o `uvicorn`. Ou seja, migrations sao aplicadas dentro do container de deploy.
+
+Para validar localmente o mesmo fluxo de migration via Docker antes do deploy:
+
+```bash
+make migrate
+make migrate-status
+```
+
+Ou sem Makefile:
+
+```bash
+docker compose up -d app_db
+docker compose run --rm api alembic upgrade head
+docker compose run --rm api alembic current
+```
+
 ## Kubernetes Deployment
 
 ### Prerequisites
@@ -210,6 +235,8 @@ pg_dump -U postgres -h prod-db.example.com istari_product > backup.sql
 ```bash
 kubectl exec -it istari-api-<pod-id> -n istari -- alembic upgrade head
 ```
+
+Obs.: para deploy no Railway (sem kubernetes), use o fluxo Docker acima.
 
 ## Monitoring
 

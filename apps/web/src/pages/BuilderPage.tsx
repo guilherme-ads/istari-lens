@@ -95,6 +95,31 @@ const parseDate = (value: unknown): Date | undefined => {
 const normalizeDashboardFilterOp = (value: string): DashboardFilterOp =>
   (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "between", "relative"].includes(value) ? value : "eq") as DashboardFilterOp;
 
+const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
+  const value = (rawType || "").toLowerCase();
+  if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
+    return value;
+  }
+  if (["int", "numeric", "decimal", "real", "double", "float", "money"].some((token) => value.includes(token))) {
+    return "numeric";
+  }
+  if (["date", "time", "timestamp"].some((token) => value.includes(token))) {
+    return "temporal";
+  }
+  if (value.includes("bool")) {
+    return "boolean";
+  }
+  return "text";
+};
+
+const mergeColumnType = (currentType: string, nextType: string): "numeric" | "temporal" | "text" | "boolean" => {
+  const current = normalizeSemanticColumnType(currentType);
+  const next = normalizeSemanticColumnType(nextType);
+  if (current !== "text" && next === "text") return current;
+  if (current === "text" && next !== "text") return next;
+  return next;
+};
+
 const BuilderPage = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -104,6 +129,11 @@ const BuilderPage = () => {
 
   const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
+  const datasetSourceLabel = useMemo(() => {
+    if (view) return `${view.schema}.${view.name}`;
+    const primaryResource = (dataset?.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource;
+    return String(primaryResource || "__dataset_base");
+  }, [dataset, view]);
   const existingDashboard = useMemo(() => dashboards.find((item) => item.id === dashboardId), [dashboards, dashboardId]);
   const isEditingExistingDashboard = !!dashboardId;
   const canEditExistingDashboard = !!existingDashboard && existingDashboard.accessLevel !== "view";
@@ -161,6 +191,56 @@ const BuilderPage = () => {
     queryFn: () => api.getViewColumns(view!.name, view!.schema),
     enabled: !!view,
   });
+  const effectiveColumns = useMemo(
+    () => (
+      (viewColumnsQuery.data || []).map((column) => ({
+        name: column.column_name,
+        type: column.normalized_type,
+      }))
+    ),
+    [viewColumnsQuery.data],
+  );
+  const semanticColumns = useMemo(
+    () => (dataset?.semanticColumns || []).map((column) => ({ name: column.name, type: column.type })),
+    [dataset],
+  );
+  const datasetColumns = useMemo(() => {
+    const merged = new Map<string, { name: string; type: string }>();
+    const upsert = (columnName: string, columnType: string) => {
+      const current = merged.get(columnName);
+      if (!current) {
+        merged.set(columnName, { name: columnName, type: normalizeSemanticColumnType(columnType) });
+        return;
+      }
+      merged.set(columnName, {
+        name: columnName,
+        type: mergeColumnType(current.type, columnType),
+      });
+    };
+    (effectiveColumns || []).forEach((column) => upsert(column.name, column.type));
+    (semanticColumns || []).forEach((column) => upsert(column.name, column.type));
+    if (merged.size === 0) {
+      (view?.columns || []).forEach((column) => upsert(column.name, column.type));
+    }
+    return Array.from(merged.values());
+  }, [effectiveColumns, semanticColumns, view]);
+  const temporalColumnNames = useMemo(
+    () => new Set(datasetColumns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal").map((column) => column.name)),
+    [datasetColumns],
+  );
+  const effectiveView = useMemo(() => {
+    if (!dataset) return undefined;
+    return {
+      id: view?.id || `dataset-${dataset.id}`,
+      schema: view?.schema || "dataset",
+      name: view?.name || dataset.name,
+      status: (view?.status || "active") as "active" | "inactive",
+      description: dataset.description,
+      rowCount: view?.rowCount || 0,
+      datasourceId: dataset.datasourceId,
+      columns: datasetColumns.map((column) => ({ name: column.name, type: column.type })),
+    };
+  }, [view, dataset, datasetColumns]);
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [targetSectionId, setTargetSectionId] = useState<string | null>(null);
@@ -176,7 +256,6 @@ const BuilderPage = () => {
   const [syncingNativeFilters, setSyncingNativeFilters] = useState(false);
   const isAdmin = !!getStoredUser()?.is_admin;
   const preparedNativeFilters = useMemo<PreparedNativeFilter[]>(() => {
-    const temporalColumnNames = new Set((viewColumnsQuery.data || []).filter((column) => column.normalized_type === "temporal").map((column) => column.column_name));
     const parsedFilters: PreparedNativeFilter[] = [];
     for (const filter of nativeFilters) {
       if (!filter.column) continue;
@@ -203,7 +282,7 @@ const BuilderPage = () => {
       parsedFilters.push({ column: filter.column, op: filter.op, value: filter.value });
     }
     return parsedFilters;
-  }, [nativeFilters, viewColumnsQuery.data]);
+  }, [nativeFilters, temporalColumnNames]);
   const preparedNativeFiltersKey = useMemo(() => JSON.stringify(preparedNativeFilters), [preparedNativeFilters]);
 
   useEffect(() => {
@@ -287,24 +366,24 @@ const BuilderPage = () => {
   }, []);
 
   const handleWidgetCreated = useCallback(async (widgetType: WidgetType) => {
-    if (!targetSectionId || !dataset || !view) return;
-    if (!viewColumnsQuery.data || viewColumnsQuery.data.length === 0) {
-      toast({ title: "Não foi possivel carregar colunas da tabela", variant: "destructive" });
+    if (!targetSectionId || !dataset) return;
+    if (datasetColumns.length === 0) {
+      toast({ title: "Não foi possivel carregar colunas do dataset", variant: "destructive" });
       return;
     }
 
     const dashboardIdToUse = await ensureDashboard();
-    const viewName = `${view.schema}.${view.name}`;
+    const viewName = view ? `${view.schema}.${view.name}` : "__dataset_base";
     const defaultConfig = createDefaultWidgetConfig({
       type: widgetType,
       viewName,
-      columns: viewColumnsQuery.data.map((column) => ({ name: column.column_name, type: column.normalized_type })),
+      columns: datasetColumns,
     });
 
     try {
       const created = await api.createDashboardWidget(Number(dashboardIdToUse), {
         widget_type: widgetType,
-        title: `${widgetType.toUpperCase()} - ${view.name}`,
+        title: `${widgetType.toUpperCase()} - ${datasetSourceLabel}`,
         position: 0,
         config: defaultConfig,
         config_version: 1,
@@ -329,7 +408,7 @@ const BuilderPage = () => {
       const message = error instanceof ApiError ? JSON.stringify(error.detail || error.message) : "Falha ao criar widget";
       toast({ title: "Erro ao criar widget", description: message, variant: "destructive" });
     }
-  }, [dataset, ensureDashboard, persistLayout, queryClient, sections, targetSectionId, toast, view, viewColumnsQuery.data]);
+  }, [dataset, datasetColumns, datasetSourceLabel, ensureDashboard, persistLayout, queryClient, sections, targetSectionId, toast, view]);
 
   const handleDuplicateWidgetFromCard = useCallback(async (widget: DashboardWidget) => {
     if (!activeDashboardId) return;
@@ -570,7 +649,7 @@ const BuilderPage = () => {
     );
   }
 
-  if (!dataset || !view) {
+  if (!dataset) {
     return (
       <div className="bg-background flex flex-col flex-1">
         <div className="flex-1 flex items-center justify-center">
@@ -638,7 +717,7 @@ const BuilderPage = () => {
 
           <div className="flex items-center gap-2 text-caption shrink-0">
             <span className="hidden sm:inline">
-              {view.schema}.{view.name} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+              {datasetSourceLabel} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
             </span>
             <div className="h-4 w-px bg-border hidden sm:block" />
             <Tooltip>
@@ -759,8 +838,7 @@ const BuilderPage = () => {
               <Label className="text-heading">Filtro nativo (oculto no front)</Label>
               <div className="mt-2 space-y-2">
                 {nativeFilters.map((filter, filterIndex) => {
-                  const selectedColumn = (viewColumnsQuery.data || []).find((column) => column.column_name === filter.column);
-                  const isTemporal = selectedColumn?.normalized_type === "temporal";
+                  const isTemporal = temporalColumnNames.has(filter.column);
                   const operatorOptions = isTemporal ? temporalOps : commonOps;
                   const rowLayoutClass = isTemporal
                     ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto] gap-2 items-center"
@@ -785,8 +863,8 @@ const BuilderPage = () => {
                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">Sem coluna</SelectItem>
-                          {(viewColumnsQuery.data || []).map((column) => (
-                            <SelectItem key={column.column_name} value={column.column_name}>{column.column_name}</SelectItem>
+                          {(datasetColumns || []).map((column) => (
+                            <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1076,7 +1154,7 @@ const BuilderPage = () => {
             </div>
             <h2 className="text-title text-foreground">Comece seu dashboard</h2>
             <p className="text-body text-muted-foreground text-center max-w-md">
-              Adicione secoes e widgets para montar seu dashboard usando dados de <strong>{view.schema}.{view.name}</strong>.
+              Adicione secoes e widgets para montar seu dashboard usando dados de <strong>{datasetSourceLabel}</strong>.
             </p>
             <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => handleAddSection()}>
               <Plus className="h-4 w-4 mr-1.5" /> Criar primeira secao
@@ -1102,12 +1180,12 @@ const BuilderPage = () => {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onAdd={handleWidgetCreated}
-        viewLabel={`${view.schema}.${view.name}`}
+        viewLabel={datasetSourceLabel}
       />
       <WidgetConfigPanel
         widget={editingWidget}
         dashboardWidgets={sections.flatMap((section) => section.widgets)}
-        view={view}
+        view={effectiveView}
         sectionColumns={editingWidgetSectionColumns}
         open={configOpen}
         onClose={() => setConfigOpen(false)}

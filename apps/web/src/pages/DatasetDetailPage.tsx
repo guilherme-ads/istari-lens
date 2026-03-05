@@ -27,6 +27,12 @@ const DatasetDetailPage = () => {
 
   const dataset = useMemo(() => datasets.find((d) => d.id === datasetId), [datasets, datasetId]);
   const view = useMemo(() => (dataset ? views.find((v) => v.id === dataset.viewId) : undefined), [dataset, views]);
+  const sourceLabel = useMemo(() => {
+    if (!dataset) return "-";
+    if (view) return `${view.schema}.${view.name}`;
+    return String((dataset.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource || "dataset semântico");
+  }, [dataset, view]);
+  const semanticColumns = dataset?.semanticColumns || [];
   const datasetDashboards = useMemo(
     () => dashboards.filter((d) => d.datasetId === datasetId),
     [dashboards, datasetId],
@@ -65,7 +71,7 @@ const DatasetDetailPage = () => {
             <motion.div key="dataset-detail-skeleton" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
               <div className="space-y-3">
                 <Skeleton className="h-4 w-56 max-w-full" />
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-3">
                   <div className="flex items-start gap-4">
                     <Skeleton className="h-12 w-12 rounded-xl" />
                     <div className="space-y-2">
@@ -93,7 +99,7 @@ const DatasetDetailPage = () => {
                     { label: dataset.name },
                   ]}
                 />
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-3">
                   <div className="flex items-start gap-4">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
                       <FolderOpen className="h-5 w-5" />
@@ -105,21 +111,44 @@ const DatasetDetailPage = () => {
                         <div className="flex items-center gap-3 mt-2 text-caption">
                           <span className="flex items-center gap-1">
                             <Database className="h-3 w-3" />
-                            {view.schema}.{view.name}
+                            {sourceLabel}
                           </span>
-                          <span>{view.columns.length} colunas</span>
-                          <span>{view.rowCount.toLocaleString()} linhas</span>
+                          <span>{semanticColumns.length > 0 ? semanticColumns.length : (view?.columns.length || 0)} colunas</span>
+                          {view && <span>{view.rowCount.toLocaleString()} linhas</span>}
+                        </div>
+                      )}
+                      {!view && semanticColumns.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {semanticColumns.slice(0, 8).map((column) => (
+                            <span key={`${dataset.id}-${column.name}`} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                              {column.name}
+                            </span>
+                          ))}
+                          {semanticColumns.length > 8 && (
+                            <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              +{semanticColumns.length - 8}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
                   </div>
-                  <Button
-                    className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0"
-                    onClick={() => navigate(`/datasets/${datasetId}/builder`)}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Novo Dashboard
-                  </Button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      onClick={() => navigate(`/datasets/${datasetId}/edit`)}
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Editar Dataset
+                    </Button>
+                    <Button
+                      className="bg-accent text-accent-foreground hover:bg-accent/90"
+                      onClick={() => navigate(`/datasets/${datasetId}/builder`)}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Novo Dashboard
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
 

@@ -165,6 +165,20 @@ def _create_test_data(session: Session, *, is_admin: bool = True, datasource_own
         datasource_id=datasource.id,
         view_id=view.id,
         name="Growth Users",
+        base_query_spec={
+            "version": 1,
+            "source": {"datasource_id": datasource.id},
+            "base": {
+                "primary_resource": "public.vw_growth_users",
+                "resources": [{"id": "base", "resource_id": "public.vw_growth_users"}],
+                "joins": [],
+            },
+            "preprocess": {
+                "columns": {"include": [], "exclude": []},
+                "computed_columns": [],
+                "filters": [],
+            },
+        },
         is_active=True,
     )
     session.add(dataset)
@@ -250,6 +264,8 @@ def test_preview_uses_engine_without_local_semantic_validation() -> None:
         assert payload["rows"] == [{"m0": 7}]
         assert fake_engine.last_single_spec is not None
         assert fake_engine.last_single_spec["metrics"][0]["field"] == "non_existing_column"
+        assert fake_engine.last_single_spec["resource_id"] == "__dataset_base"
+        assert fake_engine.last_single_spec["base_query"]["base"]["primary_resource"] == "public.vw_growth_users"
     finally:
         client._cleanup()  # type: ignore[attr-defined]
 
@@ -295,6 +311,8 @@ def test_preview_batch_uses_engine_batch_endpoint() -> None:
         assert payload["results"][0]["widget_id"] == "w1"
         assert payload["results"][1]["widget_id"] == "w2"
         assert len(fake_engine.last_batch_queries) == 2
+        assert all(item["spec"]["resource_id"] == "__dataset_base" for item in fake_engine.last_batch_queries)
+        assert all("base_query" in item["spec"] for item in fake_engine.last_batch_queries)
     finally:
         client._cleanup()  # type: ignore[attr-defined]
 
@@ -365,7 +383,7 @@ def test_preview_batch_splits_calls_for_different_dataset_ids() -> None:
         client._cleanup()  # type: ignore[attr-defined]
 
 
-def test_preview_blocks_cross_workspace_user() -> None:
+def test_preview_allows_non_admin_user_when_datasource_is_active() -> None:
     client, _ = _build_client(is_admin=False, datasource_owner_id=999)
     try:
         response = client.post(
@@ -380,7 +398,7 @@ def test_preview_blocks_cross_workspace_user() -> None:
                 "offset": 0,
             },
         )
-        assert response.status_code == 403
-        assert response.json()["detail"] == "User is not authorized for datasource workspace"
+        assert response.status_code == 200, response.text
     finally:
         client._cleanup()  # type: ignore[attr-defined]
+

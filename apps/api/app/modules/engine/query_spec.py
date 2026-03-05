@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-from app.modules.core.legacy.models import View
+from app.modules.core.legacy.models import Dataset, View
 from app.modules.core.legacy.schemas import QuerySpec
+from app.modules.datasets import compose_engine_query_spec_with_dataset
 
 
-def to_engine_query_spec(spec: QuerySpec, *, view: View) -> dict[str, object]:
+def to_engine_query_spec(
+    spec: QuerySpec,
+    *,
+    view: View | None = None,
+    dataset: Dataset | None = None,
+) -> dict[str, object]:
     filters_payload: list[dict[str, object]] = []
     for item in spec.filters:
         value = item.value
@@ -12,8 +18,16 @@ def to_engine_query_spec(spec: QuerySpec, *, view: View) -> dict[str, object]:
             value = value[0] if value else None
         filters_payload.append({"field": item.field, "op": item.op, "value": value})
 
-    return {
-        "resource_id": f"{view.schema_name}.{view.view_name}",
+    if view is None and dataset is None:
+        raise ValueError("to_engine_query_spec requires either view or dataset")
+    resolved_view = view
+    if resolved_view is None and dataset is not None:
+        resolved_view = dataset.view
+    if resolved_view is None:
+        raise ValueError("Dataset has no attached view and no explicit view was provided")
+
+    payload: dict[str, object] = {
+        "resource_id": f"{resolved_view.schema_name}.{resolved_view.view_name}",
         "metrics": [{"field": metric.field, "agg": metric.agg} for metric in spec.metrics],
         "dimensions": list(spec.dimensions),
         "filters": filters_payload,
@@ -21,3 +35,6 @@ def to_engine_query_spec(spec: QuerySpec, *, view: View) -> dict[str, object]:
         "limit": min(spec.limit, 5000),
         "offset": max(0, spec.offset),
     }
+    if dataset is not None:
+        return compose_engine_query_spec_with_dataset(dataset=dataset, query_spec=payload)
+    return payload
