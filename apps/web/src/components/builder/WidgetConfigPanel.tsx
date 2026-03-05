@@ -1543,7 +1543,19 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
               </Label>
               <Select
                 value={draft.config.dimensions[0] || ""}
-                onValueChange={(value) => update({ config: { ...draft.config, dimensions: [value] } })}
+                onValueChange={(value) => {
+                  const currentOrder = draft.config.order_by[0];
+                  const syncDimensionOrder = !!currentOrder?.column && !currentOrder.metric_ref;
+                  update({
+                    config: {
+                      ...draft.config,
+                      dimensions: [value],
+                      order_by: syncDimensionOrder
+                        ? [{ column: value, direction: currentOrder.direction || "desc" }]
+                        : draft.config.order_by,
+                    },
+                  });
+                }}
               >
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione a dimensao" /></SelectTrigger>
                 <SelectContent>
