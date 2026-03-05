@@ -456,6 +456,7 @@ export type ApiWidgetConfig = {
   dre_rows?: Array<{
     title: string;
     row_type: "result" | "deduction" | "detail";
+    impact?: "add" | "subtract";
     metrics: ApiWidgetMetric[];
   }>;
   dre_percent_base_row_index?: number;

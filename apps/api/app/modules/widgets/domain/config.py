@@ -13,6 +13,7 @@ KpiType = Literal["atomic", "derived"]
 TimeGranularity = Literal["day", "week", "month", "hour"]
 TemporalDimensionGranularity = Literal["month", "week", "weekday", "hour"]
 DreRowType = Literal["result", "deduction", "detail"]
+DreRowImpact = Literal["add", "subtract"]
 OrderDirection = Literal["asc", "desc"]
 TextAlign = Literal["left", "center", "right"]
 FilterOp = Literal[
@@ -162,6 +163,7 @@ class CompositeMetricConfig(BaseModel):
 class DreRowConfig(BaseModel):
     title: str
     row_type: DreRowType
+    impact: DreRowImpact = "add"
     metrics: list[MetricConfig] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -172,6 +174,9 @@ class DreRowConfig(BaseModel):
         next_values = dict(values)
         if "metrics" not in next_values and "metric" in next_values:
             next_values["metrics"] = [next_values["metric"]]
+        # Backward compatibility: legacy "deduction" implied negative impact.
+        if "impact" not in next_values:
+            next_values["impact"] = "subtract" if next_values.get("row_type") == "deduction" else "add"
         return next_values
 
     @model_validator(mode="after")

@@ -66,8 +66,8 @@ const dreRowTypeMeta = {
     indentClass: "",
   },
   deduction: {
-    label: "Conta Redutora (N2)",
-    containerClass: "border-l-4 border-l-red-300/70 bg-red-50/20",
+    label: "Conta Dedura (N2)",
+    containerClass: "border-l-4 border-l-amber-300/70 bg-amber-50/20",
     titleClass: "font-normal",
     indentClass: "",
   },
@@ -78,6 +78,22 @@ const dreRowTypeMeta = {
     indentClass: "pl-4",
   },
 } as const;
+
+const resolveInheritedDreImpact = (
+  rows: Array<{ row_type: "result" | "deduction" | "detail"; impact?: "add" | "subtract" }>,
+  index: number,
+): "add" | "subtract" => {
+  const current = rows[index];
+  if (!current) return "add";
+  if (current.row_type === "deduction") return current.impact || "subtract";
+  if (current.row_type === "result") return "add";
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    if (rows[previous]?.row_type === "deduction") {
+      return rows[previous]?.impact || "subtract";
+    }
+  }
+  return "add";
+};
 
 const buildTemporalDimensionValue = (column: string, granularity: "month" | "week" | "weekday" | "hour"): string =>
   `__time_${granularity}__:${column}`;
@@ -244,6 +260,14 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
     ])),
     [temporalColumns],
   );
+  const selectedTableColumns = draft?.config.columns || [];
+  const orderedTableColumns = useMemo(() => {
+    const selected = columns
+      .filter((column) => selectedTableColumns.includes(column.name))
+      .sort((a, b) => selectedTableColumns.indexOf(a.name) - selectedTableColumns.indexOf(b.name));
+    const unselected = columns.filter((column) => !selectedTableColumns.includes(column.name));
+    return [...selected, ...unselected];
+  }, [columns, selectedTableColumns]);
 
   const update = (patch: Partial<DashboardWidget>) => {
     if (!draft) return;
@@ -535,7 +559,6 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
     ? [...categoricalDimensionOptions, ...temporalDimensionOptions]
     : categoricalDimensionOptions;
   const barDim = draft.config.dimensions[0] || "";
-  const selectedTableColumns = draft.config.columns || [];
   const getColumnType = (name: string) => columnTypeByName[name] || "text";
   const emptyFilter: WidgetFilter = { column: "", op: "eq", value: "" };
   const filterRows = draft.config.filters.length > 0 ? draft.config.filters : [emptyFilter];
@@ -1355,7 +1378,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                     <div
                       className={`space-y-2 rounded-md border border-border/60 p-2 transition-colors hover:bg-muted/35 hover:border-border ${dreRowTypeMeta[row.row_type || "detail"].containerClass}`}
                     >
-                      <div className="grid grid-cols-[1fr_188px_32px] gap-2 items-center">
+                      <div className={`grid ${row.row_type === "deduction" ? "grid-cols-[1fr_188px_132px_32px]" : "grid-cols-[1fr_188px_32px]"} gap-2 items-center`}>
                         <DreTitleInput
                           className={`h-8 text-xs ${dreRowTypeMeta[row.row_type || "detail"].titleClass} ${dreRowTypeMeta[row.row_type || "detail"].indentClass}`}
                           value={row.title}
@@ -1370,7 +1393,8 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                           onValueChange={(value) => {
                             const nextType = value as "result" | "deduction" | "detail";
                             const nextRows = [...dreRows];
-                            nextRows[index] = { ...row, row_type: nextType };
+                            const nextImpact = nextType === "result" ? "add" : (row.impact || (row.row_type === "deduction" ? "subtract" : "add"));
+                            nextRows[index] = { ...row, row_type: nextType, impact: nextImpact };
                             update({ config: { ...draft.config, dre_rows: nextRows } });
                           }}
                         >
@@ -1385,6 +1409,22 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                             <SelectItem value="detail">{dreRowTypeMeta.detail.label.trim()}</SelectItem>
                           </SelectContent>
                         </Select>
+                        {row.row_type === "deduction" && (
+                          <Select
+                            value={row.impact || "subtract"}
+                            onValueChange={(value) => {
+                              const nextRows = [...dreRows];
+                              nextRows[index] = { ...row, impact: value as "add" | "subtract" };
+                              update({ config: { ...draft.config, dre_rows: nextRows } });
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="add">Soma (+)</SelectItem>
+                              <SelectItem value="subtract">Subtrai (-)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                         <Button
                           type="button"
                           variant="outline"
@@ -1400,7 +1440,11 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         </Button>
                       </div>
                       <div className={`text-[11px] text-muted-foreground ${dreRowTypeMeta[row.row_type || "detail"].indentClass}`}>
-                        {row.row_type === "result" ? "N1: conta principal de total." : row.row_type === "deduction" ? "N2: conta redutora do total." : "N3: conta analitica de detalhamento."}
+                        {row.row_type === "result"
+                          ? "N1: conta principal de total."
+                          : row.row_type === "deduction"
+                            ? "N2: conta dedura do resultado, que pode ser de soma ou subtração."
+                            : "N3: subitem da conta dedura."}
                       </div>
 
                       <div className={`space-y-1.5 ${dreRowTypeMeta[row.row_type || "detail"].indentClass}`}>
@@ -1499,6 +1543,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         nextRows.splice(index + 1, 0, {
                           title: "",
                           row_type: "detail",
+                          impact: "add",
                           metrics: [{ op: "sum", column: numericColumns[0]?.name || columns[0]?.name }],
                         });
                         update({ config: { ...draft.config, dre_rows: nextRows } });
@@ -1570,11 +1615,40 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
           {draft.config.widget_type === "table" && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">Colunas da tabela</Label>
-              <div className="space-y-1.5 max-h-40 overflow-auto border rounded-md p-2">
-                {columns.map((column) => {
+              <p className="text-[11px] text-muted-foreground">Selecione, ordene e formate as colunas em uma unica lista.</p>
+              <div className="space-y-1.5 max-h-64 overflow-auto border rounded-md p-2">
+                {orderedTableColumns.map((column) => {
                   const checked = !!draft.config.columns?.includes(column.name);
+                  const selectedIndex = selectedTableColumns.indexOf(column.name);
+                  const columnType = getColumnType(column.name);
+                  const inferredFormat = columnType === "numeric" ? "number_2" : columnType === "temporal" ? "datetime" : "text";
+                  const formatValue = draft.config.table_column_formats?.[column.name] || inferredFormat;
+                  const formatOptions =
+                    columnType === "numeric"
+                      ? [
+                          { value: "number_2", label: "Numero (2 casas)" },
+                          { value: "integer", label: "Inteiro" },
+                          { value: "currency_brl", label: "Moeda (R$)" },
+                          { value: "native", label: "Nativo" },
+                          { value: "text", label: "Texto" },
+                        ]
+                      : columnType === "temporal"
+                        ? [
+                            { value: "datetime", label: "Data e hora" },
+                            { value: "date", label: "So data" },
+                            { value: "time", label: "So hora" },
+                            { value: "year", label: "So ano" },
+                            { value: "month", label: "So mes" },
+                            { value: "day", label: "So dia" },
+                            { value: "native", label: "Nativo" },
+                            { value: "text", label: "Texto" },
+                          ]
+                        : [
+                            { value: "text", label: "Texto" },
+                            { value: "native", label: "Nativo" },
+                          ];
                   return (
-                    <label key={column.name} className="flex items-center gap-2 text-xs">
+                    <div key={column.name} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded border border-border/70 p-1.5">
                       <Checkbox
                         checked={checked}
                         onCheckedChange={(value) => {
@@ -1584,102 +1658,76 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                             : current.filter((name) => name !== column.name);
                           const currentFormats = draft.config.table_column_formats || {};
                           const nextFormats = value
-                            ? currentFormats
+                            ? { ...currentFormats, [column.name]: currentFormats[column.name] || inferredFormat }
                             : Object.fromEntries(Object.entries(currentFormats).filter(([key]) => key !== column.name));
                           update({ config: { ...draft.config, columns: next, table_column_formats: nextFormats } });
                         }}
                       />
-                      <span>{column.name}</span>
-                    </label>
+                      <div className="min-w-0">
+                        <p className="text-xs truncate">{column.name}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">tipo: {getColumnType(column.name)}</p>
+                      </div>
+                      {checked ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-muted-foreground w-7 text-center">#{selectedIndex + 1}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            disabled={selectedIndex <= 0}
+                            onClick={() => {
+                              if (selectedIndex <= 0) return;
+                              const next = [...selectedTableColumns];
+                              [next[selectedIndex - 1], next[selectedIndex]] = [next[selectedIndex], next[selectedIndex - 1]];
+                              update({ config: { ...draft.config, columns: next } });
+                            }}
+                          >
+                            <ChevronUp className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            disabled={selectedIndex === selectedTableColumns.length - 1}
+                            onClick={() => {
+                              if (selectedIndex < 0 || selectedIndex === selectedTableColumns.length - 1) return;
+                              const next = [...selectedTableColumns];
+                              [next[selectedIndex + 1], next[selectedIndex]] = [next[selectedIndex], next[selectedIndex + 1]];
+                              update({ config: { ...draft.config, columns: next } });
+                            }}
+                          >
+                            <ChevronDown className="h-3 w-3" />
+                          </Button>
+                          <Select
+                            value={formatValue}
+                            onValueChange={(value) =>
+                              update({
+                                config: {
+                                  ...draft.config,
+                                  table_column_formats: {
+                                    ...(draft.config.table_column_formats || {}),
+                                    [column.name]: value,
+                                  },
+                                },
+                              })}
+                          >
+                            <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {formatOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground pr-1">Nao selecionada</span>
+                      )}
+                    </div>
                   );
                 })}
               </div>
-              {selectedTableColumns.length > 0 && (
-                <div className="space-y-1.5 border rounded-md p-2">
-                  <Label className="text-[11px] text-muted-foreground">Ordem e formato das colunas selecionadas</Label>
-                  {selectedTableColumns.map((columnName, index) => {
-                    const columnType = getColumnType(columnName);
-                    const formatValue = draft.config.table_column_formats?.[columnName] || "native";
-                    const formatOptions =
-                      columnType === "numeric"
-                        ? [
-                            { value: "native", label: "Nativo" },
-                            { value: "currency_brl", label: "Moeda (R$)" },
-                              { value: "number_2", label: "Numero (2 casas)" },
-                            { value: "integer", label: "Inteiro" },
-                            { value: "text", label: "Texto" },
-                          ]
-                        : columnType === "temporal"
-                          ? [
-                              { value: "native", label: "Nativo" },
-                              { value: "datetime", label: "Data e hora" },
-                              { value: "date", label: "So data" },
-                              { value: "time", label: "So hora" },
-                              { value: "year", label: "So ano" },
-                              { value: "month", label: "So mes" },
-                              { value: "day", label: "So dia" },
-                              { value: "text", label: "Texto" },
-                            ]
-                          : [
-                              { value: "native", label: "Nativo" },
-                              { value: "text", label: "Texto" },
-                            ];
-                    return (
-                      <div key={columnName} className="flex items-center gap-1">
-                        <span className="text-xs flex-1 truncate">{columnName}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          disabled={index === 0}
-                          onClick={() => {
-                            const next = [...selectedTableColumns];
-                            [next[index - 1], next[index]] = [next[index], next[index - 1]];
-                            update({ config: { ...draft.config, columns: next } });
-                          }}
-                        >
-                          <ChevronUp className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          disabled={index === selectedTableColumns.length - 1}
-                          onClick={() => {
-                            const next = [...selectedTableColumns];
-                            [next[index + 1], next[index]] = [next[index], next[index + 1]];
-                            update({ config: { ...draft.config, columns: next } });
-                          }}
-                        >
-                          <ChevronDown className="h-3 w-3" />
-                        </Button>
-                        <Select
-                          value={formatValue}
-                          onValueChange={(value) =>
-                            update({
-                              config: {
-                                ...draft.config,
-                                table_column_formats: {
-                                  ...(draft.config.table_column_formats || {}),
-                                  [columnName]: value,
-                                },
-                              },
-                            })}
-                        >
-                          <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {formatOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
               <div className="flex gap-2 items-center">
                 <Label className="text-xs text-muted-foreground">Itens por pagina</Label>
                 <Select

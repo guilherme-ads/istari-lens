@@ -278,6 +278,7 @@ type RendererProps = {
   preloadedData?: ApiDashboardWidgetDataResponse;
   preloadedLoading?: boolean;
   preloadedError?: string | null;
+  hideTableExport?: boolean;
 };
 
 const EmptyWidgetState = ({ text }: { text: string }) => (
@@ -335,7 +336,15 @@ const formatByTableConfig = (value: unknown, format: string): string => {
   return String(value);
 };
 
-const MiniTable = ({ rows, widget }: { rows: Record<string, unknown>[]; widget: DashboardWidget }) => {
+const MiniTable = ({
+  rows,
+  widget,
+  hideExport = false,
+}: {
+  rows: Record<string, unknown>[];
+  widget: DashboardWidget;
+  hideExport?: boolean;
+}) => {
   const [sortBy, setSortBy] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(1);
   const configured = widget.config.columns || [];
@@ -404,10 +413,12 @@ const MiniTable = ({ rows, widget }: { rows: Record<string, unknown>[]; widget: 
     <div className="flex h-full w-full flex-col gap-2 text-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted-foreground">{sortedRows.length.toLocaleString("pt-BR")} linhas</span>
-        <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={exportCsv}>
-          <Download className="h-3.5 w-3.5 mr-1.5" />
-          Exportar CSV
-        </Button>
+        {!hideExport && (
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={exportCsv}>
+            <Download className="h-3.5 w-3.5 mr-1.5" />
+            Exportar CSV
+          </Button>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto rounded-lg border border-border">
@@ -487,6 +498,7 @@ export const WidgetRenderer = ({
   preloadedData,
   preloadedLoading = false,
   preloadedError = null,
+  hideTableExport = false,
 }: RendererProps) => {
   const isTextWidget = widget.config.widget_type === "text";
   const shouldFetch = !disableFetch && !!dashboardId && !isTextWidget;
@@ -605,7 +617,7 @@ export const WidgetRenderer = ({
   const type = widget.config.widget_type;
 
   if (type === "table") {
-    return <MiniTable rows={rows} widget={widget} />;
+    return <MiniTable rows={rows} widget={widget} hideExport={hideTableExport} />;
   }
 
   if (type === "dre") {
@@ -613,9 +625,21 @@ export const WidgetRenderer = ({
     const firstRow = rows[0] || {};
     const renderedRows = dreRowsCfg.map((item, index) => {
       const raw = toFiniteNumber(firstRow[`m${index}`]);
-      const effective = item.row_type === "deduction" ? -raw : raw;
+      let impact: "add" | "subtract" = "add";
+      if (item.row_type === "deduction") {
+        impact = item.impact || "subtract";
+      } else if (item.row_type === "detail") {
+        for (let previous = index - 1; previous >= 0; previous -= 1) {
+          if (dreRowsCfg[previous]?.row_type === "deduction") {
+            impact = dreRowsCfg[previous]?.impact || "subtract";
+            break;
+          }
+        }
+      }
+      const effective = impact === "subtract" ? -raw : raw;
       return {
         ...item,
+        impact,
         raw,
         effective,
       };
@@ -646,13 +670,14 @@ export const WidgetRenderer = ({
           <tbody>
             {renderedRows.map((row, index) => {
               const isResult = row.row_type === "result";
-              const isDeduction = row.row_type === "deduction";
+              const isSubtract = row.impact === "subtract";
               const isDetail = row.row_type === "detail";
               const rowTextColorClass = isDetail ? "text-muted-foreground" : "text-foreground";
-              const accountLabel = isDeduction
-                ? `(-) ${row.title.replace(/^\(-\)\s*/i, "")}`
+              const normalizedTitle = row.title.replace(/^\((?:-|\+)\)\s*/i, "");
+              const accountLabel = row.row_type === "deduction"
+                ? (isSubtract ? `(-) ${normalizedTitle}` : `(+) ${normalizedTitle}`)
                 : row.title;
-              const valueText = isDeduction
+              const valueText = isSubtract
                 ? `(${formatCurrencyBRL(Math.abs(row.effective))})`
                 : formatCurrencyBRL(row.effective);
               return (
@@ -662,10 +687,10 @@ export const WidgetRenderer = ({
                   >
                     {accountLabel}
                   </td>
-                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isDeduction ? "text-rose-500" : rowTextColorClass}`}>
+                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isSubtract ? "text-rose-500" : rowTextColorClass}`}>
                     {valueText}
                   </td>
-                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isDeduction ? "text-rose-500" : rowTextColorClass}`}>
+                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isSubtract ? "text-rose-500" : rowTextColorClass}`}>
                     {formatPercentOfTotal(row.effective, totalBase)}
                   </td>
                 </tr>

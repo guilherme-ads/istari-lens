@@ -130,9 +130,10 @@ const BuilderPage = () => {
   const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
   const datasetSourceLabel = useMemo(() => {
-    if (view) return `${view.schema}.${view.name}`;
     const primaryResource = (dataset?.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource;
-    return String(primaryResource || "__dataset_base");
+    if (typeof primaryResource === "string" && primaryResource.trim()) return primaryResource.trim();
+    if (view) return `${view.schema}.${view.name}`;
+    return "__dataset_base";
   }, [dataset, view]);
   const existingDashboard = useMemo(() => dashboards.find((item) => item.id === dashboardId), [dashboards, dashboardId]);
   const isEditingExistingDashboard = !!dashboardId;
@@ -590,6 +591,8 @@ const BuilderPage = () => {
       return;
     }
 
+    const minLoadingMs = 700;
+    const startedAt = Date.now();
     setRefreshingData(true);
     try {
       await queryClient.invalidateQueries({ queryKey: ["widget-data", targetId], refetchType: "active" });
@@ -597,6 +600,10 @@ const BuilderPage = () => {
     } catch {
       toast({ title: "Falha ao atualizar dados", variant: "destructive" });
     } finally {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < minLoadingMs) {
+        await new Promise((resolve) => setTimeout(resolve, minLoadingMs - elapsed));
+      }
       setRefreshingData(false);
     }
   }, [activeDashboardId, dashboardId, queryClient, toast]);
@@ -717,7 +724,7 @@ const BuilderPage = () => {
 
           <div className="flex items-center gap-2 text-caption shrink-0">
             <span className="hidden sm:inline">
-              {datasetSourceLabel} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+              Base semantica: {datasetSourceLabel} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
             </span>
             <div className="h-4 w-px bg-border hidden sm:block" />
             <Tooltip>

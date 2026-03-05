@@ -11,7 +11,7 @@ const widgetTypes: { value: WidgetType; label: string; icon: typeof BarChartHori
   { value: "bar", label: "Barra", icon: BarChartHorizontal, desc: "Categoria x metrica agregada", whenToUse: "Quando comparar poucas categorias em barras horizontais." },
   { value: "column", label: "Coluna", icon: BarChart3, desc: "Categoria x metrica agregada em barras verticais", whenToUse: "Quando comparar categorias em barras verticais." },
   { value: "donut", label: "Rosca", icon: PieChart, desc: "Distribuicao percentual por categoria", whenToUse: "Quando mostrar composicao/participação percentual entre categorias." },
-  { value: "dre", label: "DRE", icon: Table2, desc: "Tabela de demonstrativo com Totais, Contas Redutoras e Contas Analiticas", whenToUse: "Quando montar um demonstrativo financeiro com totais, contas redutoras e contas analiticas." },
+  { value: "dre", label: "DRE", icon: Table2, desc: "Tabela de demonstrativo com Totais, Contas Dedura e Contas Analiticas", whenToUse: "Quando montar um demonstrativo financeiro com totais, contas dedura e contas analiticas." },
   { value: "line", label: "Linha", icon: LineChart, desc: "Serie temporal agregada", whenToUse: "Quando analisar tendencia ao longo do tempo." },
   { value: "table", label: "Tabela", icon: Table2, desc: "Linhas detalhadas com colunas selecionadas", whenToUse: "Quando precisar ver detalhes linha a linha e exportar dados." },
   { value: "text", label: "Texto", icon: TextCursorInput, desc: "Bloco de texto livre para título ou anotações", whenToUse: "Quando incluir contexto, explicações ou instrucoes no dashboard." },

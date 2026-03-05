@@ -167,9 +167,10 @@ const DashboardViewPage = () => {
   const canEditDashboard = (dashboard?.accessLevel || "view") !== "view";
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
   const datasetSourceLabel = useMemo(() => {
-    if (view) return `${view.schema}.${view.name}`;
     const primaryResource = (dataset?.baseQuerySpec?.base as { primary_resource?: string } | undefined)?.primary_resource;
-    return String(primaryResource || "__dataset_base");
+    if (typeof primaryResource === "string" && primaryResource.trim()) return primaryResource.trim();
+    if (view) return `${view.schema}.${view.name}`;
+    return "__dataset_base";
   }, [dataset, view]);
   const effectiveColumns = useMemo(
     () => {
@@ -450,7 +451,7 @@ const DashboardViewPage = () => {
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-xs text-muted-foreground hidden sm:inline">
               <Database className="h-3 w-3 inline mr-1" />
-              {datasetSourceLabel}
+              Base semantica: {datasetSourceLabel}
             </span>
             <div className="h-4 w-px bg-border hidden sm:block" />
             <Tooltip>

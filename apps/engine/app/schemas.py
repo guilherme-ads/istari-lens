@@ -62,6 +62,7 @@ class DerivedMetricSpec(BaseModel):
 class DreRowSpec(BaseModel):
     title: str
     row_type: str
+    impact: str = "add"
     metrics: list[MetricSpec] = Field(default_factory=list)
 
 
