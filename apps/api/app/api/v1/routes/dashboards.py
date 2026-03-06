@@ -1,13 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import mean
 import json
+from uuid import uuid4
 
 from app.shared.infrastructure.database import get_db
 from app.modules.widgets.application.execution_coordinator import _to_engine_query_spec, get_dashboard_widget_executor
-from app.modules.core.legacy.models import Dashboard, DashboardWidget, DashboardEmailShare, Dataset, DataSource, User, View
+from app.modules.core.legacy.models import (
+    Dashboard,
+    DashboardWidget,
+    DashboardEmailShare,
+    DashboardVersion,
+    DashboardEditLock,
+    Dataset,
+    DataSource,
+    User,
+    View,
+)
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
 from app.modules.core.legacy.schemas import (
     DashboardResponse,
@@ -30,6 +41,14 @@ from app.modules.core.legacy.schemas import (
     DashboardDebugQueriesResponse,
     DashboardDebugQueryItemResponse,
     DashboardDebugFinalQueryItemResponse,
+    DashboardSaveRequest,
+    DashboardVersionSummaryResponse,
+    DashboardExportResponse,
+    DashboardImportRequest,
+    DashboardImportConflictResponse,
+    DashboardImportPreviewResponse,
+    DashboardPublicResponse,
+    DashboardEditLockResponse,
 )
 from app.modules.widgets.domain.config import (
     FilterConfig,
@@ -42,10 +61,16 @@ router = APIRouter(prefix="/dashboards", tags=["dashboards"])
 
 ACCESS_RANK = {"view": 1, "edit": 2, "owner": 3}
 DATASET_WIDGET_VIEW_NAME = "__dataset_base"
+LOCK_TTL_MINUTES = 15
+MAX_DASHBOARD_VERSIONS = 3
 
 
 def _normalize_email(value: str) -> str:
     return value.strip().lower()
+
+
+def _new_public_share_key() -> str:
+    return uuid4().hex
 
 
 def _resolve_dashboard_access(dashboard: Dashboard, user: User) -> tuple[str, str] | None:
@@ -68,6 +93,8 @@ def _resolve_dashboard_access(dashboard: Dashboard, user: User) -> tuple[str, st
         workspace_level = "edit"
     elif dashboard.visibility == "workspace_view":
         workspace_level = "view"
+    elif dashboard.visibility == "public_view":
+        workspace_level = "view"
 
     if direct_level and workspace_level:
         if ACCESS_RANK[direct_level] >= ACCESS_RANK[workspace_level]:
@@ -76,7 +103,10 @@ def _resolve_dashboard_access(dashboard: Dashboard, user: User) -> tuple[str, st
     if direct_level:
         return (direct_level, "direct")
     if workspace_level:
-        return (workspace_level, "workspace")
+        source = "public" if dashboard.visibility == "public_view" else "workspace"
+        return (workspace_level, source)
+    if user.is_admin and dashboard.visibility == "public_view":
+        return ("view", "public")
     return None
 
 
@@ -121,6 +151,7 @@ def _dashboard_response_for_user(dashboard: Dashboard, user: User) -> DashboardR
         access_level=level,
         access_source=source,
         visibility=dashboard.visibility or "private",
+        public_share_key=dashboard.public_share_key,
         name=dashboard.name,
         description=dashboard.description,
         is_active=dashboard.is_active,
@@ -241,6 +272,296 @@ def _combined_load_score(
 
 def _widget_response(widget: DashboardWidget) -> DashboardWidgetResponse:
     return DashboardWidgetResponse.model_validate(widget)
+
+
+def _dashboard_snapshot_payload(dashboard: Dashboard, *, include_visibility: bool = True) -> dict:
+    widgets = sorted(dashboard.widgets or [], key=lambda item: (item.position, item.id))
+    payload = {
+        "dataset_id": dashboard.dataset_id,
+        "name": dashboard.name,
+        "description": dashboard.description,
+        "is_active": dashboard.is_active,
+        "layout_config": dashboard.layout_config or [],
+        "native_filters": dashboard.native_filters or [],
+        "widgets": [
+            {
+                "id": widget.id,
+                "widget_type": widget.widget_type,
+                "title": widget.title,
+                "position": widget.position,
+                "config": widget.query_config if isinstance(widget.query_config, dict) else {},
+                "config_version": widget.config_version,
+                "visualization_config": widget.visualization_config,
+            }
+            for widget in widgets
+        ],
+    }
+    if include_visibility:
+        payload["visibility"] = dashboard.visibility or "private"
+    return payload
+
+
+def _persist_dashboard_version(
+    db: Session,
+    dashboard: Dashboard,
+    user: User | None,
+) -> None:
+    current_version = (
+        db.query(func.max(DashboardVersion.version_number))
+        .filter(DashboardVersion.dashboard_id == dashboard.id)
+        .scalar()
+    ) or 0
+    version = DashboardVersion(
+        dashboard_id=dashboard.id,
+        version_number=int(current_version) + 1,
+        snapshot=_dashboard_snapshot_payload(dashboard),
+        created_by_id=user.id if user else None,
+    )
+    db.add(version)
+    db.flush()
+
+    versions = (
+        db.query(DashboardVersion)
+        .filter(DashboardVersion.dashboard_id == dashboard.id)
+        .order_by(DashboardVersion.version_number.desc())
+        .all()
+    )
+    for stale in versions[MAX_DASHBOARD_VERSIONS:]:
+        db.delete(stale)
+
+
+def _clean_expired_lock(dashboard: Dashboard, db: Session) -> None:
+    lock = dashboard.edit_lock
+    if lock and lock.expires_at <= datetime.utcnow():
+        db.delete(lock)
+        db.flush()
+
+
+def _lock_response(dashboard: Dashboard, current_user: User | None) -> DashboardEditLockResponse:
+    lock = dashboard.edit_lock
+    now = datetime.utcnow()
+    if lock is None or lock.expires_at <= now:
+        return DashboardEditLockResponse(
+            dashboard_id=dashboard.id,
+            is_locked=False,
+            is_locked_by_current_user=False,
+        )
+    return DashboardEditLockResponse(
+        dashboard_id=dashboard.id,
+        is_locked=True,
+        is_locked_by_current_user=bool(current_user and lock.user_id == current_user.id),
+        locked_by_user_id=lock.user_id,
+        locked_by_email=lock.user.email if lock.user else None,
+        expires_at=lock.expires_at,
+    )
+
+
+def _require_dashboard_edit_lock(dashboard: Dashboard, current_user: User, db: Session) -> None:
+    _clean_expired_lock(dashboard, db)
+    lock = dashboard.edit_lock
+    if lock and lock.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dashboard is currently locked for editing by {lock.user.email if lock.user else 'another user'}",
+        )
+
+
+def _apply_dashboard_snapshot(
+    *,
+    dashboard: Dashboard,
+    snapshot: dict,
+    db: Session,
+    apply_visibility: bool = True,
+) -> None:
+    dashboard.name = str(snapshot.get("name") or dashboard.name)
+    dashboard.description = snapshot.get("description")
+    dashboard.is_active = bool(snapshot.get("is_active", True))
+    if apply_visibility:
+        raw_visibility = str(snapshot.get("visibility") or "private")
+        dashboard.visibility = raw_visibility if raw_visibility in {"private", "workspace_view", "workspace_edit", "public_view"} else "private"
+    raw_layout = snapshot.get("layout_config") if isinstance(snapshot.get("layout_config"), list) else []
+    dashboard.native_filters = snapshot.get("native_filters") or []
+
+    incoming = snapshot.get("widgets") if isinstance(snapshot.get("widgets"), list) else []
+    existing_by_id = {widget.id: widget for widget in dashboard.widgets or []}
+    retained_ids: set[int] = set()
+    remapped_widget_ids: dict[int, int] = {}
+    for index, item in enumerate(incoming):
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("id")
+        source_widget_id = int(raw_id) if isinstance(raw_id, int) else None
+        widget = existing_by_id.get(source_widget_id) if source_widget_id is not None else None
+        config_payload = item.get("config")
+        if not isinstance(config_payload, dict):
+            continue
+        if widget is None:
+            widget = DashboardWidget(
+                dashboard_id=dashboard.id,
+                widget_type=str(item.get("widget_type") or config_payload.get("widget_type") or "table"),
+                title=item.get("title"),
+                position=int(item.get("position") or index),
+                query_config=config_payload,
+                config_version=int(item.get("config_version") or 1),
+                visualization_config=item.get("visualization_config"),
+            )
+            db.add(widget)
+            db.flush()
+        else:
+            widget.widget_type = str(item.get("widget_type") or config_payload.get("widget_type") or widget.widget_type)
+            widget.title = item.get("title")
+            widget.position = int(item.get("position") or index)
+            widget.query_config = config_payload
+            widget.config_version = int(item.get("config_version") or widget.config_version or 1)
+            widget.visualization_config = item.get("visualization_config")
+        retained_ids.add(widget.id)
+        if source_widget_id is not None:
+            remapped_widget_ids[source_widget_id] = widget.id
+
+    for widget in list(dashboard.widgets or []):
+        if widget.id not in retained_ids:
+            db.delete(widget)
+
+    # Preserve section/row placement while adapting source widget IDs to persisted IDs.
+    normalized_layout: list[dict] = []
+    for section in raw_layout:
+        if not isinstance(section, dict):
+            continue
+        next_section = dict(section)
+        widgets_cfg = section.get("widgets")
+        if isinstance(widgets_cfg, list):
+            remapped_entries: list[dict] = []
+            for entry in widgets_cfg:
+                if not isinstance(entry, dict):
+                    continue
+                raw_widget_id = entry.get("widget_id")
+                widget_id = int(raw_widget_id) if isinstance(raw_widget_id, int) else None
+                mapped_id = remapped_widget_ids.get(widget_id) if widget_id is not None else None
+                if mapped_id is None:
+                    continue
+                next_entry = dict(entry)
+                next_entry["widget_id"] = mapped_id
+                remapped_entries.append(next_entry)
+            next_section["widgets"] = remapped_entries
+        normalized_layout.append(next_section)
+    dashboard.layout_config = normalized_layout
+
+
+def _preview_dashboard_import_compatibility(
+    *,
+    dataset: Dataset,
+    snapshot: dict,
+) -> DashboardImportPreviewResponse:
+    target_dataset_id = int(dataset.id)
+    source_dataset_id_raw = snapshot.get("dataset_id")
+    source_dataset_id = int(source_dataset_id_raw) if isinstance(source_dataset_id_raw, int) else None
+    same_dataset = source_dataset_id == target_dataset_id if source_dataset_id is not None else False
+    column_types = _dataset_column_types(dataset)
+
+    conflicts: list[DashboardImportConflictResponse] = []
+    total_widgets = 0
+    valid_widgets = 0
+    invalid_widgets = 0
+
+    raw_native_filters = snapshot.get("native_filters")
+    parsed_native_filters = _parse_native_filters_from_payload(raw_native_filters if isinstance(raw_native_filters, list) else [])
+    native_filter_errors = []
+    for index, native_filter in enumerate(parsed_native_filters):
+        if native_filter.column not in column_types:
+            native_filter_errors.append(index)
+    for index in native_filter_errors:
+        conflicts.append(
+            DashboardImportConflictResponse(
+                scope="native_filter",
+                code="missing_column",
+                field=f"native_filters[{index}].column",
+                message="Coluna do filtro nativo nao existe no dataset de destino.",
+            )
+        )
+
+    incoming_widgets = snapshot.get("widgets") if isinstance(snapshot.get("widgets"), list) else []
+    for widget_index, item in enumerate(incoming_widgets):
+        if not isinstance(item, dict):
+            continue
+        total_widgets += 1
+        widget_title = str(item.get("title") or f"Widget {widget_index + 1}")
+        config_payload = item.get("config")
+        if not isinstance(config_payload, dict):
+            invalid_widgets += 1
+            conflicts.append(
+                DashboardImportConflictResponse(
+                    scope="widget",
+                    code="invalid_config",
+                    widget_index=widget_index,
+                    widget_title=widget_title,
+                    field=f"widgets[{widget_index}].config",
+                    message="Config do widget ausente ou invalida.",
+                )
+            )
+            continue
+        normalized_payload = config_payload
+        if "widget_type" not in normalized_payload and "type" in normalized_payload:
+            normalized_payload = _adapt_legacy_query_config(normalized_payload)
+        try:
+            config = WidgetConfig.model_validate(normalized_payload)
+            config = config.model_copy(update={"view_name": DATASET_WIDGET_VIEW_NAME})
+            validate_widget_config_against_columns(config, column_types)
+            valid_widgets += 1
+        except WidgetConfigValidationError as exc:
+            invalid_widgets += 1
+            for field, messages in exc.field_errors.items():
+                for message in messages:
+                    conflicts.append(
+                        DashboardImportConflictResponse(
+                            scope="widget",
+                            code="validation_error",
+                            widget_index=widget_index,
+                            widget_title=widget_title,
+                            field=field,
+                            message=message,
+                        )
+                    )
+        except Exception as exc:
+            invalid_widgets += 1
+            conflicts.append(
+                DashboardImportConflictResponse(
+                    scope="widget",
+                    code="invalid_config",
+                    widget_index=widget_index,
+                    widget_title=widget_title,
+                    field=f"widgets[{widget_index}].config",
+                    message=f"Config de widget invalida: {exc}",
+                )
+            )
+
+    if invalid_widgets == 0 and not native_filter_errors:
+        compatibility: str = "compatible"
+    elif valid_widgets > 0:
+        compatibility = "partial"
+    else:
+        compatibility = "incompatible"
+
+    if source_dataset_id is not None and source_dataset_id != target_dataset_id:
+        conflicts.insert(
+            0,
+            DashboardImportConflictResponse(
+                scope="metadata",
+                code="dataset_mismatch",
+                field="dataset_id",
+                message=f"Dashboard de origem usa dataset {source_dataset_id}, destino atual e {target_dataset_id}.",
+            ),
+        )
+
+    return DashboardImportPreviewResponse(
+        source_dataset_id=source_dataset_id,
+        target_dataset_id=target_dataset_id,
+        same_dataset=same_dataset,
+        compatibility=compatibility,  # type: ignore[arg-type]
+        total_widgets=total_widgets,
+        valid_widgets=valid_widgets,
+        invalid_widgets=invalid_widgets,
+        conflicts=conflicts,
+    )
 
 
 def _ensure_dashboard_dataset_is_refreshable(dashboard: Dashboard) -> None:
@@ -650,6 +971,7 @@ async def list_dashboard_catalog(
                 access_level=level,
                 access_source=source,
                 visibility=dashboard.visibility or "private",
+                public_share_key=dashboard.public_share_key,
                 created_by_name=creator.full_name if creator else None,
                 created_by_email=creator.email if creator else None,
                 widget_count=len(dashboard.widgets),
@@ -694,6 +1016,407 @@ async def list_dashboard_shareable_users(
         for user in users
         if user.id != current_user.id
     ]
+
+
+@router.get("/public/{public_share_key}", response_model=DashboardPublicResponse)
+async def get_public_dashboard(
+    public_share_key: str,
+    db: Session = Depends(get_db),
+):
+    dashboard = (
+        db.query(Dashboard)
+        .options(joinedload(Dashboard.widgets), joinedload(Dashboard.dataset).joinedload(Dataset.datasource))
+        .filter(Dashboard.public_share_key == public_share_key)
+        .first()
+    )
+    if not dashboard or dashboard.visibility != "public_view":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public dashboard not found")
+    if not dashboard.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public dashboard not found")
+    return DashboardPublicResponse(
+        id=dashboard.id,
+        dataset_id=dashboard.dataset_id,
+        visibility="public_view",
+        public_share_key=dashboard.public_share_key,
+        name=dashboard.name,
+        description=dashboard.description,
+        is_active=dashboard.is_active,
+        layout_config=dashboard.layout_config or [],
+        native_filters=dashboard.native_filters or [],
+        widgets=[_widget_response(widget) for widget in dashboard.widgets],
+        created_at=dashboard.created_at,
+        updated_at=dashboard.updated_at,
+    )
+
+
+@router.post("/public/{public_share_key}/widgets/data", response_model=DashboardWidgetBatchDataResponse)
+async def get_public_dashboard_widgets_data(
+    public_share_key: str,
+    request: DashboardWidgetBatchDataRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+):
+    dashboard = (
+        db.query(Dashboard)
+        .options(joinedload(Dashboard.email_shares))
+        .filter(Dashboard.public_share_key == public_share_key)
+        .first()
+    )
+    if not dashboard or dashboard.visibility != "public_view":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public dashboard not found")
+    dashboard_id = dashboard.id
+    if not request.widget_ids:
+        return DashboardWidgetBatchDataResponse(results=[])
+
+    requested_widgets = (
+        db.query(DashboardWidget)
+        .options(
+            joinedload(DashboardWidget.dashboard)
+            .joinedload(Dashboard.dataset)
+            .joinedload(Dataset.view)
+            .joinedload(View.columns),
+            joinedload(DashboardWidget.dashboard).joinedload(Dashboard.dataset).joinedload(Dataset.datasource),
+        )
+        .filter(
+            DashboardWidget.dashboard_id == dashboard_id,
+            DashboardWidget.id.in_(request.widget_ids),
+        )
+        .all()
+    )
+    widget_by_id = {widget.id: widget for widget in requested_widgets}
+    missing_ids = [widget_id for widget_id in request.widget_ids if widget_id not in widget_by_id]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"Widgets not found: {missing_ids}")
+
+    first_widget = widget_by_id[request.widget_ids[0]]
+    resolved_dashboard = first_widget.dashboard
+    if not resolved_dashboard or not resolved_dashboard.dataset:
+        raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
+    _ensure_dashboard_dataset_is_refreshable(resolved_dashboard)
+
+    all_widgets = (
+        db.query(DashboardWidget)
+        .options(
+            joinedload(DashboardWidget.dashboard)
+            .joinedload(Dashboard.dataset)
+            .joinedload(Dataset.view)
+            .joinedload(View.columns),
+            joinedload(DashboardWidget.dashboard).joinedload(Dashboard.dataset).joinedload(Dataset.datasource),
+        )
+        .filter(DashboardWidget.dashboard_id == dashboard_id)
+        .all()
+    )
+    configs_by_widget_id: dict[int, WidgetConfig] = {}
+    for widget in all_widgets:
+        configs_by_widget_id[widget.id] = _resolve_widget_config(widget, request.global_filters)
+
+    executor = get_dashboard_widget_executor()
+    result_by_widget = await executor.execute_widgets(
+        dashboard_id=dashboard_id,
+        dataset_id=resolved_dashboard.dataset_id,
+        dataset=resolved_dashboard.dataset,
+        datasource=resolved_dashboard.dataset.datasource,
+        widgets=requested_widgets,
+        configs_by_widget_id=configs_by_widget_id,
+        user=None,
+        runtime_filters=request.global_filters,
+        correlation_id=_resolve_correlation_id(http_request),
+    )
+
+    results: list[DashboardWidgetBatchDataItemResponse] = []
+    for widget_id in request.widget_ids:
+        widget = widget_by_id[widget_id]
+        execution = result_by_widget[widget_id]
+        widget.last_execution_ms = execution.metadata.execution_time_ms
+        widget.last_executed_at = datetime.utcnow()
+        results.append(
+            DashboardWidgetBatchDataItemResponse(
+                widget_id=widget_id,
+                columns=execution.payload.columns,
+                rows=execution.payload.rows,
+                row_count=execution.payload.row_count,
+                cache_hit=execution.metadata.cache_hit,
+                stale=execution.metadata.stale,
+                deduped=execution.metadata.deduped,
+                batched=execution.metadata.batched,
+                degraded=execution.metadata.degraded,
+                execution_time_ms=execution.metadata.execution_time_ms,
+                sql_hash=execution.metadata.sql_hash,
+            )
+        )
+    db.commit()
+    return DashboardWidgetBatchDataResponse(results=results)
+
+
+@router.post("/{dashboard_id}/save", response_model=DashboardResponse)
+async def save_dashboard(
+    dashboard_id: int,
+    request: DashboardSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[
+            joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
+            joinedload(Dashboard.widgets),
+            joinedload(Dashboard.email_shares),
+            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
+        ],
+    )
+    _require_dashboard_edit_lock(dashboard, current_user, db)
+    _persist_dashboard_version(db, dashboard, current_user)
+
+    snapshot = {
+        "dataset_id": dashboard.dataset_id,
+        "name": request.name if request.name is not None else dashboard.name,
+        "description": request.description if request.description is not None else dashboard.description,
+        "is_active": request.is_active if request.is_active is not None else dashboard.is_active,
+        "visibility": request.visibility if request.visibility is not None else dashboard.visibility,
+        "layout_config": request.layout_config,
+        "native_filters": [item.model_dump(mode="json") for item in request.native_filters],
+        "widgets": [
+            {
+                "id": item.id,
+                "widget_type": item.widget_type,
+                "title": item.title,
+                "position": item.position,
+                "config": item.config.model_dump(mode="json"),
+                "config_version": item.config_version,
+                "visualization_config": item.visualization_config,
+            }
+            for item in request.widgets
+        ],
+    }
+    _apply_dashboard_snapshot(dashboard=dashboard, snapshot=snapshot, db=db)
+    if dashboard.public_share_key is None:
+        dashboard.public_share_key = _new_public_share_key()
+    db.commit()
+    db.refresh(dashboard)
+    return _dashboard_response_for_user(dashboard, current_user)
+
+
+@router.get("/{dashboard_id}/versions", response_model=list[DashboardVersionSummaryResponse])
+async def list_dashboard_versions(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    versions = (
+        db.query(DashboardVersion)
+        .filter(DashboardVersion.dashboard_id == dashboard_id)
+        .order_by(DashboardVersion.version_number.desc())
+        .all()
+    )
+    return [DashboardVersionSummaryResponse.model_validate(item) for item in versions]
+
+
+@router.post("/{dashboard_id}/versions/{version_id}/restore", response_model=DashboardResponse)
+async def restore_dashboard_version(
+    dashboard_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[
+            joinedload(Dashboard.widgets),
+            joinedload(Dashboard.email_shares),
+            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
+        ],
+    )
+    _require_dashboard_edit_lock(dashboard, current_user, db)
+    version = (
+        db.query(DashboardVersion)
+        .filter(DashboardVersion.id == version_id, DashboardVersion.dashboard_id == dashboard_id)
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    _persist_dashboard_version(db, dashboard, current_user)
+    snapshot = version.snapshot if isinstance(version.snapshot, dict) else {}
+    _apply_dashboard_snapshot(dashboard=dashboard, snapshot=snapshot, db=db)
+    db.commit()
+    db.refresh(dashboard)
+    return _dashboard_response_for_user(dashboard, current_user)
+
+
+@router.get("/{dashboard_id}/export", response_model=DashboardExportResponse)
+async def export_dashboard(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.widgets), joinedload(Dashboard.email_shares)],
+    )
+    return DashboardExportResponse(
+        format="istari.dashboard.v1",
+        exported_at=datetime.utcnow(),
+        dashboard=_dashboard_snapshot_payload(dashboard, include_visibility=False),
+    )
+
+
+@router.post("/import/preview", response_model=DashboardImportPreviewResponse)
+async def preview_dashboard_import(
+    request: DashboardImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+    raw = request.dashboard if isinstance(request.dashboard, dict) else {}
+    dataset_id = int(request.dataset_id or raw.get("dataset_id") or 0)
+    if dataset_id <= 0:
+        raise HTTPException(status_code=400, detail="dataset_id is required for import preview")
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return _preview_dashboard_import_compatibility(dataset=dataset, snapshot=raw)
+
+
+@router.post("/import", response_model=DashboardResponse)
+async def import_dashboard(
+    request: DashboardImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    raw = request.dashboard if isinstance(request.dashboard, dict) else {}
+    dataset_id = int(request.dataset_id or raw.get("dataset_id") or 0)
+    if dataset_id <= 0:
+        raise HTTPException(status_code=400, detail="dataset_id is required for import")
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    preview = _preview_dashboard_import_compatibility(dataset=dataset, snapshot=raw)
+    if preview.compatibility == "incompatible":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Dashboard import is incompatible with target dataset",
+                "preview": preview.model_dump(mode="json"),
+            },
+        )
+
+    dashboard = Dashboard(
+        dataset_id=dataset_id,
+        name=str(raw.get("name") or "Dashboard importado"),
+        description=raw.get("description"),
+        layout_config=[],
+        native_filters=[],
+        is_active=bool(raw.get("is_active", True)),
+        visibility="private",
+        public_share_key=_new_public_share_key(),
+        created_by_id=current_user.id,
+    )
+    db.add(dashboard)
+    db.flush()
+    sanitized_snapshot = {
+        **raw,
+        "dataset_id": dataset_id,
+    }
+    sanitized_snapshot.pop("visibility", None)
+    sanitized_snapshot.pop("public_share_key", None)
+    sanitized_snapshot.pop("shares", None)
+    _apply_dashboard_snapshot(dashboard=dashboard, snapshot=sanitized_snapshot, db=db, apply_visibility=False)
+    db.commit()
+    db.refresh(dashboard)
+    return _dashboard_response_for_user(dashboard, current_user)
+
+
+@router.get("/{dashboard_id}/lock", response_model=DashboardEditLockResponse)
+async def get_dashboard_lock(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user), joinedload(Dashboard.email_shares)],
+    )
+    _clean_expired_lock(dashboard, db)
+    db.commit()
+    db.refresh(dashboard)
+    return _lock_response(dashboard, current_user)
+
+
+@router.post("/{dashboard_id}/lock/acquire", response_model=DashboardEditLockResponse)
+async def acquire_dashboard_lock(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user), joinedload(Dashboard.email_shares)],
+    )
+    _clean_expired_lock(dashboard, db)
+    lock = dashboard.edit_lock
+    now = datetime.utcnow()
+    if lock and lock.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dashboard is currently locked for editing by {lock.user.email if lock.user else 'another user'}",
+        )
+    if lock is None:
+        lock = DashboardEditLock(
+            dashboard_id=dashboard.id,
+            user_id=current_user.id,
+            acquired_at=now,
+            expires_at=now + timedelta(minutes=LOCK_TTL_MINUTES),
+        )
+        db.add(lock)
+    else:
+        lock.user_id = current_user.id
+        lock.acquired_at = now
+        lock.expires_at = now + timedelta(minutes=LOCK_TTL_MINUTES)
+    db.commit()
+    db.refresh(dashboard)
+    return _lock_response(dashboard, current_user)
+
+
+@router.delete("/{dashboard_id}/lock", response_model=DashboardEditLockResponse)
+async def release_dashboard_lock(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="edit",
+        options=[joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user), joinedload(Dashboard.email_shares)],
+    )
+    lock = dashboard.edit_lock
+    if lock and lock.user_id == current_user.id:
+        db.delete(lock)
+        db.commit()
+        db.refresh(dashboard)
+    return _lock_response(dashboard, current_user)
 
 
 @router.get("/{dashboard_id}", response_model=DashboardResponse)
@@ -741,6 +1464,7 @@ async def create_dashboard(
         native_filters=[item.model_dump(mode="json") for item in request.native_filters],
         is_active=request.is_active,
         visibility=request.visibility,
+        public_share_key=_new_public_share_key(),
         created_by_id=current_user.id,
     )
     db.add(dashboard)
@@ -771,8 +1495,11 @@ async def update_dashboard(
             joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.email_shares),
+            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
         ],
     )
+    _require_dashboard_edit_lock(dashboard, current_user, db)
+    _persist_dashboard_version(db, dashboard, current_user)
 
     if request.name is not None:
         dashboard.name = request.name
@@ -802,7 +1529,7 @@ async def delete_dashboard(
         dashboard_id,
         current_user,
         min_level="owner",
-        options=[joinedload(Dashboard.email_shares)],
+        options=[joinedload(Dashboard.email_shares), joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user)],
     )
     if level != "owner":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can delete it")
@@ -829,6 +1556,7 @@ async def get_dashboard_sharing(
     return DashboardSharingResponse(
         dashboard_id=dashboard.id,
         visibility=dashboard.visibility or "private",
+        public_share_key=dashboard.public_share_key,
         shares=[DashboardEmailShareResponse.model_validate(item) for item in shares],
     )
 
@@ -850,11 +1578,14 @@ async def update_dashboard_visibility(
     if level != "owner":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can manage sharing")
     dashboard.visibility = request.visibility
+    if dashboard.public_share_key is None:
+        dashboard.public_share_key = _new_public_share_key()
     db.commit()
     db.refresh(dashboard)
     return DashboardSharingResponse(
         dashboard_id=dashboard.id,
         visibility=dashboard.visibility or "private",
+        public_share_key=dashboard.public_share_key,
         shares=[DashboardEmailShareResponse.model_validate(item) for item in sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))],
     )
 
@@ -915,6 +1646,7 @@ async def upsert_dashboard_email_share(
     return DashboardSharingResponse(
         dashboard_id=dashboard.id,
         visibility=dashboard.visibility or "private",
+        public_share_key=dashboard.public_share_key,
         shares=[DashboardEmailShareResponse.model_validate(item) for item in sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))],
     )
 
@@ -951,6 +1683,7 @@ async def delete_dashboard_email_share(
     return DashboardSharingResponse(
         dashboard_id=dashboard.id,
         visibility=dashboard.visibility or "private",
+        public_share_key=dashboard.public_share_key,
         shares=[DashboardEmailShareResponse.model_validate(item) for item in sorted(dashboard.email_shares, key=lambda item: (item.email, item.id))],
     )
 
@@ -971,8 +1704,11 @@ async def create_widget(
             joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.email_shares),
+            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
         ],
     )
+    _require_dashboard_edit_lock(dashboard, current_user, db)
+    _persist_dashboard_version(db, dashboard, current_user)
 
     config = _parse_widget_config(request)
     if request.widget_type != config.widget_type:
@@ -1002,13 +1738,15 @@ async def update_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _load_dashboard_for_user(
+    dashboard, _, _ = _load_dashboard_for_user(
         db,
         dashboard_id,
         current_user,
         min_level="edit",
-        options=[joinedload(Dashboard.email_shares)],
+        options=[joinedload(Dashboard.email_shares), joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user)],
     )
+    _require_dashboard_edit_lock(dashboard, current_user, db)
+    _persist_dashboard_version(db, dashboard, current_user)
     widget = db.query(DashboardWidget).filter(
         DashboardWidget.id == widget_id,
         DashboardWidget.dashboard_id == dashboard_id,
@@ -1051,13 +1789,15 @@ async def delete_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _load_dashboard_for_user(
+    dashboard, _, _ = _load_dashboard_for_user(
         db,
         dashboard_id,
         current_user,
         min_level="edit",
-        options=[joinedload(Dashboard.email_shares)],
+        options=[joinedload(Dashboard.email_shares), joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user)],
     )
+    _require_dashboard_edit_lock(dashboard, current_user, db)
+    _persist_dashboard_version(db, dashboard, current_user)
     widget = db.query(DashboardWidget).filter(
         DashboardWidget.id == widget_id,
         DashboardWidget.dashboard_id == dashboard_id,

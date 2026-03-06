@@ -336,6 +336,7 @@ export const mapDashboard = (item: ApiDashboard): Dashboard => {
     accessLevel: item.access_level,
     accessSource: item.access_source,
     visibility: item.visibility,
+    publicShareKey: item.public_share_key || undefined,
     nativeFilters: (item.native_filters || []).filter(isObject).map((filter) => ({
       column: asString(filter.column),
       op: asString(filter.op, "eq") as Dashboard["nativeFilters"][number]["op"],

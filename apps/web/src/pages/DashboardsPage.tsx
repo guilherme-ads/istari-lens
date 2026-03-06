@@ -127,7 +127,7 @@ const DashboardsPage = () => {
   });
 
   const updateVisibilityMutation = useMutation({
-    mutationFn: (visibility: "private" | "workspace_view" | "workspace_edit") =>
+    mutationFn: (visibility: "private" | "workspace_view" | "workspace_edit" | "public_view") =>
       api.updateDashboardVisibility(shareTarget!.id, { visibility }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-sharing", shareTarget?.id] });
@@ -441,6 +441,11 @@ const DashboardGridCard = ({
     </div>
 
     <div className="flex flex-wrap gap-1 mt-auto">
+      {item.visibility === "public_view" && (
+        <span className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+          Público
+        </span>
+      )}
       <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
         {item.widget_count} widgets
       </span>
@@ -501,6 +506,11 @@ const DashboardListItem = ({
       <div className="flex items-center gap-2">
         <h3 className="font-bold text-foreground truncate">{item.name}</h3>
         <code className="text-caption font-mono hidden sm:inline">{item.dataset_name}</code>
+        {item.visibility === "public_view" && (
+          <span className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+            Público
+          </span>
+        )}
       </div>
       <p className="text-body text-muted-foreground truncate mt-0.5">
         {item.created_by_name || item.created_by_email || "Não identificado"} | {formatDateTimeBR(item.last_edited_at)}
@@ -543,13 +553,13 @@ const ShareDashboardDialog = ({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   dashboard: CatalogItem;
-  visibility?: "private" | "workspace_view" | "workspace_edit";
+  visibility?: "private" | "workspace_view" | "workspace_edit" | "public_view";
   shares: Array<{ id: number; email: string; permission: "view" | "edit" }>;
   loading: boolean;
   updatingVisibility: boolean;
   sharingByEmail: boolean;
   removingShare: boolean;
-  onVisibilityChange: (visibility: "private" | "workspace_view" | "workspace_edit") => void;
+  onVisibilityChange: (visibility: "private" | "workspace_view" | "workspace_edit" | "public_view") => void;
   onShareByEmail: (payload: { email: string; permission: "view" | "edit" }) => void;
   onRemoveShare: (shareId: number) => void;
 }) => {
@@ -582,7 +592,7 @@ const ShareDashboardDialog = ({
             <Label>Escopo global do ambiente</Label>
             <Select
               value={visibility || "private"}
-              onValueChange={(value) => onVisibilityChange(value as "private" | "workspace_view" | "workspace_edit")}
+              onValueChange={(value) => onVisibilityChange(value as "private" | "workspace_view" | "workspace_edit" | "public_view")}
               disabled={loading || updatingVisibility}
             >
               <SelectTrigger className="h-9">
@@ -592,6 +602,7 @@ const ShareDashboardDialog = ({
                 <SelectItem value="private">Privado (somente dono)</SelectItem>
                 <SelectItem value="workspace_view">Todos podem ver</SelectItem>
                 <SelectItem value="workspace_edit">Todos podem editar</SelectItem>
+                <SelectItem value="public_view">Público (sem login)</SelectItem>
               </SelectContent>
             </Select>
           </div>
