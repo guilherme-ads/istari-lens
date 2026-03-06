@@ -24,6 +24,7 @@ interface DashboardCanvasProps {
   onToggleWidgetTitle: (widget: DashboardWidget) => void;
   onAddSection: (afterIndex?: number) => void;
   readOnly?: boolean;
+  refreshingWidgetIds?: Set<string>;
 }
 
 const columnOptions = [
@@ -51,6 +52,18 @@ const getWidgetWidthClass = (sectionColumns: 1 | 2 | 3 | 4, width: 1 | 2 | 3 | 4
   if (clampedWidth === 3) return "md:col-span-2 lg:col-span-3";
   if (clampedWidth === 2) return "md:col-span-2 lg:col-span-2";
   return "md:col-span-1 lg:col-span-1";
+};
+
+const getWidgetPaddingClass = (padding?: "compact" | "normal" | "comfortable"): string => {
+  if (padding === "compact") return "p-2";
+  if (padding === "comfortable") return "p-4";
+  return "p-3";
+};
+
+const getWidgetMinHeightClass = (height?: 0.5 | 1 | 2): string => {
+  if (height === 0.5) return "min-h-[100px]";
+  if (height === 2) return "min-h-[320px]";
+  return "min-h-[180px]";
 };
 
 const getLastRowRemaining = (widgets: DashboardWidget[], sectionColumns: 1 | 2 | 3 | 4): number => {
@@ -94,6 +107,7 @@ type WidgetCardProps = {
   onDuplicate: () => void;
   onToggleTitle: () => void;
   readOnly?: boolean;
+  isRefreshing?: boolean;
 };
 
 const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
@@ -111,6 +125,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
   onDuplicate,
   onToggleTitle,
   readOnly = false,
+  isRefreshing = false,
 }, ref) => (
   <motion.div
     ref={ref}
@@ -231,12 +246,13 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
         </Button>
       </div>
     )}
-    <div className={`p-3 flex items-center justify-center ${widget.config.size?.height === 0.5 ? "min-h-[100px]" : "min-h-[180px]"}`}>
+    <div className={`${getWidgetPaddingClass(widget.config.visual_padding)} flex items-stretch ${getWidgetMinHeightClass(widget.config.size?.height)}`}>
       <WidgetRenderer
         widget={widget}
         dashboardId={dashboardId}
-        heightMultiplier={widget.config.size?.height || 1}
+        heightMultiplier={(widget.config.size?.height || 1) as 0.5 | 1 | 2}
         hideTableExport={!readOnly}
+        forcedLoading={isRefreshing}
       />
     </div>
   </motion.div>
@@ -262,6 +278,7 @@ const SectionBlock = ({
   onDuplicateWidget,
   onToggleWidgetTitle,
   readOnly = false,
+  refreshingWidgetIds = new Set(),
 }: {
   dashboardId?: string;
   section: DashboardSection;
@@ -281,6 +298,7 @@ const SectionBlock = ({
   onDuplicateWidget: (w: DashboardWidget) => void;
   onToggleWidgetTitle: (w: DashboardWidget) => void;
   readOnly?: boolean;
+  refreshingWidgetIds?: Set<string>;
 }) => {
   const [editingTitle, setEditingTitle] = useState(false);
   const [draggedWidgetId, setDraggedWidgetId] = useState<string | null>(null);
@@ -445,6 +463,7 @@ const SectionBlock = ({
               onDuplicate={() => onDuplicateWidget(w)}
               onToggleTitle={() => onToggleWidgetTitle(w)}
               readOnly={readOnly}
+              isRefreshing={refreshingWidgetIds.has(w.id)}
             />
           ))}
         </AnimatePresence>
@@ -476,6 +495,7 @@ export const DashboardCanvas = ({
   onToggleWidgetTitle,
   onAddSection,
   readOnly = false,
+  refreshingWidgetIds = new Set(),
 }: DashboardCanvasProps) => {
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
 
@@ -557,6 +577,7 @@ export const DashboardCanvas = ({
               onDuplicateWidget={onDuplicateWidget}
               onToggleWidgetTitle={onToggleWidgetTitle}
               readOnly={readOnly}
+              refreshingWidgetIds={refreshingWidgetIds}
             />
             {!readOnly && (
               <motion.button

@@ -427,24 +427,28 @@ export type ApiWidgetConfig = {
     agg?: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
     value_column?: string;
     time_column: string;
-    granularity: "day" | "week" | "month" | "hour";
+    granularity: "day" | "week" | "month" | "hour" | "timestamp";
   };
   size?: {
     width: 1 | 2 | 3 | 4;
-    height: 0.5 | 1;
+    height: 0.5 | 1 | 2;
   };
   text_style?: {
     content: string;
     font_size: number;
     align: "left" | "center" | "right";
   };
+  visual_padding?: "compact" | "normal" | "comfortable";
+  visual_palette?: "default" | "warm" | "cool" | "mono" | "vivid";
   metrics: ApiWidgetMetric[];
   dimensions: string[];
   time?: {
     column: string;
-    granularity: "day" | "week" | "month" | "hour";
+    granularity: "day" | "week" | "month" | "hour" | "timestamp";
   };
   line_data_labels_enabled?: boolean;
+  line_show_grid?: boolean;
+  bar_data_labels_enabled?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;

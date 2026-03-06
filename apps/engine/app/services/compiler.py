@@ -587,7 +587,10 @@ def compile_query(spec: QuerySpec, *, max_rows: int) -> tuple[str, list[Any], in
         where_parts, params = _apply_filter(spec.filters)
         where_sql = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
         composite = spec.composite_metric
-        bucket = f"DATE_TRUNC('{composite.granularity}', {_quote_ident(composite.time_column)})"
+        if composite.granularity == "timestamp":
+            bucket = _quote_ident(composite.time_column)
+        else:
+            bucket = f"DATE_TRUNC('{composite.granularity}', {_quote_ident(composite.time_column)})"
         inner_metric = _metric_sql(composite.inner_agg, composite.value_column)
         outer_metric = _metric_sql(composite.outer_agg, "bucket_value")
         sql = (
@@ -671,7 +674,9 @@ def compile_query(spec: QuerySpec, *, max_rows: int) -> tuple[str, list[Any], in
             select_parts.append(_quote_ident(column))
     else:
         if spec.widget_type == "line" and spec.time:
-            if spec.time.granularity == "hour":
+            if spec.time.granularity == "timestamp":
+                time_expr = f"{_quote_ident(spec.time.column)} AS {_quote_ident('time_bucket')}"
+            elif spec.time.granularity == "hour":
                 time_expr = (
                     f"TO_CHAR(DATE_TRUNC('hour', {_quote_ident(spec.time.column)}), 'HH24:00') "
                     f"AS {_quote_ident('time_bucket')}"

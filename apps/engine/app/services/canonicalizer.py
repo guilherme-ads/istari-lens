@@ -12,7 +12,7 @@ from app.schemas import QuerySpec
 _CAST_SUFFIX_RE = re.compile(r"::[a-zA-Z_][a-zA-Z0-9_]*(?:\[\])?$")
 _DATE_TRUNC_RE = re.compile(r"^date_trunc\(\s*'([a-z]+)'\s*,\s*(.+)\)$", re.IGNORECASE)
 _AT_TZ_RE = re.compile(r"^(.+)\s+at\s+time\s+zone\s+'([^']+)'$", re.IGNORECASE)
-_VALID_TIME_GRANULARITIES = {"day", "week", "month", "hour"}
+_VALID_TIME_GRANULARITIES = {"day", "week", "month", "hour", "timestamp"}
 
 
 def _normalize_timezone(value: str | None) -> str:
@@ -30,6 +30,8 @@ def _normalize_time_granularity(value: str | None) -> str:
         normalized = "month"
     if normalized in {"h", "hourly"}:
         normalized = "hour"
+    if normalized in {"ts", "exact", "raw"}:
+        normalized = "timestamp"
     return normalized if normalized in _VALID_TIME_GRANULARITIES else "day"
 
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from app.schemas import FilterSpec, MetricSpec, QuerySpec
 
 _CAST_SUFFIX_RE = re.compile(r"::[a-zA-Z_][a-zA-Z0-9_]*(?:\[\])?$")
-_VALID_TIME_GRANULARITIES = {"day", "week", "month", "hour"}
+_VALID_TIME_GRANULARITIES = {"day", "week", "month", "hour", "timestamp"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +247,19 @@ class QueryFusionPlanner:
 
     def _canonical_granularity(self, value: str | None) -> str:
         normalized = self._canonical_column(value or "day") or "day"
-        aliases = {"d": "day", "daily": "day", "w": "week", "weekly": "week", "m": "month", "monthly": "month", "h": "hour", "hourly": "hour"}
+        aliases = {
+            "d": "day",
+            "daily": "day",
+            "w": "week",
+            "weekly": "week",
+            "m": "month",
+            "monthly": "month",
+            "h": "hour",
+            "hourly": "hour",
+            "ts": "timestamp",
+            "exact": "timestamp",
+            "raw": "timestamp",
+        }
         normalized = aliases.get(normalized, normalized)
         if normalized not in _VALID_TIME_GRANULARITIES:
             return "day"

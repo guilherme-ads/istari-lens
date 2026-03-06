@@ -32,13 +32,13 @@ import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
 import { cn } from "@/lib/utils";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 
-type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative";
+type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative" | "in" | "not_in" | "is_null" | "not_null";
 type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_year" | "this_month" | "last_month";
 type DraftNativeFilter = {
   id: string;
   column: string;
   op: DashboardFilterOp;
-  value: string;
+  value: string | string[];
   dateValue?: Date;
   dateRange?: DateRange;
   relativePreset?: RelativeDatePreset;
@@ -46,8 +46,16 @@ type DraftNativeFilter = {
 type PreparedNativeFilter = {
   column: string;
   op: DashboardFilterOp;
-  value: string | string[] | { relative: RelativeDatePreset };
+  value?: string | string[] | { relative: RelativeDatePreset };
 };
+type CategoricalValueHint = {
+  values: string[];
+  truncated: boolean;
+};
+
+const CATEGORICAL_VALUES_LIMIT = 60;
+const CATEGORICAL_DROPDOWN_THRESHOLD = 25;
+const exactValueOps = new Set<DashboardFilterOp>(["eq", "neq", "gt", "lt", "gte", "lte"]);
 
 const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
   { value: "eq", label: "=" },
@@ -56,7 +64,12 @@ const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
   { value: "lt", label: "<" },
   { value: "gte", label: ">=" },
   { value: "lte", label: "<=" },
-  { value: "contains", label: "contém" },
+  { value: "in", label: "in" },
+  { value: "not_in", label: "not in" },
+  { value: "contains", label: "contem" },
+  { value: "between", label: "entre" },
+  { value: "is_null", label: "nulo" },
+  { value: "not_null", label: "nao nulo" },
 ];
 
 const temporalOps: Array<{ value: DashboardFilterOp; label: string }> = [
@@ -66,8 +79,12 @@ const temporalOps: Array<{ value: DashboardFilterOp; label: string }> = [
   { value: "lt", label: "<" },
   { value: "gte", label: ">=" },
   { value: "lte", label: "<=" },
+  { value: "in", label: "in" },
+  { value: "not_in", label: "not in" },
   { value: "between", label: "entre datas" },
   { value: "relative", label: "data relativa" },
+  { value: "is_null", label: "nulo" },
+  { value: "not_null", label: "nao nulo" },
 ];
 
 const relativeDateOptions: Array<{ value: RelativeDatePreset; label: string }> = [
@@ -93,7 +110,7 @@ const parseDate = (value: unknown): Date | undefined => {
 };
 
 const normalizeDashboardFilterOp = (value: string): DashboardFilterOp =>
-  (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "between", "relative"].includes(value) ? value : "eq") as DashboardFilterOp;
+  (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "between", "relative", "in", "not_in", "is_null", "not_null"].includes(value) ? value : "eq") as DashboardFilterOp;
 
 const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
   const value = (rawType || "").toLowerCase();
@@ -149,7 +166,15 @@ const BuilderPage = () => {
   const [nativeFilters, setNativeFilters] = useState<DraftNativeFilter[]>([
     { id: `nf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
+  const [refreshingWidgetIds, setRefreshingWidgetIds] = useState<Set<string>>(() => new Set());
+  const [categoricalValueHints, setCategoricalValueHints] = useState<Record<string, CategoricalValueHint>>({});
+  const [loadingCategoricalColumns, setLoadingCategoricalColumns] = useState<Record<string, boolean>>({});
   const hydratedDashboardIdRef = useRef<string | null>(null);
+  const refreshTimersRef = useRef<Record<string, number>>({});
+
+  useEffect(() => () => {
+    Object.values(refreshTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
+  }, []);
 
   useEffect(() => {
     if (!existingDashboard) return;
@@ -177,7 +202,11 @@ const BuilderPage = () => {
             id: `nf-${existingDashboard.id}-${index}`,
             column: filter.column,
             op: normalizedOp,
-            value: typeof filter.value === "string" ? filter.value : "",
+            value: Array.isArray(filter.value)
+              ? filter.value.map((item) => String(item))
+              : typeof filter.value === "string"
+                ? filter.value
+                : "",
             dateValue: !isBetween && !relativePreset ? parseDate(filter.value) : undefined,
             dateRange: isBetween ? { from, to } : undefined,
             relativePreset: relativePreset || "last_7_days",
@@ -229,6 +258,49 @@ const BuilderPage = () => {
     () => new Set(datasetColumns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal").map((column) => column.name)),
     [datasetColumns],
   );
+  const columnTypeByName = useMemo(
+    () => Object.fromEntries(datasetColumns.map((column) => [column.name, normalizeSemanticColumnType(column.type)])),
+    [datasetColumns],
+  );
+  const isCategoricalColumn = useCallback((columnName: string) => {
+    const type = columnTypeByName[columnName];
+    return type === "text" || type === "boolean";
+  }, [columnTypeByName]);
+
+  const loadCategoricalValues = useCallback(async (columnName: string) => {
+    if (!datasetId || !columnName || !isCategoricalColumn(columnName)) return;
+    if (categoricalValueHints[columnName] || loadingCategoricalColumns[columnName]) return;
+
+    setLoadingCategoricalColumns((prev) => ({ ...prev, [columnName]: true }));
+    try {
+      const result = await api.previewQuery({
+        datasetId: Number(datasetId),
+        metrics: [{ field: columnName, agg: "count" }],
+        dimensions: [columnName],
+        filters: [],
+        sort: [{ field: "m0", dir: "desc" }],
+        limit: CATEGORICAL_VALUES_LIMIT,
+        offset: 0,
+      });
+      const values = Array.from(new Set(
+        result.rows
+          .map((row) => row[columnName])
+          .filter((value): value is string | number | boolean => value !== null && value !== undefined && String(value).trim().length > 0)
+          .map((value) => String(value).trim()),
+      ));
+      setCategoricalValueHints((prev) => ({
+        ...prev,
+        [columnName]: {
+          values,
+          truncated: values.length >= CATEGORICAL_VALUES_LIMIT,
+        },
+      }));
+    } catch {
+      // Silencioso para nao degradar UX dos filtros.
+    } finally {
+      setLoadingCategoricalColumns((prev) => ({ ...prev, [columnName]: false }));
+    }
+  }, [categoricalValueHints, datasetId, isCategoricalColumn, loadingCategoricalColumns]);
   const effectiveView = useMemo(() => {
     if (!dataset) return undefined;
     return {
@@ -256,11 +328,33 @@ const BuilderPage = () => {
   const [deleteDashboardOpen, setDeleteDashboardOpen] = useState(false);
   const [syncingNativeFilters, setSyncingNativeFilters] = useState(false);
   const isAdmin = !!getStoredUser()?.is_admin;
+
+  useEffect(() => {
+    const columnsToLoad = new Set<string>();
+    nativeFilters.forEach((filter) => {
+      if (filter.column && isCategoricalColumn(filter.column) && exactValueOps.has(filter.op)) {
+        columnsToLoad.add(filter.column);
+      }
+    });
+    (editingWidget?.config.filters || []).forEach((filter) => {
+      if (filter.column && isCategoricalColumn(filter.column) && exactValueOps.has(filter.op as DashboardFilterOp)) {
+        columnsToLoad.add(filter.column);
+      }
+    });
+    columnsToLoad.forEach((columnName) => {
+      void loadCategoricalValues(columnName);
+    });
+  }, [editingWidget?.config.filters, isCategoricalColumn, loadCategoricalValues, nativeFilters]);
+
   const preparedNativeFilters = useMemo<PreparedNativeFilter[]>(() => {
     const parsedFilters: PreparedNativeFilter[] = [];
     for (const filter of nativeFilters) {
       if (!filter.column) continue;
       const isTemporal = temporalColumnNames.has(filter.column);
+      if (filter.op === "is_null" || filter.op === "not_null") {
+        parsedFilters.push({ column: filter.column, op: filter.op });
+        continue;
+      }
       if (isTemporal && filter.op === "relative") {
         parsedFilters.push({
           column: filter.column,
@@ -279,8 +373,25 @@ const BuilderPage = () => {
         parsedFilters.push({ column: filter.column, op: filter.op, value: dateToApi(filter.dateValue) });
         continue;
       }
-      if (!filter.value.trim()) continue;
-      parsedFilters.push({ column: filter.column, op: filter.op, value: filter.value });
+      if (filter.op === "in" || filter.op === "not_in") {
+        const values = Array.isArray(filter.value)
+          ? filter.value.map((value) => String(value).trim()).filter(Boolean)
+          : String(filter.value || "").split(",").map((value) => value.trim()).filter(Boolean);
+        if (values.length === 0) continue;
+        parsedFilters.push({ column: filter.column, op: filter.op, value: values });
+        continue;
+      }
+      if (filter.op === "between") {
+        const rangeValues = Array.isArray(filter.value)
+          ? filter.value.map((value) => String(value).trim())
+          : String(filter.value || "").split(",").map((value) => value.trim());
+        if (rangeValues.length < 2 || !rangeValues[0] || !rangeValues[1]) continue;
+        parsedFilters.push({ column: filter.column, op: "between", value: [rangeValues[0], rangeValues[1]] });
+        continue;
+      }
+      const scalar = Array.isArray(filter.value) ? String(filter.value[0] || "") : String(filter.value || "");
+      if (!scalar.trim()) continue;
+      parsedFilters.push({ column: filter.column, op: filter.op, value: scalar });
     }
     return parsedFilters;
   }, [nativeFilters, temporalColumnNames]);
@@ -457,6 +568,11 @@ const BuilderPage = () => {
 
   const handleSaveWidget = useCallback(async (updated: DashboardWidget) => {
     if (!activeDashboardId) return;
+    setRefreshingWidgetIds((prev) => {
+      const next = new Set(prev);
+      next.add(updated.id);
+      return next;
+    });
     try {
       const response = await api.updateDashboardWidget(Number(activeDashboardId), Number(updated.id), {
         title: updated.title,
@@ -480,9 +596,26 @@ const BuilderPage = () => {
       setSections(nextSections);
       setEditingWidget(persistedWidget);
       await persistLayout(activeDashboardId, nextSections);
+      await queryClient.invalidateQueries({ queryKey: ["widget-data", activeDashboardId, persistedWidget.id], refetchType: "active" });
       await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      if (refreshTimersRef.current[persistedWidget.id]) {
+        window.clearTimeout(refreshTimersRef.current[persistedWidget.id]);
+      }
+      refreshTimersRef.current[persistedWidget.id] = window.setTimeout(() => {
+        setRefreshingWidgetIds((prev) => {
+          const next = new Set(prev);
+          next.delete(persistedWidget.id);
+          return next;
+        });
+        delete refreshTimersRef.current[persistedWidget.id];
+      }, 900);
       toast({ title: "Widget atualizado" });
     } catch (error) {
+      setRefreshingWidgetIds((prev) => {
+        const next = new Set(prev);
+        next.delete(updated.id);
+        return next;
+      });
       const message = error instanceof ApiError ? JSON.stringify(error.detail || error.message) : "Falha ao salvar widget";
       toast({ title: "Erro ao salvar widget", description: message, variant: "destructive" });
     }
@@ -491,6 +624,15 @@ const BuilderPage = () => {
   const handleDeleteWidget = useCallback(async () => {
     if (!editingWidget || !activeDashboardId) return;
     try {
+      if (refreshTimersRef.current[editingWidget.id]) {
+        window.clearTimeout(refreshTimersRef.current[editingWidget.id]);
+        delete refreshTimersRef.current[editingWidget.id];
+      }
+      setRefreshingWidgetIds((prev) => {
+        const next = new Set(prev);
+        next.delete(editingWidget.id);
+        return next;
+      });
       await api.deleteDashboardWidget(Number(activeDashboardId), Number(editingWidget.id));
       const nextSections = sections.map((section) => ({
         ...section,
@@ -524,6 +666,15 @@ const BuilderPage = () => {
   const handleDeleteWidgetFromCard = useCallback(async (widget: DashboardWidget) => {
     if (!activeDashboardId) return;
     try {
+      if (refreshTimersRef.current[widget.id]) {
+        window.clearTimeout(refreshTimersRef.current[widget.id]);
+        delete refreshTimersRef.current[widget.id];
+      }
+      setRefreshingWidgetIds((prev) => {
+        const next = new Set(prev);
+        next.delete(widget.id);
+        return next;
+      });
       await api.deleteDashboardWidget(Number(activeDashboardId), Number(widget.id));
       const nextSections = sections.map((section) => ({
         ...section,
@@ -842,11 +993,28 @@ const BuilderPage = () => {
               />
             </div>
             <div className="lg:w-2/3">
-              <Label className="text-heading">Filtro nativo (oculto no front)</Label>
+              <Label className="text-heading">Filtro nativo (oculto ao salvar)</Label>
               <div className="mt-2 space-y-2">
                 {nativeFilters.map((filter, filterIndex) => {
                   const isTemporal = temporalColumnNames.has(filter.column);
+                  const columnType = columnTypeByName[filter.column];
+                  const isCategorical = columnType === "text" || columnType === "boolean";
                   const operatorOptions = isTemporal ? temporalOps : commonOps;
+                  const hint = filter.column ? categoricalValueHints[filter.column] : undefined;
+                  const showCategoricalDropdown = !!(
+                    filter.column
+                    && isCategorical
+                    && exactValueOps.has(filter.op)
+                    && hint
+                    && !hint.truncated
+                    && hint.values.length > 0
+                    && hint.values.length <= CATEGORICAL_DROPDOWN_THRESHOLD
+                  );
+                  const scalarValue = Array.isArray(filter.value) ? String(filter.value[0] || "") : String(filter.value || "");
+                  const listValue = Array.isArray(filter.value) ? filter.value.map((item) => String(item)).join(",") : String(filter.value || "");
+                  const betweenValues = Array.isArray(filter.value)
+                    ? [String(filter.value[0] || ""), String(filter.value[1] || "")]
+                    : ["", ""];
                   const rowLayoutClass = isTemporal
                     ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto] gap-2 items-center"
                     : "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(220px,1fr)_auto] gap-2 items-center";
@@ -899,15 +1067,76 @@ const BuilderPage = () => {
                         </SelectContent>
                       </Select>
 
-                      {!isTemporal && (
+                      {!isTemporal && (filter.op === "is_null" || filter.op === "not_null") && (
+                        <div className="h-8" />
+                      )}
+
+                      {!isTemporal && (filter.op === "in" || filter.op === "not_in") && (
                         <Input
                           className="h-8 text-xs"
-                          placeholder="Valor"
-                          value={filter.value}
+                          placeholder="Ex: A, B, C"
+                          value={listValue}
                           onChange={(e) =>
-                            setNativeFilters((prev) => prev.map((item) => item.id === filter.id ? { ...item, value: e.target.value } : item))}
+                            setNativeFilters((prev) => prev.map((item) => item.id === filter.id
+                              ? { ...item, value: e.target.value.split(",").map((value) => value.trim()).filter(Boolean) }
+                              : item))}
                           disabled={!filter.column}
                         />
+                      )}
+
+                      {!isTemporal && filter.op === "between" && (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            className="h-8 text-xs"
+                            placeholder="De"
+                            value={betweenValues[0]}
+                            onChange={(e) =>
+                              setNativeFilters((prev) => prev.map((item) => item.id === filter.id
+                                ? { ...item, value: [e.target.value, betweenValues[1]] }
+                                : item))}
+                            disabled={!filter.column}
+                          />
+                          <Input
+                            className="h-8 text-xs"
+                            placeholder="Ate"
+                            value={betweenValues[1]}
+                            onChange={(e) =>
+                              setNativeFilters((prev) => prev.map((item) => item.id === filter.id
+                                ? { ...item, value: [betweenValues[0], e.target.value] }
+                                : item))}
+                            disabled={!filter.column}
+                          />
+                        </div>
+                      )}
+
+                      {!isTemporal && !(filter.op === "is_null" || filter.op === "not_null" || filter.op === "in" || filter.op === "not_in" || filter.op === "between") && (
+                        showCategoricalDropdown ? (
+                          <Select
+                            value={scalarValue || "__none__"}
+                            onValueChange={(value) =>
+                              setNativeFilters((prev) => prev.map((item) => item.id === filter.id
+                                ? { ...item, value: value === "__none__" ? "" : value }
+                                : item))}
+                            disabled={!filter.column}
+                          >
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Valor" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Sem valor</SelectItem>
+                              {hint?.values.map((value) => (
+                                <SelectItem key={`${filter.id}-${value}`} value={value}>{value}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            className="h-8 text-xs"
+                            placeholder="Valor"
+                            value={scalarValue}
+                            onChange={(e) =>
+                              setNativeFilters((prev) => prev.map((item) => item.id === filter.id ? { ...item, value: e.target.value } : item))}
+                            disabled={!filter.column}
+                          />
+                        )
                       )}
 
                       {isTemporal && filter.op === "relative" && (
@@ -930,7 +1159,24 @@ const BuilderPage = () => {
                         </Select>
                       )}
 
-                      {isTemporal && filter.op !== "between" && filter.op !== "relative" && (
+                      {isTemporal && (filter.op === "is_null" || filter.op === "not_null") && (
+                        <div className="h-8" />
+                      )}
+
+                      {isTemporal && (filter.op === "in" || filter.op === "not_in") && (
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder="Ex: 2025-01-01, 2025-01-15"
+                          value={listValue}
+                          onChange={(e) =>
+                            setNativeFilters((prev) => prev.map((item) => item.id === filter.id
+                              ? { ...item, value: e.target.value.split(",").map((value) => value.trim()).filter(Boolean) }
+                              : item))}
+                          disabled={!filter.column}
+                        />
+                      )}
+
+                      {isTemporal && filter.op !== "between" && filter.op !== "relative" && filter.op !== "is_null" && filter.op !== "not_null" && filter.op !== "in" && filter.op !== "not_in" && (
                         <Popover>
                           <PopoverTrigger asChild>
                             <Button
@@ -1179,6 +1425,7 @@ const BuilderPage = () => {
             onToggleWidgetTitle={handleToggleWidgetTitle}
             onAddSection={handleAddSection}
             readOnly={previewMode}
+            refreshingWidgetIds={refreshingWidgetIds}
           />
         )}
       </div>
@@ -1193,6 +1440,9 @@ const BuilderPage = () => {
         widget={editingWidget}
         dashboardWidgets={sections.flatMap((section) => section.widgets)}
         view={effectiveView}
+        datasetId={dataset ? Number(dataset.id) : undefined}
+        categoricalValueHints={categoricalValueHints}
+        categoricalDropdownThreshold={CATEGORICAL_DROPDOWN_THRESHOLD}
         sectionColumns={editingWidgetSectionColumns}
         open={configOpen}
         onClose={() => setConfigOpen(false)}
@@ -1213,5 +1463,6 @@ const BuilderPage = () => {
 };
 
 export default BuilderPage;
+
 
 

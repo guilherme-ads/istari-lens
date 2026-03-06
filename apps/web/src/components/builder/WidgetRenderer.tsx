@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart as ReLineChart, Line, LabelList, Legend, PieChart as RePieChart, Pie, Cell,
@@ -26,15 +27,7 @@ const aggLabelMap = {
   min: "MÍNIMO",
 } as const;
 
-const linePalette = [
-  "hsl(250, 78%, 75%)",
-  "hsl(17, 84%, 63%)",
-  "hsl(142, 50%, 46%)",
-  "hsl(205, 78%, 60%)",
-  "hsl(330, 72%, 62%)",
-  "hsl(45, 92%, 54%)",
-];
-const categoricalPalette = [
+const defaultPalette = [
   "hsl(250, 78%, 75%)",
   "hsl(17, 84%, 63%)",
   "hsl(142, 50%, 46%)",
@@ -44,6 +37,13 @@ const categoricalPalette = [
   "hsl(188, 72%, 46%)",
   "hsl(12, 72%, 54%)",
 ];
+const paletteByName: Record<"default" | "warm" | "cool" | "mono" | "vivid", string[]> = {
+  default: defaultPalette,
+  warm: ["#ef4444", "#f97316", "#eab308", "#f59e0b", "#dc2626", "#fb7185", "#f43f5e", "#facc15"],
+  cool: ["#3b82f6", "#06b6d4", "#8b5cf6", "#6366f1", "#0ea5e9", "#14b8a6", "#22d3ee", "#60a5fa"],
+  mono: ["#111827", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#52525b", "#71717a", "#a1a1aa"],
+  vivid: ["#ec4899", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#84cc16", "#14b8a6"],
+};
 
 const formatFullNumber = (value: unknown): string => {
   const number = typeof value === "number" ? value : Number(value);
@@ -187,9 +187,14 @@ const computePeakValleyEvents = (params: {
   const { series, sensitivityPercent, windowSize, minGap, mode } = params;
   const events: Array<{ index: number; score: number }> = [];
   if (series.length < 3) return new Set();
+  const globalMax = Math.max(...series);
+  const globalMin = Math.min(...series);
+  const globalAmp = globalMax - globalMin;
+  if (globalAmp <= 0) return new Set();
 
   const safeSensitivity = Math.max(25, Math.min(100, sensitivityPercent));
   const w = Math.max(1, windowSize);
+  const minProminenceAbs = globalAmp * 0.01;
 
   for (let i = 0; i < series.length; i += 1) {
     const leftStart = Math.max(0, i - w);
@@ -201,7 +206,9 @@ const computePeakValleyEvents = (params: {
     const localMax = Math.max(...windowValues);
     const localMin = Math.min(...windowValues);
     const ampLocal = localMax - localMin;
+    if (ampLocal <= 0) continue;
     const threshold = ampLocal * (1 - (safeSensitivity / 100));
+    const effectiveThreshold = Math.max(threshold, minProminenceAbs);
 
     const leftValues = series.slice(leftStart, i);
     const rightValues = series.slice(i + 1, rightEnd + 1);
@@ -214,7 +221,7 @@ const computePeakValleyEvents = (params: {
       const leftMin = Math.min(...leftValues);
       const rightMin = Math.min(...rightValues);
       const prominence = current - Math.max(leftMin, rightMin);
-      if (prominence >= threshold) {
+      if (prominence > 0 && prominence >= effectiveThreshold) {
         events.push({ index: i, score: prominence });
       }
     }
@@ -223,7 +230,7 @@ const computePeakValleyEvents = (params: {
       const leftMax = Math.max(...leftValues);
       const rightMax = Math.max(...rightValues);
       const prominence = Math.min(leftMax, rightMax) - current;
-      if (prominence >= threshold) {
+      if (prominence > 0 && prominence >= effectiveThreshold) {
         events.push({ index: i, score: prominence });
       }
     }
@@ -274,16 +281,79 @@ type RendererProps = {
   widget: DashboardWidget;
   dashboardId?: string;
   disableFetch?: boolean;
-  heightMultiplier?: 0.5 | 1;
+  heightMultiplier?: 0.5 | 1 | 2;
   preloadedData?: ApiDashboardWidgetDataResponse;
   preloadedLoading?: boolean;
   preloadedError?: string | null;
   hideTableExport?: boolean;
+  forcedLoading?: boolean;
 };
 
 const EmptyWidgetState = ({ text }: { text: string }) => (
   <div className="text-xs text-muted-foreground text-center">{text}</div>
 );
+
+const WidgetLoadingSkeleton = ({ type, chartHeight }: { type: DashboardWidget["config"]["widget_type"]; chartHeight: number }) => {
+  if (type === "kpi") {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 py-4">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-10 w-32" />
+      </div>
+    );
+  }
+
+  if (type === "table" || type === "dre") {
+    return (
+      <div className="flex h-full w-full flex-col gap-2">
+        <Skeleton className="h-7 w-full rounded-md" />
+        <Skeleton className="h-7 w-full rounded-md" />
+        <Skeleton className="h-7 w-full rounded-md" />
+        <Skeleton className="h-7 w-[92%] rounded-md" />
+      </div>
+    );
+  }
+
+  if (type === "text") {
+    return (
+      <div className="flex h-full w-full flex-col items-start justify-center gap-2">
+        <Skeleton className="h-4 w-[85%]" />
+        <Skeleton className="h-4 w-[72%]" />
+        <Skeleton className="h-4 w-[60%]" />
+      </div>
+    );
+  }
+
+  if (type === "bar") {
+    return (
+      <div className="flex h-full w-full flex-col justify-center gap-2">
+        <Skeleton className="h-5 w-[88%] rounded-md" />
+        <Skeleton className="h-5 w-[76%] rounded-md" />
+        <Skeleton className="h-5 w-[92%] rounded-md" />
+        <Skeleton className="h-5 w-[64%] rounded-md" />
+      </div>
+    );
+  }
+
+  if (type === "donut") {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="relative">
+          <Skeleton className="h-28 w-28 rounded-full" />
+          <div className="absolute inset-[26%] rounded-full bg-background" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col gap-2">
+      <Skeleton className="h-5 w-1/3" />
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="w-full rounded-lg" style={{ height: `${chartHeight}px` }} />
+    </div>
+  );
+};
 
 const parseDateLike = (value: unknown): Date | null => {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -294,7 +364,7 @@ const parseDateLike = (value: unknown): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const formatDateBR = (date: Date, includeTime = false): string => {
+const formatDateBR = (date: Date, includeTime = false, includeSeconds = false): string => {
   if (!includeTime) {
     return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
   }
@@ -304,6 +374,7 @@ const formatDateBR = (date: Date, includeTime = false): string => {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    second: includeSeconds ? "2-digit" : undefined,
   }).format(date);
 };
 
@@ -499,6 +570,7 @@ export const WidgetRenderer = ({
   preloadedLoading = false,
   preloadedError = null,
   hideTableExport = false,
+  forcedLoading = false,
 }: RendererProps) => {
   const isTextWidget = widget.config.widget_type === "text";
   const shouldFetch = !disableFetch && !!dashboardId && !isTextWidget;
@@ -514,12 +586,13 @@ export const WidgetRenderer = ({
     [preloadedData, widgetQuery.data],
   );
   const metricLabel = useMemo(() => getMetricLabel(widget), [widget]);
-  const chartHeight = heightMultiplier === 0.5 ? 110 : 220;
-  const lineTargetTicks = heightMultiplier === 0.5 ? 4 : 8;
+  const chartHeight = heightMultiplier === 0.5 ? 110 : heightMultiplier === 2 ? 380 : 220;
+  const lineTargetTicks = heightMultiplier === 0.5 ? 4 : heightMultiplier === 2 ? 12 : 8;
+  const chartPalette = paletteByName[widget.config.visual_palette || "default"] || paletteByName.default;
   const lineMetricKeys = widget.config.widget_type === "line"
     ? widget.config.metrics.map((_, index) => `m${index}`)
     : [];
-  const lineMetricLabelByKey = widget.config.widget_type === "line"
+  const lineMetricBaseLabelByKey = widget.config.widget_type === "line"
     ? Object.fromEntries(
       widget.config.metrics.map((metric, index) => {
         if (metric.op === "count") {
@@ -534,12 +607,25 @@ export const WidgetRenderer = ({
     : {};
   const lineMetricAxisByKey = widget.config.widget_type === "line"
     ? Object.fromEntries(
-      widget.config.metrics.map((_, index) => [`m${index}`, index === 0 ? "left" : "right"]),
+      widget.config.metrics.map((item, index) => [`m${index}`, item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right"]),
     )
     : {};
-  const usesRightAxis = Object.values(lineMetricAxisByKey).some((axis) => axis === "right");
-  const usesLeftAxis = Object.values(lineMetricAxisByKey).some((axis) => axis === "left");
-  const lineRows = useMemo(() => {
+  const lineLegendDimension = widget.config.widget_type === "line" ? widget.config.dimensions[0] : undefined;
+  const { lineRows, lineSeriesDefs } = useMemo(() => {
+    if (widget.config.widget_type !== "line") {
+      return {
+        lineRows: [] as Record<string, unknown>[],
+        lineSeriesDefs: [] as Array<{ key: string; label: string; axis: "left" | "right" }>,
+      };
+    }
+
+    const sortByTimeBucket = (left: Record<string, unknown>, right: Record<string, unknown>) => {
+      const leftDate = parseDateLike(left.time_bucket);
+      const rightDate = parseDateLike(right.time_bucket);
+      if (leftDate && rightDate) return leftDate.getTime() - rightDate.getTime();
+      return String(left.time_bucket).localeCompare(String(right.time_bucket), "pt-BR");
+    };
+
     const normalized = rows.map((row) => {
       const next = { ...row };
       lineMetricKeys.forEach((metricKey) => {
@@ -547,21 +633,71 @@ export const WidgetRenderer = ({
       });
       return next;
     });
-    const sorted = normalized.sort((a, b) => {
-      const aDate = parseDateLike(a.time_bucket);
-      const bDate = parseDateLike(b.time_bucket);
-      if (aDate && bDate) return aDate.getTime() - bDate.getTime();
-      return String(a.time_bucket).localeCompare(String(b.time_bucket), "pt-BR");
+
+    if (!lineLegendDimension) {
+      const seriesDefs = lineMetricKeys.map((metricKey) => ({
+        key: metricKey,
+        label: lineMetricBaseLabelByKey[metricKey] || metricKey,
+        axis: (lineMetricAxisByKey[metricKey] || "left") as "left" | "right",
+      }));
+      return {
+        lineRows: normalized.sort(sortByTimeBucket),
+        lineSeriesDefs: seriesDefs,
+      };
+    }
+
+    const seriesDefs: Array<{ key: string; label: string; axis: "left" | "right" }> = [];
+    const seriesSet = new Set<string>();
+    const pivotByBucket = new Map<string, Record<string, unknown>>();
+
+    normalized.forEach((row) => {
+      const timeBucket = row.time_bucket;
+      const parsedDate = parseDateLike(timeBucket);
+      const bucketKey = parsedDate ? `ts:${parsedDate.getTime()}` : `raw:${String(timeBucket)}`;
+      const legendRaw = row[lineLegendDimension];
+      const legendLabel = legendRaw === null || legendRaw === undefined || String(legendRaw).trim() === ""
+        ? "(vazio)"
+        : String(legendRaw);
+      const pivot = pivotByBucket.get(bucketKey) || { time_bucket: timeBucket };
+      lineMetricKeys.forEach((metricKey) => {
+        const seriesKey = `${metricKey}__${legendLabel}`;
+        pivot[seriesKey] = toFiniteNumber(row[metricKey]);
+        if (!seriesSet.has(seriesKey)) {
+          seriesSet.add(seriesKey);
+          const metricLabel = lineMetricBaseLabelByKey[metricKey] || metricKey;
+          const hasMultipleMetrics = lineMetricKeys.length > 1;
+          seriesDefs.push({
+            key: seriesKey,
+            label: hasMultipleMetrics ? `${legendLabel} - ${metricLabel}` : legendLabel,
+            axis: (lineMetricAxisByKey[metricKey] || "left") as "left" | "right",
+          });
+        }
+      });
+      pivotByBucket.set(bucketKey, pivot);
     });
-    return sorted;
-  }, [rows, lineMetricKeys]);
+
+    return {
+      lineRows: Array.from(pivotByBucket.values()).sort(sortByTimeBucket),
+      lineSeriesDefs: seriesDefs,
+    };
+  }, [lineLegendDimension, lineMetricAxisByKey, lineMetricBaseLabelByKey, lineMetricKeys, rows, widget.config.widget_type]);
+  const lineSeriesLabelByKey = useMemo(
+    () => Object.fromEntries(lineSeriesDefs.map((series) => [series.key, series.label])),
+    [lineSeriesDefs],
+  );
+  const lineSeriesAxisByKey = useMemo(
+    () => Object.fromEntries(lineSeriesDefs.map((series) => [series.key, series.axis])),
+    [lineSeriesDefs],
+  );
+  const usesRightAxis = lineSeriesDefs.some((series) => series.axis === "right");
+  const usesLeftAxis = lineSeriesDefs.some((series) => series.axis === "left");
   const lineSeriesValuesByKey = useMemo(() => {
     const values: Record<string, number[]> = {};
-    lineMetricKeys.forEach((seriesKey) => {
+    lineSeriesDefs.forEach(({ key: seriesKey }) => {
       values[seriesKey] = lineRows.map((row) => toFiniteNumber(row[seriesKey]));
     });
     return values;
-  }, [lineRows, lineMetricKeys]);
+  }, [lineRows, lineSeriesDefs]);
   const lineLabelEventsBySeries = useMemo(() => {
     const map: Record<string, Set<number>> = {};
     if (widget.config.widget_type !== "line") return map;
@@ -569,7 +705,7 @@ export const WidgetRenderer = ({
     const windowSize = widget.config.line_label_window || 3;
     const minGap = widget.config.line_label_min_gap || 2;
     const mode = widget.config.line_label_mode || "both";
-    lineMetricKeys.forEach((seriesKey) => {
+    lineSeriesDefs.forEach(({ key: seriesKey }) => {
       map[seriesKey] = computePeakValleyEvents({
         series: lineSeriesValuesByKey[seriesKey] || [],
         sensitivityPercent: sensitivity,
@@ -579,8 +715,56 @@ export const WidgetRenderer = ({
       });
     });
     return map;
-  }, [lineMetricKeys, lineSeriesValuesByKey, widget.config]);
+  }, [lineSeriesDefs, lineSeriesValuesByKey, widget.config]);
   const lineTickInterval = lineRows.length > lineTargetTicks ? Math.ceil(lineRows.length / lineTargetTicks) - 1 : 0;
+  const lineGranularity = widget.config.time?.granularity || "day";
+  const lineParsedBuckets = useMemo(
+    () => lineRows.map((row) => parseDateLike(row.time_bucket)).filter((item): item is Date => item instanceof Date),
+    [lineRows],
+  );
+  const lineXAxisTimeMode = useMemo<"default" | "hour" | "minute">(() => {
+    if (lineParsedBuckets.length === 0) return "default";
+    const [first] = lineParsedBuckets;
+    const sameDate = lineParsedBuckets.every((item) =>
+      item.getFullYear() === first.getFullYear()
+      && item.getMonth() === first.getMonth()
+      && item.getDate() === first.getDate(),
+    );
+    if (!sameDate) return "default";
+    const sameHour = lineParsedBuckets.every((item) =>
+      item.getHours() === first.getHours(),
+    );
+    return sameHour ? "minute" : "hour";
+  }, [lineParsedBuckets]);
+  const formatLineAxisBucketLabel = (value: unknown): string => {
+    const parsed = parseDateLike(value);
+    if (!parsed) return String(value);
+    if (lineXAxisTimeMode === "minute") {
+      return new Intl.DateTimeFormat("pt-BR", { minute: "2-digit" }).format(parsed);
+    }
+    if (lineXAxisTimeMode === "hour") {
+      return new Intl.DateTimeFormat("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(parsed);
+    }
+    if (lineGranularity === "timestamp") return formatDateBR(parsed, true, true);
+    if (lineGranularity === "hour") return formatDateBR(parsed, true, false);
+    return formatDateBR(parsed, false);
+  };
+  const formatLineTooltipLabel = (value: unknown): string => {
+    const parsed = parseDateLike(value);
+    if (!parsed) return String(value);
+    return formatDateBR(parsed, true, lineGranularity === "timestamp");
+  };
+  const chartPrefix = widget.config.kpi_prefix || "";
+  const chartSuffix = widget.config.kpi_suffix || "";
+  const formatChartValueCompact = (value: unknown): string => `${chartPrefix}${formatCompactNumber(value)}${chartSuffix}`;
+
+  if (forcedLoading) {
+    return <WidgetLoadingSkeleton type={widget.config.widget_type} chartHeight={chartHeight} />;
+  }
 
   if (isTextWidget) {
     const textStyle = widget.config.text_style || { content: "", font_size: 18, align: "left" as const };
@@ -722,12 +906,13 @@ export const WidgetRenderer = ({
 
   if (type === "line") {
     const showLineLabels = !!widget.config.line_data_labels_enabled;
-    const lineSeriesKeys = lineMetricKeys.length > 0 ? lineMetricKeys : ["m0"];
+    const showLineGrid = widget.config.line_show_grid !== false;
+    const lineSeriesKeys = lineSeriesDefs.length > 0 ? lineSeriesDefs.map((series) => series.key) : ["m0"];
     return (
       <div className="relative h-full w-full">
         <ResponsiveContainer width="100%" height={chartHeight}>
           <ReLineChart data={lineRows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
+            {showLineGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />}
             <XAxis
               dataKey="time_bucket"
               tick={{ fontSize: 10 }}
@@ -736,8 +921,7 @@ export const WidgetRenderer = ({
               interval={lineTickInterval}
               minTickGap={20}
               tickFormatter={(value) => {
-                const parsed = parseDateLike(value);
-                return parsed ? formatDateBR(parsed) : String(value);
+                return formatLineAxisBucketLabel(value);
               }}
             />
             <YAxis
@@ -747,7 +931,7 @@ export const WidgetRenderer = ({
               tickLine={false}
               width={50}
               hide={!usesLeftAxis}
-              tickFormatter={(value) => formatCompactNumber(value)}
+              tickFormatter={(value) => formatChartValueCompact(value)}
             />
             <YAxis
               yAxisId="right"
@@ -757,15 +941,14 @@ export const WidgetRenderer = ({
               tickLine={false}
               width={50}
               hide={!usesRightAxis}
-              tickFormatter={(value) => formatCompactNumber(value)}
+              tickFormatter={(value) => formatChartValueCompact(value)}
             />
             <Tooltip
               contentStyle={tooltipStyle}
               labelFormatter={(label) => {
-                const parsed = parseDateLike(label);
-                return parsed ? formatDateBR(parsed) : String(label);
+                return formatLineTooltipLabel(label);
               }}
-              formatter={(value, name) => [formatCompactNumber(value), lineMetricLabelByKey[String(name)] || String(name)]}
+              formatter={(value, name) => [formatChartValueCompact(value), lineSeriesLabelByKey[String(name)] || String(name)]}
             />
             {lineSeriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: 10 }} />}
             {lineSeriesKeys.map((seriesKey, index) => (
@@ -773,9 +956,9 @@ export const WidgetRenderer = ({
                 key={seriesKey}
                 type="monotone"
                 dataKey={seriesKey}
-                name={lineMetricLabelByKey[seriesKey] || seriesKey}
-                yAxisId={lineMetricAxisByKey[seriesKey] || "left"}
-                stroke={linePalette[index % linePalette.length]}
+                name={lineSeriesLabelByKey[seriesKey] || seriesKey}
+                yAxisId={lineSeriesAxisByKey[seriesKey] || "left"}
+                stroke={chartPalette[index % chartPalette.length]}
                 strokeWidth={2}
                 dot={false}
               >
@@ -790,13 +973,13 @@ export const WidgetRenderer = ({
                       const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
                       if (value === undefined || value === null) return null;
                       if (!(lineLabelEventsBySeries[seriesKey]?.has(indexValue))) return null;
-                      const axis = lineMetricAxisByKey[seriesKey] || "left";
+                      const axis = lineSeriesAxisByKey[seriesKey] || "left";
                       const yOffset = axis === "left" ? -12 : 12;
                       const baseY = y + yOffset;
                       const plotTop = Number(viewBox?.y ?? 0);
                       const plotBottom = plotTop + Number(viewBox?.height ?? chartHeight);
                       const safeY = clamp(baseY, plotTop + 10, plotBottom - 10);
-                      return renderGlassLabel({ x, y: safeY, text: formatCompactNumber(value), fontSize: 10 });
+                      return renderGlassLabel({ x, y: safeY, text: formatChartValueCompact(value), fontSize: 10 });
                     }}
                   />
                 )}
@@ -813,6 +996,7 @@ export const WidgetRenderer = ({
   const chartRows = rows.map((row) => ({ ...row, m0: toFiniteNumber(row.m0) }));
 
   if (type === "bar") {
+    const showBarLabels = widget.config.bar_data_labels_enabled !== false;
     const fixedBarHeight = 22;
     const barGap = 8;
     const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row.m0)), 0);
@@ -831,7 +1015,7 @@ export const WidgetRenderer = ({
                 tickLine={false}
                 domain={[0, barAxisMax]}
                 allowDataOverflow={false}
-                tickFormatter={(value) => formatCompactNumber(value)}
+                tickFormatter={(value) => formatChartValueCompact(value)}
               />
               <YAxis
                 type="category"
@@ -845,22 +1029,24 @@ export const WidgetRenderer = ({
                   return parsed ? formatDateBR(parsed) : String(value);
                 }}
               />
-              <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCompactNumber(value), metricLabel]} />
-              <Bar dataKey="m0" fill="hsl(250, 78%, 75%)" radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
-                <LabelList
-                  dataKey="m0"
-                  content={(props: Record<string, unknown>) => {
-                    const value = props.value;
-                    const x = Number(props.x || 0);
-                    const y = Number(props.y || 0);
-                    const width = Number(props.width || 0);
-                    const height = Number(props.height || 0);
-                    if (value === undefined || value === null) return null;
-                    const labelX = x + width + 18;
-                    const labelY = y + (height / 2);
-                    return renderGlassLabel({ x: labelX, y: labelY, text: formatCompactNumber(value), fontSize: 10 });
-                  }}
-                />
+              <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
+              <Bar dataKey="m0" fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
+                {showBarLabels && (
+                  <LabelList
+                    dataKey="m0"
+                    content={(props: Record<string, unknown>) => {
+                      const value = props.value;
+                      const x = Number(props.x || 0);
+                      const y = Number(props.y || 0);
+                      const width = Number(props.width || 0);
+                      const height = Number(props.height || 0);
+                      if (value === undefined || value === null) return null;
+                      const labelX = x + width + 18;
+                      const labelY = y + (height / 2);
+                      return renderGlassLabel({ x: labelX, y: labelY, text: formatChartValueCompact(value), fontSize: 10 });
+                    }}
+                  />
+                )}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -870,9 +1056,10 @@ export const WidgetRenderer = ({
   }
 
   if (type === "column") {
+    const showColumnLabels = widget.config.bar_data_labels_enabled !== false;
     return (
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 8 }}>
+        <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
           <XAxis
             dataKey={dimKey}
@@ -888,24 +1075,27 @@ export const WidgetRenderer = ({
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(value) => formatCompactNumber(value)}
+            width={34}
+            tickFormatter={(value) => formatChartValueCompact(value)}
           />
-          <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCompactNumber(value), metricLabel]} />
-          <Bar dataKey="m0" fill="hsl(250, 78%, 75%)" radius={[6, 6, 0, 0]}>
-            <LabelList
-              dataKey="m0"
-              content={(props: Record<string, unknown>) => {
-                const value = props.value;
-                const x = Number(props.x || 0);
-                const y = Number(props.y || 0);
-                const width = Number(props.width || 0);
-                const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
-                if (value === undefined || value === null) return null;
-                const plotTop = Number(viewBox?.y ?? 0);
-                const safeY = Math.max(plotTop + 10, y - 8);
-                return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatCompactNumber(value), fontSize: 10 });
-              }}
-            />
+          <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
+          <Bar dataKey="m0" fill={chartPalette[0]} radius={[6, 6, 0, 0]}>
+            {showColumnLabels && (
+              <LabelList
+                dataKey="m0"
+                content={(props: Record<string, unknown>) => {
+                  const value = props.value;
+                  const x = Number(props.x || 0);
+                  const y = Number(props.y || 0);
+                  const width = Number(props.width || 0);
+                  const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
+                  if (value === undefined || value === null) return null;
+                  const plotTop = Number(viewBox?.y ?? 0);
+                  const safeY = Math.max(plotTop + 10, y - 8);
+                  return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatChartValueCompact(value), fontSize: 10 });
+                }}
+              />
+            )}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -1001,7 +1191,7 @@ export const WidgetRenderer = ({
           {donutRows.map((entry, index) => (
             <Cell
               key={`${String(entry[dimKey] ?? index)}`}
-              fill={String(entry[dimKey]) === "Outros" ? "hsl(0, 0%, 62%)" : categoricalPalette[index % categoricalPalette.length]}
+              fill={String(entry[dimKey]) === "Outros" ? "hsl(0, 0%, 62%)" : chartPalette[index % chartPalette.length]}
             />
           ))}
         </Pie>
