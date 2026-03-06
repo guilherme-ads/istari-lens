@@ -1,5 +1,10 @@
-﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus } from "lucide-react";
+﻿import { memo, useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus,
+  SlidersHorizontal, Palette, BarChart3, LineChart, PieChart, Table2, Type,
+  Square, RectangleVertical, RectangleHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +14,7 @@ import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { DashboardWidget, WidgetFilter } from "@/types/dashboard";
 import type { View } from "@/types";
 
@@ -16,6 +22,9 @@ interface WidgetConfigPanelProps {
   widget: DashboardWidget | null;
   dashboardWidgets?: DashboardWidget[];
   view?: View;
+  datasetId?: number;
+  categoricalValueHints?: Record<string, { values: string[]; truncated: boolean }>;
+  categoricalDropdownThreshold?: number;
   sectionColumns?: 1 | 2 | 3 | 4;
   open: boolean;
   onClose: () => void;
@@ -34,6 +43,21 @@ const relativeDateOptions = [
   { value: "this_month", label: "Este mes" },
   { value: "last_month", label: "Mes passado" },
 ] as const;
+const widgetPalettePreview: Record<"default" | "warm" | "cool" | "mono" | "vivid", string[]> = {
+  default: ["#8B7AF2", "#F28A5A", "#4DAA6B", "#4B9DEB", "#E16BA8"],
+  warm: ["#ef4444", "#f97316", "#eab308", "#f59e0b", "#dc2626"],
+  cool: ["#3b82f6", "#06b6d4", "#8b5cf6", "#6366f1", "#0ea5e9"],
+  mono: ["#111827", "#374151", "#4b5563", "#6b7280", "#9ca3af"],
+  vivid: ["#ec4899", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b"],
+};
+const widgetPaletteLabel: Record<"default" | "warm" | "cool" | "mono" | "vivid", string> = {
+  default: "Padrão",
+  warm: "Quente",
+  cool: "Fria",
+  mono: "Monocromática",
+  vivid: "Vibrante",
+};
+const exactValueFilterOps = new Set<WidgetFilter["op"]>(["eq", "neq", "gt", "lt", "gte", "lte"]);
 const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
   const value = (rawType || "").toLowerCase();
   if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
@@ -78,6 +102,21 @@ const dreRowTypeMeta = {
     indentClass: "pl-4",
   },
 } as const;
+
+const widgetTypeIcon = {
+  kpi: Hash,
+  line: LineChart,
+  bar: BarChart3,
+  column: BarChart3,
+  donut: PieChart,
+  table: Table2,
+  text: Type,
+  dre: Columns3,
+} as const;
+
+const secondaryGhostIconButtonClass = "h-8 w-8 text-muted-foreground hover:bg-muted/70 hover:text-foreground";
+const destructiveGhostIconButtonClass = "h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive";
+const dashedAddButtonClass = "w-full justify-center gap-2 rounded-xl border border-dashed border-border/60 bg-background/60 text-muted-foreground hover:border-foreground/30 hover:bg-muted/50 hover:text-foreground h-9";
 
 const resolveInheritedDreImpact = (
   rows: Array<{ row_type: "result" | "deduction" | "detail"; impact?: "add" | "subtract" }>,
@@ -203,16 +242,144 @@ const DreTitleInput = memo(({
 });
 DreTitleInput.displayName = "DreTitleInput";
 
-export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, sectionColumns = 3, open, onClose, onSave, onDelete }: WidgetConfigPanelProps) => {
+const Section = ({
+  title,
+  icon: Icon,
+  children,
+  defaultOpen = true,
+  badge,
+}: {
+  title: string;
+  icon: ElementType;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  badge?: string | number;
+}) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-b border-border/50 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="group flex w-full items-center justify-between px-1 py-3 text-left rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+          <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+          {title}
+          {badge !== undefined && (
+            <span className="ml-1 inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-accent/15 text-accent text-[10px] font-bold">
+              {badge}
+            </span>
+          )}
+        </span>
+        <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${open ? "rotate-0" : "-rotate-90"}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] as const }}
+            className="overflow-hidden"
+          >
+            <div className="pb-4 space-y-3">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+const DataBlock = ({
+  title,
+  caption,
+  badge,
+  children,
+}: {
+  title: string;
+  caption?: string;
+  badge?: string | number;
+  children: ReactNode;
+}) => (
+  <div className="rounded-lg border border-border/60 bg-background/70 p-3 space-y-2.5">
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-heading font-semibold text-foreground truncate">{title}</p>
+        {caption && <p className="text-caption text-muted-foreground mt-0.5">{caption}</p>}
+      </div>
+      {badge !== undefined && (
+        <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted px-1.5 text-caption font-semibold text-muted-foreground">
+          {badge}
+        </span>
+      )}
+    </div>
+    {children}
+  </div>
+);
+
+const LayoutOptionPicker = ({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string; icon: ElementType }>;
+  onChange: (value: string) => void;
+}) => (
+  <div className="space-y-1.5 min-w-0">
+    <Label className="text-[11px] text-muted-foreground font-medium">{label}</Label>
+    <div className="flex gap-1 min-w-0">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`min-w-0 flex-1 flex items-center justify-center gap-1 h-7 rounded-md px-1 text-[10px] font-medium transition-all ${
+            value === option.value
+              ? "bg-accent text-accent-foreground shadow-sm ring-1 ring-accent/30"
+              : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+          aria-pressed={value === option.value}
+          aria-label={`${label}: ${option.label}`}
+        >
+          <option.icon className="h-2.5 w-2.5 shrink-0" />
+          {option.label}
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
+export const WidgetConfigPanel = ({
+  widget,
+  dashboardWidgets = [],
+  view,
+  datasetId: _datasetId,
+  categoricalValueHints = {},
+  categoricalDropdownThreshold = 25,
+  sectionColumns = 3,
+  open,
+  onClose,
+  onSave,
+  onDelete,
+}: WidgetConfigPanelProps) => {
   const [draft, setDraft] = useState<DashboardWidget | null>(widget);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [activeConfigTab, setActiveConfigTab] = useState<"dados" | "aparencia">("dados");
+  const [filterJoin, setFilterJoin] = useState<"AND" | "OR">("AND");
   const formulaTextareaRef = useRef<HTMLInputElement | null>(null);
   const [formulaCaret, setFormulaCaret] = useState<number>(0);
 
   useEffect(() => {
     setDraft(widget);
     setErrors([]);
+    setActiveConfigTab("dados");
+    setFilterJoin("AND");
   }, [widget]);
 
   const columns = view?.columns || [];
@@ -322,6 +489,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
       }
       if (config.metrics.length < 1) messages.push("Grafico de linha requer ao menos 1 metrica.");
       if (config.metrics.length > 2) messages.push("Grafico de linha permite no maximo 2 metricas.");
+      if (config.dimensions.length > 1) messages.push("Grafico de linha permite no maximo 1 legenda de serie.");
+      if (config.dimensions[0] && !categoricalColumns.some((column) => column.name === config.dimensions[0])) {
+        messages.push("A legenda de serie do grafico de linha precisa ser categorica.");
+      }
       if ((config.line_data_labels_percent || 0) < 25 || (config.line_data_labels_percent || 0) > 100) {
         messages.push("Peso de sensibilidade deve ser entre 25 e 100.");
       }
@@ -489,7 +660,8 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
             ...item,
             line_y_axis: item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right",
           })),
-          dimensions: [],
+          dimensions: normalizedDraft.config.dimensions.slice(0, 1),
+          line_show_grid: normalizedDraft.config.line_show_grid !== false,
           line_data_labels_percent: Math.max(25, Math.min(100, normalizedDraft.config.line_data_labels_percent || 60)),
           line_label_window: 3,
           line_label_min_gap: 2,
@@ -551,7 +723,13 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
   const formulaInlineCompletionSuffix = formulaBestSuggestion && formulaTokenPrefix
     ? formulaBestSuggestion.slice(formulaTokenPrefix.length)
     : "";
-  const periodLabelMap: Record<"day" | "week" | "month" | "hour", string> = { day: "dia", week: "semana", month: "mes", hour: "hora" };
+  const periodLabelMap: Record<"day" | "week" | "month" | "hour" | "timestamp", string> = {
+    day: "dia",
+    week: "semana",
+    month: "mes",
+    hour: "hora",
+    timestamp: "timestamp",
+  };
   const compositeDescription = compositeMetric
     ? `${aggLabelMap[compositeMetric.outer_agg]} da ${aggLabelMap[metric.op]}(${metric.column || "*"}) por ${periodLabelMap[compositeMetric.granularity]}`
     : "";
@@ -562,6 +740,9 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
   const getColumnType = (name: string) => columnTypeByName[name] || "text";
   const emptyFilter: WidgetFilter = { column: "", op: "eq", value: "" };
   const filterRows = draft.config.filters.length > 0 ? draft.config.filters : [emptyFilter];
+  const metricsCount = draft.config.widget_type === "dre"
+    ? (draft.config.dre_rows || []).reduce((acc, row) => acc + (row.metrics?.length || 0), 0)
+    : (draft.config.metrics?.length || 0);
   const applyFilterAt = (index: number, nextFilter: WidgetFilter) => {
     if (draft.config.filters.length === 0) {
       update({ config: { ...draft.config, filters: [nextFilter] } });
@@ -655,25 +836,41 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
       },
     });
   };
+  const WidgetTypeIcon = widgetTypeIcon[draft.config.widget_type] || Hash;
 
   return (
     <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
-      <SheetContent className="w-[95vw] sm:w-[46vw] sm:max-w-none sm:min-w-[700px] overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle className="text-base">Configurar Widget: {draft.config.widget_type.toUpperCase()}</SheetTitle>
-          <SheetDescription className="text-xs">
-            {view ? `${view.schema}.${view.name}` : "Tabela não encontrada"}
-          </SheetDescription>
-        </SheetHeader>
+      <SheetContent className="w-[95vw] sm:w-[46vw] sm:max-w-none sm:min-w-[700px] p-0 gap-0 flex flex-col">
+        <div className="px-5 pt-5 pb-4 space-y-3 border-b border-border/50">
+          <SheetHeader className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-accent/10 flex items-center justify-center shrink-0">
+                <WidgetTypeIcon className="h-3.5 w-3.5 text-accent" />
+              </div>
+              <div className="min-w-0">
+                <SheetTitle className="text-sm font-bold tracking-tight truncate">
+                  {draft.title || "Widget sem título"}
+                  <span className="ml-1.5 text-[10px] font-normal text-muted-foreground uppercase">
+                    {draft.config.widget_type}
+                  </span>
+                </SheetTitle>
+                <SheetDescription className="text-[11px] text-muted-foreground truncate">
+                  {view ? `${view.schema}.${view.name}` : "Tabela não encontrada"}
+                </SheetDescription>
+              </div>
+            </div>
+          </SheetHeader>
+        </div>
 
-        <div className="space-y-5 py-5">
+        <div className="flex-1 overflow-y-auto px-5 pb-24">
+          <div className="space-y-5 py-5">
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold text-muted-foreground">Titulo</Label>
             <Input
               value={draft.title}
               onChange={(e) => update({ title: e.target.value })}
               placeholder="Nome do widget"
-              className="h-8 text-sm"
+              className="h-8 text-sm bg-muted/30 border-border/50 focus:bg-background transition-colors"
             />
           </div>
 
@@ -691,11 +888,28 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
             </div>
           )}
 
-          <Separator />
-          <div className="space-y-1">
-            <Label className="text-xs font-semibold text-muted-foreground">Dados</Label>
-            <p className="text-[11px] text-muted-foreground">Configure metricas, colunas e tempo.</p>
-          </div>
+          <Tabs value={activeConfigTab} onValueChange={(value) => setActiveConfigTab(value as "dados" | "aparencia")}>
+            <TabsList className="w-full h-8 bg-muted/30 p-0.5 rounded-lg">
+              <TabsTrigger value="dados" className="flex-1 h-7 text-[11px] font-semibold rounded-md data-[state=active]:shadow-sm">
+                <SlidersHorizontal className="h-3 w-3 mr-1.5" />
+                Dados
+              </TabsTrigger>
+              <TabsTrigger value="aparencia" className="flex-1 h-7 text-[11px] font-semibold rounded-md data-[state=active]:shadow-sm">
+                <Palette className="h-3 w-3 mr-1.5" />
+                Aparência
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {activeConfigTab === "dados" && (
+            <div className="space-y-4 [&_label]:text-[11px] [&_input]:text-[11px] [&_textarea]:text-[11px] [&_[role=combobox]]:text-[11px] [&_.text-xs]:text-[11px]">
+              <Section
+                title="Modelagem"
+                icon={Hash}
+                badge={draft.config.widget_type === "text" ? "TXT" : draft.config.widget_type === "table" ? "TAB" : (draft.config.metrics?.length || 0) || undefined}
+              >
+                <p className="text-[11px] text-muted-foreground pb-1">Configure metricas, colunas e tempo.</p>
+                <div className="space-y-2.5">
 
           {draft.config.widget_type === "text" && (
             <div className="space-y-2">
@@ -765,10 +979,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
             && draft.config.widget_type !== "line"
             && draft.config.widget_type !== "dre"
             && !(draft.config.widget_type === "kpi" && draft.config.kpi_type === "derived") && (
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                <Hash className="h-3 w-3" /> Metrica
-              </Label>
+            <DataBlock title="Métricas" caption="Escolha agregação e coluna de valor." badge={metricsCount}>
               <div className="flex items-center gap-2">
                 <Select
                   value={metric.op}
@@ -851,11 +1062,11 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                   </Select>
                 )}
               </div>
-            </div>
+            </DataBlock>
           )}
 
           {draft.config.widget_type === "kpi" && (
-            <div className="space-y-2">
+            <DataBlock title="Métricas" caption="Configure base, fórmula e exibição de KPI." badge={metricsCount}>
               {derivedKpiEnabled && (
                 <div className="space-y-2 rounded-md border border-border p-2">
                   <Label className="text-xs font-semibold text-muted-foreground">KPIs base do dashboard</Label>
@@ -926,7 +1137,8 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
+                        className={destructiveGhostIconButtonClass}
+                        aria-label={`Remover base de KPI ${index + 1}`}
                         disabled={(draft.config.kpi_dependencies || []).length <= 1}
                         onClick={() => {
                           const nextDeps = (draft.config.kpi_dependencies || []).filter((_, metricIndex) => metricIndex !== index);
@@ -942,7 +1154,8 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-8 text-xs"
+                      className="h-8 border-dashed border-border/60 text-muted-foreground hover:border-foreground/30 hover:bg-muted/50 hover:text-foreground"
+                      aria-label="Adicionar base de KPI"
                       onClick={() =>
                         update({
                           config: {
@@ -1056,8 +1269,8 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                           config: {
                             ...draft.config,
                             composite_metric: {
-                              ...draft.config.composite_metric!,
-                              granularity: value as "day" | "week" | "month" | "hour",
+                            ...draft.config.composite_metric!,
+                              granularity: value as "day" | "week" | "month" | "hour" | "timestamp",
                             },
                           },
                         })}
@@ -1068,6 +1281,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         <SelectItem value="week">Semana</SelectItem>
                         <SelectItem value="month">Mes</SelectItem>
                         <SelectItem value="hour">Hora</SelectItem>
+                        <SelectItem value="timestamp">Timestamp (min/seg)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1138,15 +1352,12 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                   />
                 </div>
               </div>
-            </div>
+            </DataBlock>
           )}
 
           {draft.config.widget_type === "line" && (
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                <Hash className="h-3 w-3" /> Metricas (multiplas linhas)
-              </Label>
-              <div className="space-y-2 rounded-md border border-border p-2">
+            <div className="space-y-2.5">
+              <DataBlock title="Métricas" caption="Configure agregações e linhas do eixo Y." badge={draft.config.metrics.length}>
                 {(draft.config.metrics.length > 0 ? draft.config.metrics : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }]).map((item, index) => (
                   <div key={`line-metric-${index}`} className="flex items-center gap-2">
                     <Select
@@ -1192,13 +1403,14 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      disabled={draft.config.metrics.length <= 1}
-                      onClick={() => {
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={destructiveGhostIconButtonClass}
+                    aria-label={`Remover métrica ${index + 1}`}
+                    disabled={draft.config.metrics.length <= 1}
+                    onClick={() => {
                         const nextMetrics = draft.config.metrics.filter((_, metricIndex) => metricIndex !== index);
                         update({ config: { ...draft.config, metrics: nextMetrics } });
                       }}
@@ -1210,9 +1422,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                 <div className="flex justify-end">
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className={secondaryGhostIconButtonClass}
+                    aria-label="Adicionar métrica"
                     disabled={(draft.config.metrics.length || 0) >= 2}
                     onClick={() => {
                       const nextMetrics = [...draft.config.metrics];
@@ -1223,10 +1436,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                     <Plus className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-              </div>
+              </DataBlock>
 
-              <Label className="text-xs font-semibold text-muted-foreground">Tempo</Label>
-              <div className="flex items-center gap-2">
+              <DataBlock title="Dimensão temporal" caption="Selecione a coluna temporal e a granularidade.">
+                <div className="flex items-center gap-2">
                 <Select
                   value={draft.config.time?.column || ""}
                   onValueChange={(value) =>
@@ -1255,22 +1468,58 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         ...draft.config,
                         time: {
                           column: draft.config.time?.column || "",
-                          granularity: value as "day" | "week" | "month" | "hour",
+                          granularity: value as "day" | "week" | "month" | "hour" | "timestamp",
                         },
                       },
                     })}
                 >
-                  <SelectTrigger className="w-[110px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="day">Dia</SelectItem>
                     <SelectItem value="week">Semana</SelectItem>
                     <SelectItem value="month">Mes</SelectItem>
                     <SelectItem value="hour">Hora</SelectItem>
+                    <SelectItem value="timestamp">Timestamp (min/seg)</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+                </div>
+              </DataBlock>
 
-              <div className="space-y-2 rounded-md border border-border p-2">
+              <DataBlock title="Opções do gráfico" caption="Controle legenda, grade e destaque de rótulos.">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Segmentar por legenda (series)</span>
+                  <Select
+                    value={draft.config.dimensions[0] || "__none__"}
+                    onValueChange={(value) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          dimensions: value === "__none__" ? [] : [value],
+                        },
+                      })}
+                  >
+                    <SelectTrigger className="h-8 w-[190px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Sem legenda</SelectItem>
+                      {categoricalColumns.map((column) => (
+                        <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Mostrar linhas de grade</span>
+                  <Switch
+                    checked={draft.config.line_show_grid !== false}
+                    onCheckedChange={(checked) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          line_show_grid: checked,
+                        },
+                      })}
+                  />
+                </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground">Mostrar rotulos de dados</span>
                   <Switch
@@ -1311,12 +1560,12 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                   </Select>
                   <span className="text-xs text-muted-foreground">%</span>
                 </div>
-              </div>
+              </DataBlock>
             </div>
           )}
 
           {draft.config.widget_type === "donut" && (
-            <div className="space-y-2 rounded-md border border-border p-2">
+            <DataBlock title="Opções do gráfico" caption="Ajustes visuais da visualização de pizza.">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Mostrar legenda</span>
                 <Switch
@@ -1363,7 +1612,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                   <span className="text-xs text-muted-foreground">%</span>
                 </div>
               )}
-            </div>
+            </DataBlock>
           )}
 
           {draft.config.widget_type === "dre" && (
@@ -1427,9 +1676,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                         )}
                         <Button
                           type="button"
-                          variant="outline"
+                          variant="ghost"
                           size="icon"
-                          className="h-8 w-8"
+                          className={destructiveGhostIconButtonClass}
+                          aria-label={`Remover conta DRE ${index + 1}`}
                           disabled={dreRows.length <= 1}
                           onClick={() => {
                             const nextRows = dreRows.filter((_, rowIndex) => rowIndex !== index);
@@ -1500,9 +1750,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                               {metricIndex === (row.metrics || []).length - 1 && (
                                 <Button
                                   type="button"
-                                  variant="secondary"
+                                  variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8"
+                                  className={secondaryGhostIconButtonClass}
+                                  aria-label={`Adicionar métrica na conta ${index + 1}`}
                                   onClick={() => {
                                     const nextRows = [...dreRows];
                                     const nextMetrics = [...(row.metrics || []), { op: "sum" as const, column: numericColumns[0]?.name || columns[0]?.name }];
@@ -1515,9 +1766,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                               )}
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className={destructiveGhostIconButtonClass}
+                                aria-label={`Remover métrica ${metricIndex + 1} da conta ${index + 1}`}
                                 disabled={(row.metrics || []).length <= 1}
                                 onClick={() => {
                                   const nextRows = [...dreRows];
@@ -1537,7 +1789,8 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                     <Button
                       type="button"
                       variant="outline"
-                      className="w-full justify-center gap-2 rounded-xl border border-dashed border-border/50 text-muted-foreground hover:border-border hover:text-foreground h-9"
+                      className={dashedAddButtonClass}
+                      aria-label={`Adicionar conta após linha ${index + 1}`}
                       onClick={() => {
                         const nextRows = [...dreRows];
                         nextRows.splice(index + 1, 0, {
@@ -1675,6 +1928,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6"
+                            aria-label={`Mover coluna ${column.name} para cima`}
                             disabled={selectedIndex <= 0}
                             onClick={() => {
                               if (selectedIndex <= 0) return;
@@ -1690,6 +1944,7 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6"
+                            aria-label={`Mover coluna ${column.name} para baixo`}
                             disabled={selectedIndex === selectedTableColumns.length - 1}
                             onClick={() => {
                               if (selectedIndex < 0 || selectedIndex === selectedTableColumns.length - 1) return;
@@ -1748,19 +2003,51 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
             </div>
           )}
 
-          <Separator />
-          <div className="space-y-1">
-            <Label className="text-xs font-semibold text-muted-foreground">Consulta</Label>
-            <p className="text-[11px] text-muted-foreground">Defina filtros, ordenação e limites.</p>
-          </div>
+                </div>
+              </Section>
 
-          {draft.config.widget_type !== "text" && <div className="space-y-2">
-            <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Filter className="h-3 w-3" /> Filtro simples
-            </Label>
+              {(draft.config.widget_type === "line" || draft.config.widget_type === "bar" || draft.config.widget_type === "column") && (
+                <Section title="Formato dos valores" icon={Hash} defaultOpen={false}>
+                  <p className="text-[11px] text-muted-foreground pb-1">Prefixo e sufixo aplicados aos valores exibidos.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Prefixo</Label>
+                      <Input
+                        className="h-8 text-xs"
+                        value={draft.config.kpi_prefix || ""}
+                        onChange={(e) => update({ config: { ...draft.config, kpi_prefix: e.target.value || undefined } })}
+                        placeholder="Ex: R$"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Sufixo</Label>
+                      <Input
+                        className="h-8 text-xs"
+                        value={draft.config.kpi_suffix || ""}
+                        onChange={(e) => update({ config: { ...draft.config, kpi_suffix: e.target.value || undefined } })}
+                        placeholder="Ex: %"
+                      />
+                    </div>
+                  </div>
+                </Section>
+              )}
+
+          {draft.config.widget_type !== "text" && <Section title="Filtros" icon={Filter} defaultOpen={false} badge={draft.config.filters.length || undefined}>
+            <p className="text-[11px] text-muted-foreground pb-1">Defina as regras de filtro por coluna, operador e valor.</p>
             <div className="space-y-2">
               {filterRows.map((filterItem, index) => {
                 const isTemporalFilterColumn = !!filterItem.column && getColumnType(filterItem.column) === "temporal";
+                const isCategoricalFilterColumn = !!filterItem.column && (getColumnType(filterItem.column) === "text" || getColumnType(filterItem.column) === "boolean");
+                const columnHint = filterItem.column ? categoricalValueHints[filterItem.column] : undefined;
+                const showCategoricalDropdown = !!(
+                  filterItem.column
+                  && isCategoricalFilterColumn
+                  && exactValueFilterOps.has(filterItem.op)
+                  && columnHint
+                  && !columnHint.truncated
+                  && columnHint.values.length > 0
+                  && columnHint.values.length <= categoricalDropdownThreshold
+                );
                 const isRelativeTemporalFilter = isTemporalFilterColumn
                   && filterItem.op === "between"
                   && typeof filterItem.value === "object"
@@ -1769,8 +2056,20 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                   && "relative" in (filterItem.value as Record<string, unknown>);
                 const temporalOpUiValue = isRelativeTemporalFilter ? "__relative__" : filterItem.op;
                 const showOperatorAndValue = !!filterItem.column;
+                const scalarValue = Array.isArray(filterItem.value) ? String((filterItem.value as unknown[])[0] || "") : String(filterItem.value || "");
                 return (
-                  <div key={`filter-row-${index}`} className="flex items-center gap-2">
+                  <div key={`filter-row-${index}`} className="space-y-2">
+                    {filterRows.length > 1 && index > 0 && (
+                      <button
+                        type="button"
+                        className="inline-flex h-6 items-center rounded-full border border-border/60 bg-muted/40 px-2.5 text-caption font-semibold text-muted-foreground hover:bg-muted/70"
+                        aria-label={`Alternar operador lógico entre filtros: ${filterJoin}`}
+                        onClick={() => setFilterJoin((prev) => (prev === "AND" ? "OR" : "AND"))}
+                      >
+                        {filterJoin}
+                      </button>
+                    )}
+                    <div className="flex items-center gap-2">
                     <Select
                       value={filterItem.column || "__none__"}
                       onValueChange={(value) => {
@@ -1914,6 +2213,23 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                                 })}
                             />
                           </div>
+                        ) : showCategoricalDropdown ? (
+                          <Select
+                            value={scalarValue || "__none__"}
+                            onValueChange={(value) =>
+                              applyFilterAt(index, {
+                                ...filterItem,
+                                value: value === "__none__" ? "" : value,
+                              })}
+                          >
+                            <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue placeholder="Valor" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Sem valor</SelectItem>
+                              {(columnHint?.values || []).map((value) => (
+                                <SelectItem key={`filter-${index}-${value}`} value={value}>{value}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         ) : (
                           <Input
                             className="w-[140px] h-8 text-xs"
@@ -1932,8 +2248,9 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                     <Button
                       type="button"
                       size="icon"
-                      variant="outline"
-                      className="h-8 w-8 shrink-0"
+                      variant="ghost"
+                      className={`${secondaryGhostIconButtonClass} shrink-0`}
+                      aria-label={`Adicionar filtro após linha ${index + 1}`}
                       onClick={() => addFilterRow(index)}
                     >
                       <Plus className="h-3.5 w-3.5" />
@@ -1941,22 +2258,22 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                     <Button
                       type="button"
                       size="icon"
-                      variant="outline"
-                      className="h-8 w-8 shrink-0 destructive-icon-btn"
+                      variant="ghost"
+                      className={`${destructiveGhostIconButtonClass} shrink-0`}
+                      aria-label={`Remover filtro ${index + 1}`}
                       onClick={() => removeFilterRow(index)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
+                  </div>
                 );
               })}
             </div>
-          </div>}
+          </Section>}
 
-          {(draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && <div className="space-y-2">
-            <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <ArrowUpDown className="h-3 w-3" /> Ordenação (categorico)
-            </Label>
+          {(draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && <Section title="Ordenação" icon={ArrowUpDown} defaultOpen={false} badge={draft.config.order_by.length || undefined}>
+            <p className="text-[11px] text-muted-foreground pb-1">Priorize os itens por métrica ou dimensão.</p>
             <div className="flex items-center gap-2">
               <Select
                 value={
@@ -2023,12 +2340,10 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
               />
               <span className="text-[11px] text-muted-foreground">Deixe vazio para mostrar todas as dimensoes.</span>
             </div>
-          </div>}
+          </Section>}
 
-          {draft.config.widget_type !== "text" && draft.config.widget_type !== "kpi" && draft.config.widget_type !== "bar" && draft.config.widget_type !== "column" && draft.config.widget_type !== "donut" && draft.config.widget_type !== "dre" && <div className="space-y-2">
-            <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <ArrowUpDown className="h-3 w-3" /> Ordenação simples
-            </Label>
+          {draft.config.widget_type !== "text" && draft.config.widget_type !== "kpi" && draft.config.widget_type !== "bar" && draft.config.widget_type !== "column" && draft.config.widget_type !== "donut" && draft.config.widget_type !== "dre" && <Section title="Ordenação" icon={ArrowUpDown} defaultOpen={false} badge={draft.config.order_by.length || undefined}>
+            <p className="text-[11px] text-muted-foreground pb-1">Defina a coluna e a direção da ordenação.</p>
             <div className="flex items-center gap-2">
               <Select
                 value={draft.config.order_by[0]?.column || "__none__"}
@@ -2070,73 +2385,138 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
                 </Select>
               )}
             </div>
-          </div>}
-
-          <Separator />
-
-          <div className="space-y-2">
-            <Label className="text-xs font-semibold text-muted-foreground">Configurações visuais</Label>
-            <div className="grid grid-cols-[minmax(0,170px)_1fr_1fr] items-end gap-2 rounded-md border border-border p-2">
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">Mostrar título</Label>
-                <div className="h-8 w-[88px] px-2 rounded-md border border-input flex items-center justify-start">
-                  <Switch
-                    checked={draft.config.show_title !== false}
-                    onCheckedChange={(checked) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          show_title: checked,
-                        },
-                      })}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">Largura</Label>
-                <Select
-                  value={String(size.width)}
-                  onValueChange={(value) =>
-                    update({
-                      config: {
-                        ...draft.config,
-                        size: {
-                          ...size,
-                          width: Math.min(maxWidth, Number(value)) as 1 | 2 | 3 | 4,
-                        },
-                      },
-                    })}
-                >
-                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1x</SelectItem>
-                    {maxWidth >= 2 && <SelectItem value="2">2x</SelectItem>}
-                    {maxWidth >= 3 && <SelectItem value="3">3x</SelectItem>}
-                    {maxWidth >= 4 && <SelectItem value="4">4x</SelectItem>}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">Altura</Label>
-                <Select
-                  value={String(size.height)}
-                  onValueChange={(value) =>
-                    update({
-                      config: {
-                        ...draft.config,
-                        size: { ...size, height: value === "0.5" ? 0.5 : 1 },
-                      },
-                    })}
-                >
-                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1x (padrao)</SelectItem>
-                    <SelectItem value="0.5">0.5x</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          </Section>}
             </div>
-          </div>
+          )}
+
+          {activeConfigTab === "aparencia" && (
+            <>
+              <Separator />
+              <div className="space-y-3">
+                <Section title="Layout" icon={Columns3}>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between py-0.5">
+                      <Label htmlFor="widget-show-title" className="text-xs text-foreground/80 font-normal cursor-pointer">Mostrar título</Label>
+                      <Switch
+                        id="widget-show-title"
+                        checked={draft.config.show_title !== false}
+                        onCheckedChange={(checked) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              show_title: checked,
+                            },
+                          })}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-start">
+                      <LayoutOptionPicker
+                        label="Largura (blocos)"
+                        value={String(size.width)}
+                        options={[
+                          { value: "1", label: "1x", icon: Square },
+                          ...(maxWidth >= 2 ? [{ value: "2", label: "2x", icon: RectangleVertical } as const] : []),
+                          ...(maxWidth >= 3 ? [{ value: "3", label: "3x", icon: RectangleHorizontal } as const] : []),
+                          ...(maxWidth >= 4 ? [{ value: "4", label: "4x", icon: RectangleHorizontal } as const] : []),
+                        ]}
+                        onChange={(value) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              size: {
+                                ...size,
+                                width: Math.min(maxWidth, Number(value)) as 1 | 2 | 3 | 4,
+                              },
+                            },
+                          })}
+                      />
+                      <LayoutOptionPicker
+                        label="Altura"
+                        value={String(size.height)}
+                        options={[
+                          { value: "0.5", label: "0.5x", icon: RectangleHorizontal },
+                          { value: "1", label: "1x", icon: Square },
+                          { value: "2", label: "2x", icon: RectangleVertical },
+                        ]}
+                        onChange={(value) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              size: { ...size, height: value === "0.5" ? 0.5 : value === "2" ? 2 : 1 },
+                            },
+                          })}
+                      />
+                    </div>
+                  </div>
+                  <div className="pt-2 space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Espaçamento interno</Label>
+                    <Select
+                      value={draft.config.visual_padding || "normal"}
+                      onValueChange={(value) =>
+                        update({
+                          config: {
+                            ...draft.config,
+                            visual_padding: value as "compact" | "normal" | "comfortable",
+                          },
+                        })}
+                    >
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="compact">Compacto</SelectItem>
+                        <SelectItem value="normal">Normal</SelectItem>
+                        <SelectItem value="comfortable">Confortável</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </Section>
+
+                {draft.config.widget_type !== "table" && draft.config.widget_type !== "dre" && (
+                  <Section title="Paleta de cores" icon={Palette} defaultOpen={false}>
+                    <div className="space-y-1.5">
+                      {(Object.keys(widgetPalettePreview) as Array<keyof typeof widgetPalettePreview>).map((paletteKey) => {
+                        const selected = (draft.config.visual_palette || "default") === paletteKey;
+                        return (
+                          <button
+                            key={paletteKey}
+                            type="button"
+                            className={`h-9 w-full rounded-md border px-2.5 transition-colors ${
+                              selected
+                                ? "border-primary bg-primary/10 text-foreground"
+                                : "border-border text-muted-foreground hover:bg-muted/50"
+                            }`}
+                            onClick={() =>
+                              update({
+                                config: {
+                                  ...draft.config,
+                                  visual_palette: paletteKey,
+                                },
+                              })}
+                            aria-label={`Paleta ${widgetPaletteLabel[paletteKey]}`}
+                            title={widgetPaletteLabel[paletteKey]}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                {widgetPalettePreview[paletteKey].map((color) => (
+                                  <span
+                                    key={`${paletteKey}-${color}`}
+                                    className="h-3.5 w-3.5 rounded-full"
+                                    style={{ backgroundColor: color }}
+                                  />
+                                ))}
+                              </div>
+                              <span className="text-[11px]">
+                                {widgetPaletteLabel[paletteKey]}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </Section>
+                )}
+              </div>
+            </>
+          )}
 
           {errors.length > 0 && (
             <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive space-y-1">
@@ -2146,19 +2526,25 @@ export const WidgetConfigPanel = ({ widget, dashboardWidgets = [], view, section
             </div>
           )}
 
-          <div className="flex gap-2">
-            <Button className="flex-1" onClick={handleSave} disabled={saving}>
-              {saving ? "Salvando..." : "Salvar alterações"}
-            </Button>
-            <Button variant="destructive" size="icon" onClick={onDelete}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
           </div>
+        </div>
+        <div className="border-t border-border/50 bg-card/95 backdrop-blur-sm px-5 py-3 flex items-center gap-2">
+          <Button className="flex-1 h-9 font-semibold text-xs shadow-sm" onClick={handleSave} disabled={saving}>
+            {saving ? "Salvando..." : "Salvar alterações"}
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 destructive-icon-btn" aria-label="Excluir widget" onClick={onDelete}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
         </div>
       </SheetContent>
     </Sheet>
   );
 };
+
+
+
+
+
 
 
 
