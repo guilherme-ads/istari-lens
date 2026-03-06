@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 WidgetType = Literal["kpi", "line", "bar", "column", "donut", "table", "text", "dre"]
 MetricOp = Literal["count", "sum", "avg", "min", "max", "distinct_count"]
 KpiType = Literal["atomic", "derived"]
-TimeGranularity = Literal["day", "week", "month", "hour"]
+TimeGranularity = Literal["day", "week", "month", "hour", "timestamp"]
 TemporalDimensionGranularity = Literal["month", "week", "weekday", "hour"]
 DreRowType = Literal["result", "deduction", "detail"]
 DreRowImpact = Literal["add", "subtract"]
@@ -128,7 +128,7 @@ class OrderByConfig(BaseModel):
 
 class WidgetSizeConfig(BaseModel):
     width: Literal[1, 2, 3, 4] = 1
-    height: Literal[0.5, 1] = 1
+    height: Literal[0.5, 1, 2] = 1
 
 
 class TextStyleConfig(BaseModel):
@@ -201,10 +201,13 @@ class WidgetConfig(BaseModel):
     composite_metric: CompositeMetricConfig | None = None
     size: WidgetSizeConfig = Field(default_factory=WidgetSizeConfig)
     text_style: TextStyleConfig | None = None
+    visual_padding: Literal["compact", "normal", "comfortable"] = "normal"
+    visual_palette: Literal["default", "warm", "cool", "mono", "vivid"] = "default"
     metrics: list[MetricConfig] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
     time: TimeConfig | None = None
     line_data_labels_enabled: bool = False
+    line_show_grid: bool = True
     line_data_labels_percent: int = 60
     line_label_window: Literal[3, 5, 7] = 3
     line_label_min_gap: int = 2
@@ -289,8 +292,8 @@ class WidgetConfig(BaseModel):
                 raise ValueError("Line widget requires at least one metric")
             if len(self.metrics) > 2:
                 raise ValueError("Line widget supports at most two metrics")
-            if self.dimensions:
-                raise ValueError("Line widget does not support dimensions")
+            if len(self.dimensions) > 1:
+                raise ValueError("Line widget supports at most one series dimension")
             if not 25 <= int(self.line_data_labels_percent) <= 100:
                 raise ValueError("Line widget line_data_labels_percent must be between 25 and 100")
             if self.line_label_min_gap < 1:

@@ -151,6 +151,18 @@ const getWidgetWidthClass = (sectionColumns: 1 | 2 | 3 | 4, width: 1 | 2 | 3 | 4
   return "md:col-span-1 lg:col-span-1";
 };
 
+const getWidgetPaddingClass = (padding?: "compact" | "normal" | "comfortable"): string => {
+  if (padding === "compact") return "p-2";
+  if (padding === "comfortable") return "p-4";
+  return "p-3";
+};
+
+const getWidgetMinHeightClass = (height?: 0.5 | 1 | 2): string => {
+  if (height === 0.5) return "min-h-[100px]";
+  if (height === 2) return "min-h-[320px]";
+  return "min-h-[180px]";
+};
+
 const DashboardViewPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1073,12 +1085,12 @@ const ViewSection = ({
                 <h4 className="text-body font-semibold text-foreground truncate">{widget.title || "Sem título"}</h4>
               </div>
             )}
-            <div className={`p-3 flex items-center justify-center ${widget.config.size?.height === 0.5 ? "min-h-[100px]" : "min-h-[180px]"}`}>
+            <div className={`${getWidgetPaddingClass(widget.config.visual_padding)} flex items-stretch ${getWidgetMinHeightClass(widget.config.size?.height)}`}>
               <WidgetRenderer
                 widget={widget}
                 dashboardId={dashboardId}
                 disableFetch
-                heightMultiplier={widget.config.size?.height || 1}
+                heightMultiplier={(widget.config.size?.height || 1) as 0.5 | 1 | 2}
                 preloadedData={dataByWidgetId[widget.id]}
                 preloadedLoading={loading}
                 preloadedError={errorMessage}

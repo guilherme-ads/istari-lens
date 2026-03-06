@@ -59,6 +59,36 @@ def test_line_requires_temporal_column() -> None:
     assert "time.column" in exc.value.field_errors
 
 
+def test_line_allows_single_categorical_series_dimension() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "line",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["estacao"],
+            "time": {"column": "data", "granularity": "day"},
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+
+
+def test_line_rejects_multiple_series_dimensions() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "line",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": ["estacao", "data"],
+                "time": {"column": "data", "granularity": "day"},
+                "filters": [],
+                "order_by": [],
+            }
+        )
+
+
 def test_bar_requires_categorical_dimension() -> None:
     config = WidgetConfig.model_validate(
         {

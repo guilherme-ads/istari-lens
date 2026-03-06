@@ -1,8 +1,10 @@
 export type WidgetType = "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
 export type MetricOp = "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
-export type TimeGranularity = "day" | "week" | "month" | "hour";
+export type TimeGranularity = "day" | "week" | "month" | "hour" | "timestamp";
 export type WidgetWidth = 1 | 2 | 3 | 4;
-export type WidgetHeight = 0.5 | 1;
+export type WidgetHeight = 0.5 | 1 | 2;
+export type WidgetPadding = "compact" | "normal" | "comfortable";
+export type WidgetPalette = "default" | "warm" | "cool" | "mono" | "vivid";
 export type TextAlign = "left" | "center" | "right";
 export type FilterOp =
   | "eq"
@@ -72,6 +74,8 @@ export interface WidgetConfig {
     font_size: number;
     align: TextAlign;
   };
+  visual_padding?: WidgetPadding;
+  visual_palette?: WidgetPalette;
   metrics: WidgetMetric[];
   dimensions: string[];
   time?: {
@@ -79,6 +83,7 @@ export interface WidgetConfig {
     granularity: TimeGranularity;
   };
   line_data_labels_enabled?: boolean;
+  line_show_grid?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;
@@ -158,6 +163,8 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: "kpi",
       view_name: viewName,
       show_title: true,
+      visual_padding: "normal",
+      visual_palette: "default",
       kpi_show_as: "number_2",
       kpi_decimals: 2,
       kpi_type: "atomic",
@@ -178,7 +185,10 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: "line",
       view_name: viewName,
       show_title: true,
+      visual_padding: "normal",
+      visual_palette: "default",
       line_data_labels_enabled: false,
+      line_show_grid: true,
       line_data_labels_percent: 60,
       line_label_window: 3,
       line_label_min_gap: 2,
@@ -200,6 +210,8 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: type,
       view_name: viewName,
       show_title: true,
+      visual_padding: "normal",
+      visual_palette: "default",
       donut_show_legend: type === "donut" ? true : undefined,
       donut_data_labels_enabled: type === "donut" ? false : undefined,
       donut_data_labels_min_percent: type === "donut" ? 6 : undefined,
@@ -217,6 +229,8 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: "text",
       view_name: viewName,
       show_title: true,
+      visual_padding: "normal",
+      visual_palette: "default",
       size: { width: 1, height: 1 },
       text_style: {
         content: "Texto",
@@ -235,6 +249,8 @@ export const createDefaultWidgetConfig = (params: {
       widget_type: "dre",
       view_name: viewName,
       show_title: true,
+      visual_padding: "normal",
+      visual_palette: "default",
       size: { width: 1, height: 1 },
       metrics: [],
       dimensions: [],
@@ -256,6 +272,8 @@ export const createDefaultWidgetConfig = (params: {
     widget_type: "table",
     view_name: viewName,
     show_title: true,
+    visual_padding: "normal",
+    visual_palette: "default",
     size: { width: 1, height: 1 },
     metrics: [],
     dimensions: [],

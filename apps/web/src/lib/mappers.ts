@@ -106,7 +106,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
           outer_agg: asString(raw.composite_metric.outer_agg, "avg") as "count" | "sum" | "avg" | "min" | "max" | "distinct_count",
           value_column: asString(raw.composite_metric.value_column) || undefined,
           time_column: asString(raw.composite_metric.time_column),
-          granularity: asString(raw.composite_metric.granularity, "day") as "day" | "week" | "month" | "hour",
+          granularity: asString(raw.composite_metric.granularity, "day") as "day" | "week" | "month" | "hour" | "timestamp",
         }
       : undefined,
     size: {
@@ -182,7 +182,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
   if (isObject(raw.time) && typeof raw.time.column === "string" && typeof raw.time.granularity === "string") {
     parsed.time = {
       column: raw.time.column,
-      granularity: raw.time.granularity as "day" | "week" | "month" | "hour",
+      granularity: raw.time.granularity as "day" | "week" | "month" | "hour" | "timestamp",
     };
   }
   if (columns) {
