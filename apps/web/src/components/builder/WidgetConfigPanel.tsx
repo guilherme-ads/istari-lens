@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Hash, Columns3, Filter, ArrowUpDown, Trash2, ChevronUp, ChevronDown, Plus,
   SlidersHorizontal, Palette, BarChart3, LineChart, PieChart, Table2, Type,
-  Square, RectangleVertical, RectangleHorizontal,
+  Square, RectangleVertical, RectangleHorizontal, CalendarIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 import type { DashboardWidget, WidgetFilter } from "@/types/dashboard";
 import type { View } from "@/types";
 
@@ -58,6 +61,19 @@ const widgetPaletteLabel: Record<"default" | "warm" | "cool" | "mono" | "vivid",
   vivid: "Vibrante",
 };
 const exactValueFilterOps = new Set<WidgetFilter["op"]>(["eq", "neq", "gt", "lt", "gte", "lte"]);
+const dateToYmd = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+const parseYmdDate = (value: unknown): Date | undefined => {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+};
+const formatDateBR = (date: Date) =>
+  new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
   const value = (rawType || "").toLowerCase();
   if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
@@ -428,6 +444,7 @@ export const WidgetConfigPanel = ({
     [temporalColumns],
   );
   const selectedTableColumns = draft?.config.columns || [];
+  const allTableColumnsSelected = columns.length > 0 && selectedTableColumns.length === columns.length;
   const orderedTableColumns = useMemo(() => {
     const selected = columns
       .filter((column) => selectedTableColumns.includes(column.name))
@@ -738,6 +755,12 @@ export const WidgetConfigPanel = ({
     : categoricalDimensionOptions;
   const barDim = draft.config.dimensions[0] || "";
   const getColumnType = (name: string) => columnTypeByName[name] || "text";
+  const getDefaultTableColumnFormat = (columnName: string): string => {
+    const columnType = getColumnType(columnName);
+    if (columnType === "numeric") return "number_2";
+    if (columnType === "temporal") return "datetime";
+    return "text";
+  };
   const emptyFilter: WidgetFilter = { column: "", op: "eq", value: "" };
   const filterRows = draft.config.filters.length > 0 ? draft.config.filters : [emptyFilter];
   const metricsCount = draft.config.widget_type === "dre"
@@ -840,7 +863,7 @@ export const WidgetConfigPanel = ({
 
   return (
     <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
-      <SheetContent className="w-[95vw] sm:w-[46vw] sm:max-w-none sm:min-w-[700px] p-0 gap-0 flex flex-col">
+      <SheetContent className="w-[95vw] sm:w-[600px] sm:max-w-[600px] p-0 gap-0 flex flex-col">
         <div className="px-5 pt-5 pb-4 space-y-3 border-b border-border/50">
           <SheetHeader className="space-y-0.5">
             <div className="flex items-center gap-2">
@@ -1485,134 +1508,7 @@ export const WidgetConfigPanel = ({
                 </div>
               </DataBlock>
 
-              <DataBlock title="Opções do gráfico" caption="Controle legenda, grade e destaque de rótulos.">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Segmentar por legenda (series)</span>
-                  <Select
-                    value={draft.config.dimensions[0] || "__none__"}
-                    onValueChange={(value) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          dimensions: value === "__none__" ? [] : [value],
-                        },
-                      })}
-                  >
-                    <SelectTrigger className="h-8 w-[190px] text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Sem legenda</SelectItem>
-                      {categoricalColumns.map((column) => (
-                        <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Mostrar linhas de grade</span>
-                  <Switch
-                    checked={draft.config.line_show_grid !== false}
-                    onCheckedChange={(checked) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          line_show_grid: checked,
-                        },
-                      })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Mostrar rotulos de dados</span>
-                  <Switch
-                    checked={!!draft.config.line_data_labels_enabled}
-                    onCheckedChange={(checked) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          line_data_labels_enabled: checked,
-                          line_data_labels_percent: Math.max(25, Math.min(100, draft.config.line_data_labels_percent || 60)),
-                          line_label_window: 3,
-                          line_label_min_gap: 2,
-                          line_label_mode: "both",
-                        },
-                      })}
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground w-[140px]">Peso sensibilidade</Label>
-                  <Select
-                    value={String(draft.config.line_data_labels_percent || 60)}
-                    onValueChange={(value) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          line_data_labels_percent: Math.max(25, Math.min(100, Number(value) || 60)),
-                        },
-                      })}
-                    disabled={!draft.config.line_data_labels_enabled}
-                  >
-                    <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="25">25%</SelectItem>
-                      <SelectItem value="50">50%</SelectItem>
-                      <SelectItem value="75">75%</SelectItem>
-                      <SelectItem value="100">100%</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">%</span>
-                </div>
-              </DataBlock>
             </div>
-          )}
-
-          {draft.config.widget_type === "donut" && (
-            <DataBlock title="Opções do gráfico" caption="Ajustes visuais da visualização de pizza.">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Mostrar legenda</span>
-                <Switch
-                  checked={draft.config.donut_show_legend !== false}
-                  onCheckedChange={(checked) =>
-                    update({
-                      config: {
-                        ...draft.config,
-                        donut_show_legend: checked,
-                      },
-                    })}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Mostrar rotulos de dados</span>
-                <Switch
-                  checked={!!draft.config.donut_data_labels_enabled}
-                  onCheckedChange={(checked) =>
-                    update({
-                      config: {
-                        ...draft.config,
-                        donut_data_labels_enabled: checked,
-                      },
-                    })}
-                />
-              </div>
-              {draft.config.donut_data_labels_enabled && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground w-[180px]">Percentual minimo da fatia</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={100}
-                    className="w-[90px] h-8 text-xs"
-                    value={draft.config.donut_data_labels_min_percent ?? 6}
-                    onChange={(e) =>
-                      update({
-                        config: {
-                          ...draft.config,
-                          donut_data_labels_min_percent: Math.max(1, Math.min(100, Number(e.target.value) || 6)),
-                        },
-                      })}
-                  />
-                  <span className="text-xs text-muted-foreground">%</span>
-                </div>
-              )}
-            </DataBlock>
           )}
 
           {draft.config.widget_type === "dre" && (
@@ -1868,13 +1764,46 @@ export const WidgetConfigPanel = ({
           {draft.config.widget_type === "table" && (
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">Colunas da tabela</Label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Checkbox
+                  checked={allTableColumnsSelected}
+                  onCheckedChange={(checked) => {
+                    if (checked !== true) {
+                      update({
+                        config: {
+                          ...draft.config,
+                          columns: [],
+                          table_column_formats: {},
+                        },
+                      });
+                      return;
+                    }
+                    const current = draft.config.columns || [];
+                    const missing = columns.map((column) => column.name).filter((name) => !current.includes(name));
+                    const nextColumns = [...current, ...missing];
+                    const existingFormats = draft.config.table_column_formats || {};
+                    const nextFormats = nextColumns.reduce<Record<string, string>>((acc, columnName) => {
+                      acc[columnName] = existingFormats[columnName] || getDefaultTableColumnFormat(columnName);
+                      return acc;
+                    }, {});
+                    update({
+                      config: {
+                        ...draft.config,
+                        columns: nextColumns,
+                        table_column_formats: nextFormats,
+                      },
+                    });
+                  }}
+                />
+                Selecionar todas as colunas
+              </label>
               <p className="text-[11px] text-muted-foreground">Selecione, ordene e formate as colunas em uma unica lista.</p>
               <div className="space-y-1.5 max-h-64 overflow-auto border rounded-md p-2">
                 {orderedTableColumns.map((column) => {
                   const checked = !!draft.config.columns?.includes(column.name);
                   const selectedIndex = selectedTableColumns.indexOf(column.name);
                   const columnType = getColumnType(column.name);
-                  const inferredFormat = columnType === "numeric" ? "number_2" : columnType === "temporal" ? "datetime" : "text";
+                  const inferredFormat = getDefaultTableColumnFormat(column.name);
                   const formatValue = draft.config.table_column_formats?.[column.name] || inferredFormat;
                   const formatOptions =
                     columnType === "numeric"
@@ -2005,6 +1934,161 @@ export const WidgetConfigPanel = ({
 
                 </div>
               </Section>
+
+              {(draft.config.widget_type === "line" || draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && (
+                <Section title="Opções do gráfico" icon={SlidersHorizontal} defaultOpen={false}>
+                  <p className="text-[11px] text-muted-foreground pb-1">Ajustes visuais e de rótulos por tipo de gráfico.</p>
+
+                  {draft.config.widget_type === "line" && (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Segmentar por legenda (series)</span>
+                        <Select
+                          value={draft.config.dimensions[0] || "__none__"}
+                          onValueChange={(value) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                dimensions: value === "__none__" ? [] : [value],
+                              },
+                            })}
+                        >
+                          <SelectTrigger className="h-8 w-[190px] text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Sem legenda</SelectItem>
+                            {categoricalColumns.map((column) => (
+                              <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mostrar linhas de grade</span>
+                        <Switch
+                          checked={draft.config.line_show_grid !== false}
+                          onCheckedChange={(checked) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                line_show_grid: checked,
+                              },
+                            })}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mostrar rótulos de dados</span>
+                        <Switch
+                          checked={!!draft.config.line_data_labels_enabled}
+                          onCheckedChange={(checked) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                line_data_labels_enabled: checked,
+                                line_data_labels_percent: Math.max(25, Math.min(100, draft.config.line_data_labels_percent || 60)),
+                                line_label_window: 3,
+                                line_label_min_gap: 2,
+                                line_label_mode: "both",
+                              },
+                            })}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs text-muted-foreground w-[140px]">Peso sensibilidade</Label>
+                        <Select
+                          value={String(draft.config.line_data_labels_percent || 60)}
+                          onValueChange={(value) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                line_data_labels_percent: Math.max(25, Math.min(100, Number(value) || 60)),
+                              },
+                            })}
+                          disabled={!draft.config.line_data_labels_enabled}
+                        >
+                          <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="25">25%</SelectItem>
+                            <SelectItem value="50">50%</SelectItem>
+                            <SelectItem value="75">75%</SelectItem>
+                            <SelectItem value="100">100%</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <span className="text-xs text-muted-foreground">%</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Define o quão exigente o detector de picos/vales será para exibir rótulos. Valores maiores mostram menos eventos, focando apenas variações mais relevantes.
+                      </p>
+                    </div>
+                  )}
+
+                  {(draft.config.widget_type === "bar" || draft.config.widget_type === "column") && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Mostrar rótulos de dados</span>
+                      <Switch
+                        checked={draft.config.bar_data_labels_enabled !== false}
+                        onCheckedChange={(checked) =>
+                          update({
+                            config: {
+                              ...draft.config,
+                              bar_data_labels_enabled: checked,
+                            },
+                          })}
+                      />
+                    </div>
+                  )}
+
+                  {draft.config.widget_type === "donut" && (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mostrar legenda</span>
+                        <Switch
+                          checked={draft.config.donut_show_legend !== false}
+                          onCheckedChange={(checked) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                donut_show_legend: checked,
+                              },
+                            })}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mostrar rótulos de dados</span>
+                        <Switch
+                          checked={!!draft.config.donut_data_labels_enabled}
+                          onCheckedChange={(checked) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                donut_data_labels_enabled: checked,
+                              },
+                            })}
+                        />
+                      </div>
+                      {draft.config.donut_data_labels_enabled && (
+                        <div className="flex items-center gap-2">
+                          <Label className="text-xs text-muted-foreground w-[180px]">Percentual mínimo da fatia</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={100}
+                            className="w-[90px] h-8 text-xs"
+                            value={draft.config.donut_data_labels_min_percent ?? 6}
+                            onChange={(e) =>
+                              update({
+                                config: {
+                                  ...draft.config,
+                                  donut_data_labels_min_percent: Math.max(1, Math.min(100, Number(e.target.value) || 6)),
+                                },
+                              })}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Section>
+              )}
 
               {(draft.config.widget_type === "line" || draft.config.widget_type === "bar" || draft.config.widget_type === "column") && (
                 <Section title="Formato dos valores" icon={Hash} defaultOpen={false}>
@@ -2151,41 +2235,67 @@ export const WidgetConfigPanel = ({
                             </SelectContent>
                           </Select>
                         ) : isTemporalFilterColumn && filterItem.op === "between" ? (
-                          <div className="flex items-center gap-1">
-                            <Input
-                              type="date"
-                              className="w-[140px] h-8 text-xs"
-                              value={String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || "")}
-                              onChange={(e) =>
-                                applyFilterAt(index, {
-                                  ...filterItem,
-                                  value: [
-                                    e.target.value,
-                                    String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || ""),
-                                  ],
-                                })}
-                            />
-                            <Input
-                              type="date"
-                              className="w-[140px] h-8 text-xs"
-                              value={String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || "")}
-                              onChange={(e) =>
-                                applyFilterAt(index, {
-                                  ...filterItem,
-                                  value: [
-                                    String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || ""),
-                                    e.target.value,
-                                  ],
-                                })}
-                            />
-                          </div>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className={cn(
+                                  "w-[280px] h-8 justify-start text-left text-xs font-normal",
+                                  (!Array.isArray(filterItem.value) || !filterItem.value[0] || !filterItem.value[1]) && "text-muted-foreground",
+                                )}
+                              >
+                                <CalendarIcon className="mr-2 h-3.5 w-3.5" />
+                                {Array.isArray(filterItem.value) && filterItem.value[0] && filterItem.value[1]
+                                  ? `${formatDateBR(parseYmdDate(String(filterItem.value[0])) || new Date(String(filterItem.value[0])))} - ${formatDateBR(parseYmdDate(String(filterItem.value[1])) || new Date(String(filterItem.value[1])))}`
+                                  : "Selecionar intervalo"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="range"
+                                selected={{
+                                  from: parseYmdDate(String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || "")),
+                                  to: parseYmdDate(String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || "")),
+                                }}
+                                onSelect={(range) =>
+                                  applyFilterAt(index, {
+                                    ...filterItem,
+                                    value: range?.from && range?.to ? [dateToYmd(range.from), dateToYmd(range.to)] : ["", ""],
+                                  })}
+                                numberOfMonths={2}
+                              />
+                            </PopoverContent>
+                          </Popover>
                         ) : isTemporalFilterColumn ? (
-                          <Input
-                            type="date"
-                            className="w-[150px] h-8 text-xs"
-                            value={String(filterItem.value || "")}
-                            onChange={(e) => applyFilterAt(index, { ...filterItem, value: e.target.value })}
-                          />
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className={cn(
+                                  "w-[170px] h-8 justify-start text-left text-xs font-normal",
+                                  !filterItem.value && "text-muted-foreground",
+                                )}
+                              >
+                                <CalendarIcon className="mr-2 h-3.5 w-3.5" />
+                                {filterItem.value
+                                  ? formatDateBR(parseYmdDate(String(filterItem.value)) || new Date(String(filterItem.value)))
+                                  : "Selecionar data"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={parseYmdDate(String(filterItem.value || ""))}
+                                onSelect={(date) =>
+                                  applyFilterAt(index, {
+                                    ...filterItem,
+                                    value: date ? dateToYmd(date) : "",
+                                  })}
+                              />
+                            </PopoverContent>
+                          </Popover>
                         ) : filterItem.op === "between" ? (
                           <div className="flex items-center gap-1">
                             <Input
@@ -2386,6 +2496,7 @@ export const WidgetConfigPanel = ({
               )}
             </div>
           </Section>}
+
             </div>
           )}
 

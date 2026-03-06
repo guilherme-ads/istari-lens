@@ -448,6 +448,7 @@ export type ApiWidgetConfig = {
   };
   line_data_labels_enabled?: boolean;
   line_show_grid?: boolean;
+  bar_data_labels_enabled?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;

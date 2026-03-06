@@ -208,6 +208,7 @@ class WidgetConfig(BaseModel):
     time: TimeConfig | None = None
     line_data_labels_enabled: bool = False
     line_show_grid: bool = True
+    bar_data_labels_enabled: bool = True
     line_data_labels_percent: int = 60
     line_label_window: Literal[3, 5, 7] = 3
     line_label_min_gap: int = 2

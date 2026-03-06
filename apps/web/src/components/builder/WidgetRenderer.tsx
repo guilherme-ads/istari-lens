@@ -187,9 +187,14 @@ const computePeakValleyEvents = (params: {
   const { series, sensitivityPercent, windowSize, minGap, mode } = params;
   const events: Array<{ index: number; score: number }> = [];
   if (series.length < 3) return new Set();
+  const globalMax = Math.max(...series);
+  const globalMin = Math.min(...series);
+  const globalAmp = globalMax - globalMin;
+  if (globalAmp <= 0) return new Set();
 
   const safeSensitivity = Math.max(25, Math.min(100, sensitivityPercent));
   const w = Math.max(1, windowSize);
+  const minProminenceAbs = globalAmp * 0.01;
 
   for (let i = 0; i < series.length; i += 1) {
     const leftStart = Math.max(0, i - w);
@@ -201,7 +206,9 @@ const computePeakValleyEvents = (params: {
     const localMax = Math.max(...windowValues);
     const localMin = Math.min(...windowValues);
     const ampLocal = localMax - localMin;
+    if (ampLocal <= 0) continue;
     const threshold = ampLocal * (1 - (safeSensitivity / 100));
+    const effectiveThreshold = Math.max(threshold, minProminenceAbs);
 
     const leftValues = series.slice(leftStart, i);
     const rightValues = series.slice(i + 1, rightEnd + 1);
@@ -214,7 +221,7 @@ const computePeakValleyEvents = (params: {
       const leftMin = Math.min(...leftValues);
       const rightMin = Math.min(...rightValues);
       const prominence = current - Math.max(leftMin, rightMin);
-      if (prominence >= threshold) {
+      if (prominence > 0 && prominence >= effectiveThreshold) {
         events.push({ index: i, score: prominence });
       }
     }
@@ -223,7 +230,7 @@ const computePeakValleyEvents = (params: {
       const leftMax = Math.max(...leftValues);
       const rightMax = Math.max(...rightValues);
       const prominence = Math.min(leftMax, rightMax) - current;
-      if (prominence >= threshold) {
+      if (prominence > 0 && prominence >= effectiveThreshold) {
         events.push({ index: i, score: prominence });
       }
     }
@@ -989,6 +996,7 @@ export const WidgetRenderer = ({
   const chartRows = rows.map((row) => ({ ...row, m0: toFiniteNumber(row.m0) }));
 
   if (type === "bar") {
+    const showBarLabels = widget.config.bar_data_labels_enabled !== false;
     const fixedBarHeight = 22;
     const barGap = 8;
     const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row.m0)), 0);
@@ -1023,20 +1031,22 @@ export const WidgetRenderer = ({
               />
               <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
               <Bar dataKey="m0" fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
-                <LabelList
-                  dataKey="m0"
-                  content={(props: Record<string, unknown>) => {
-                    const value = props.value;
-                    const x = Number(props.x || 0);
-                    const y = Number(props.y || 0);
-                    const width = Number(props.width || 0);
-                    const height = Number(props.height || 0);
-                    if (value === undefined || value === null) return null;
-                    const labelX = x + width + 18;
-                    const labelY = y + (height / 2);
-                    return renderGlassLabel({ x: labelX, y: labelY, text: formatChartValueCompact(value), fontSize: 10 });
-                  }}
-                />
+                {showBarLabels && (
+                  <LabelList
+                    dataKey="m0"
+                    content={(props: Record<string, unknown>) => {
+                      const value = props.value;
+                      const x = Number(props.x || 0);
+                      const y = Number(props.y || 0);
+                      const width = Number(props.width || 0);
+                      const height = Number(props.height || 0);
+                      if (value === undefined || value === null) return null;
+                      const labelX = x + width + 18;
+                      const labelY = y + (height / 2);
+                      return renderGlassLabel({ x: labelX, y: labelY, text: formatChartValueCompact(value), fontSize: 10 });
+                    }}
+                  />
+                )}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -1046,9 +1056,10 @@ export const WidgetRenderer = ({
   }
 
   if (type === "column") {
+    const showColumnLabels = widget.config.bar_data_labels_enabled !== false;
     return (
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 8 }}>
+        <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
           <XAxis
             dataKey={dimKey}
@@ -1064,24 +1075,27 @@ export const WidgetRenderer = ({
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
+            width={34}
             tickFormatter={(value) => formatChartValueCompact(value)}
           />
           <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
           <Bar dataKey="m0" fill={chartPalette[0]} radius={[6, 6, 0, 0]}>
-            <LabelList
-              dataKey="m0"
-              content={(props: Record<string, unknown>) => {
-                const value = props.value;
-                const x = Number(props.x || 0);
-                const y = Number(props.y || 0);
-                const width = Number(props.width || 0);
-                const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
-                if (value === undefined || value === null) return null;
-                const plotTop = Number(viewBox?.y ?? 0);
-                const safeY = Math.max(plotTop + 10, y - 8);
-                return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatChartValueCompact(value), fontSize: 10 });
-              }}
-            />
+            {showColumnLabels && (
+              <LabelList
+                dataKey="m0"
+                content={(props: Record<string, unknown>) => {
+                  const value = props.value;
+                  const x = Number(props.x || 0);
+                  const y = Number(props.y || 0);
+                  const width = Number(props.width || 0);
+                  const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
+                  if (value === undefined || value === null) return null;
+                  const plotTop = Number(viewBox?.y ?? 0);
+                  const safeY = Math.max(plotTop + 10, y - 8);
+                  return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatChartValueCompact(value), fontSize: 10 });
+                }}
+              />
+            )}
           </Bar>
         </BarChart>
       </ResponsiveContainer>

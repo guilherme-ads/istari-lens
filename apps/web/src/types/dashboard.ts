@@ -84,6 +84,7 @@ export interface WidgetConfig {
   };
   line_data_labels_enabled?: boolean;
   line_show_grid?: boolean;
+  bar_data_labels_enabled?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;
@@ -212,6 +213,7 @@ export const createDefaultWidgetConfig = (params: {
       show_title: true,
       visual_padding: "normal",
       visual_palette: "default",
+      bar_data_labels_enabled: type === "bar" || type === "column" ? true : undefined,
       donut_show_legend: type === "donut" ? true : undefined,
       donut_data_labels_enabled: type === "donut" ? false : undefined,
       donut_data_labels_min_percent: type === "donut" ? 6 : undefined,

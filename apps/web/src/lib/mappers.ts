@@ -113,8 +113,20 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
       width: [1, 2, 3, 4].includes(asNumber((raw.size as Record<string, unknown> | undefined)?.width, 1))
         ? (asNumber((raw.size as Record<string, unknown> | undefined)?.width, 1) as 1 | 2 | 3 | 4)
         : 1,
-      height: asNumber((raw.size as Record<string, unknown> | undefined)?.height, 1) === 0.5 ? 0.5 : 1,
+      height: (
+        asNumber((raw.size as Record<string, unknown> | undefined)?.height, 1) === 0.5
+          ? 0.5
+          : asNumber((raw.size as Record<string, unknown> | undefined)?.height, 1) === 2
+            ? 2
+            : 1
+      ) as 0.5 | 1 | 2,
     },
+    visual_padding: (["compact", "normal", "comfortable"].includes(asString(raw.visual_padding, "normal"))
+      ? asString(raw.visual_padding, "normal")
+      : "normal") as "compact" | "normal" | "comfortable",
+    visual_palette: (["default", "warm", "cool", "mono", "vivid"].includes(asString(raw.visual_palette, "default"))
+      ? asString(raw.visual_palette, "default")
+      : "default") as "default" | "warm" | "cool" | "mono" | "vivid",
     text_style: isObject(raw.text_style)
       ? {
           content: asString(raw.text_style.content),
@@ -127,6 +139,8 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     metrics,
     dimensions,
     line_data_labels_enabled: typeof raw.line_data_labels_enabled === "boolean" ? raw.line_data_labels_enabled : false,
+    line_show_grid: typeof raw.line_show_grid === "boolean" ? raw.line_show_grid : true,
+    bar_data_labels_enabled: typeof raw.bar_data_labels_enabled === "boolean" ? raw.bar_data_labels_enabled : true,
     line_data_labels_percent: Math.max(25, Math.min(100, asNumber(raw.line_data_labels_percent, 60))),
     line_label_window: [3, 5, 7].includes(asNumber(raw.line_label_window, 3)) ? asNumber(raw.line_label_window, 3) : 3,
     line_label_min_gap: Math.max(1, Math.min(6, asNumber(raw.line_label_min_gap, 2))),
