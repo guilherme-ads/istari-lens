@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth", () => ({
   clearAuthSession: vi.fn(),
   getAuthToken: vi.fn(),
+  setAuthSession: vi.fn(),
   updateAuthToken: vi.fn(),
   updateStoredUser: vi.fn(),
 }));
 
 import { api, ApiError } from "@/lib/api";
-import { clearAuthSession, getAuthToken } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, setAuthSession } from "@/lib/auth";
 
 describe("api auth behavior", () => {
   beforeEach(() => {
@@ -61,6 +62,7 @@ describe("api auth behavior", () => {
         json: async () => ({
           access_token: "new-token",
           token_type: "bearer",
+          remember_me: true,
           user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
         }),
       })
@@ -76,5 +78,49 @@ describe("api auth behavior", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[1]?.[0]).toContain("/auth/refresh");
     expect(clearAuthSession).not.toHaveBeenCalled();
+  });
+
+  it("sends remember_me on login payload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: "new-token",
+        token_type: "bearer",
+        remember_me: false,
+        user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.login("user@test.com", "secret123", false);
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(init?.body).toContain("\"remember_me\":false");
+  });
+
+  it("restores session from refresh when no access token exists", async () => {
+    vi.mocked(getAuthToken).mockReturnValue(null);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: "new-token",
+          token_type: "bearer",
+          remember_me: true,
+          user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
+        }),
+      }),
+    );
+
+    const restored = await api.restoreSession();
+    expect(restored).toBe(true);
+    expect(setAuthSession).toHaveBeenCalledWith(
+      "new-token",
+      expect.objectContaining({ email: "user@test.com" }),
+      true,
+    );
   });
 });

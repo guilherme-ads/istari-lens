@@ -301,6 +301,56 @@ def _ensure_users_admin_columns() -> None:
 _ensure_users_admin_columns()
 
 
+def _ensure_auth_sessions_persistence_column() -> None:
+    try:
+        with engine.begin() as conn:
+            has_table = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'auth_sessions'
+                    LIMIT 1
+                    """
+                )
+            ).first()
+            if not has_table:
+                return
+
+            has_column = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'auth_sessions' AND column_name = 'is_persistent'
+                    LIMIT 1
+                    """
+                )
+            ).first()
+            if not has_column:
+                conn.execute(
+                    text(
+                        """
+                        ALTER TABLE auth_sessions
+                        ADD COLUMN is_persistent BOOLEAN NOT NULL DEFAULT TRUE
+                        """
+                    )
+                )
+                conn.execute(
+                    text(
+                        """
+                        CREATE INDEX IF NOT EXISTS ix_auth_sessions_is_persistent
+                        ON auth_sessions(is_persistent)
+                        """
+                    )
+                )
+    except Exception:
+        logger.exception("auth_sessions persistence patch failed")
+
+
+_ensure_auth_sessions_persistence_column()
+
+
 def _ensure_datasources_import_columns() -> None:
     try:
         with engine.begin() as conn:

@@ -9,6 +9,7 @@ from app.modules.widgets.domain.config import FilterConfig, WidgetConfig, Widget
 class UserLogin(BaseModel):
     email: str
     password: str
+    remember_me: bool = True
 
 class UserRegister(BaseModel):
     email: str
@@ -26,6 +27,7 @@ class UserMeUpdateRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    remember_me: bool = True
     user: "UserResponse"
 
 class UserResponse(BaseModel):

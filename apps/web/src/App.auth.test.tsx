@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Outlet } from "react-router-dom";
 
 vi.mock("./lib/auth", () => ({
   hasAuthSession: vi.fn(),
   getStoredUser: vi.fn(),
+}));
+vi.mock("./lib/api", () => ({
+  api: {
+    restoreSession: vi.fn().mockResolvedValue(false),
+  },
 }));
 
 vi.mock("./components/shared/AppLayout", () => ({
@@ -26,8 +31,24 @@ vi.mock("./pages/AdminUsersPage", () => ({ default: () => <div>admin-users-page<
 
 import App from "./App";
 import { getStoredUser, hasAuthSession } from "./lib/auth";
+import { api } from "./lib/api";
 
 describe("auth route guards", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("tries restore session on app bootstrap when unauthenticated", async () => {
+    vi.mocked(hasAuthSession).mockReturnValue(false);
+    vi.mocked(getStoredUser).mockReturnValue(null);
+    window.history.pushState({}, "", "/datasets");
+
+    render(<App />);
+
+    expect(api.restoreSession).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("login-page")).toBeInTheDocument();
+  });
+
   it("redirects unauthenticated users to /login for protected routes", async () => {
     vi.mocked(hasAuthSession).mockReturnValue(false);
     vi.mocked(getStoredUser).mockReturnValue(null);

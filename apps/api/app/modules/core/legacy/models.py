@@ -45,6 +45,7 @@ class AuthSession(Base):
     ip_address = Column(String(64), nullable=True)
     user_agent = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_persistent = Column(Boolean, nullable=False, default=True, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
     last_used_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True, index=True)

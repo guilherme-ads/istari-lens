@@ -30,16 +30,21 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
-    response.set_cookie(
-        key=settings.refresh_cookie_name,
-        value=refresh_token,
-        httponly=True,
-        secure=settings.refresh_cookie_secure,
-        samesite=settings.refresh_cookie_samesite,
-        max_age=int(timedelta(days=settings.refresh_token_expire_days).total_seconds()),
-        path=settings.refresh_cookie_path,
-    )
+def _set_refresh_cookie(response: Response, refresh_token: str, *, is_persistent: bool) -> None:
+    cookie_kwargs = {
+        "key": settings.refresh_cookie_name,
+        "value": refresh_token,
+        "httponly": True,
+        "secure": settings.refresh_cookie_secure,
+        "samesite": settings.refresh_cookie_samesite,
+        "path": settings.refresh_cookie_path,
+    }
+    if is_persistent:
+        max_age = int(timedelta(days=settings.refresh_token_expire_days).total_seconds())
+        cookie_kwargs["max_age"] = max_age
+        cookie_kwargs["expires"] = max_age
+
+    response.set_cookie(**cookie_kwargs)
 
 
 def _clear_refresh_cookie(response: Response) -> None:
@@ -49,10 +54,11 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
-def _build_access_response(user: User) -> TokenResponse:
+def _build_access_response(user: User, *, remember_me: bool = True) -> TokenResponse:
     access_token = create_access_token(data={"sub": str(user.id)})
     return TokenResponse(
         access_token=access_token,
+        remember_me=remember_me,
         user=UserResponse.model_validate(user),
     )
 
@@ -62,6 +68,7 @@ def _create_or_rotate_session(
     db: Session,
     user: User,
     request: Request,
+    is_persistent: bool,
     existing_session: AuthSession | None = None,
 ) -> str:
     refresh_token = generate_refresh_token()
@@ -73,6 +80,7 @@ def _create_or_rotate_session(
 
     if existing_session:
         existing_session.token_hash = refresh_hash
+        existing_session.is_persistent = is_persistent
         existing_session.expires_at = expires_at
         existing_session.last_used_at = now
         existing_session.ip_address = ip_address
@@ -83,6 +91,7 @@ def _create_or_rotate_session(
             AuthSession(
                 user_id=user.id,
                 token_hash=refresh_hash,
+                is_persistent=is_persistent,
                 ip_address=ip_address,
                 user_agent=user_agent,
                 expires_at=expires_at,
@@ -115,10 +124,16 @@ async def login(payload: UserLogin, response: Response, request: Request, db: Se
         )
 
     user.last_login_at = datetime.utcnow()
-    refresh_token = _create_or_rotate_session(db=db, user=user, request=request)
+    remember_me = bool(payload.remember_me)
+    refresh_token = _create_or_rotate_session(
+        db=db,
+        user=user,
+        request=request,
+        is_persistent=remember_me,
+    )
     db.commit()
-    _set_refresh_cookie(response, refresh_token)
-    return _build_access_response(user)
+    _set_refresh_cookie(response, refresh_token, is_persistent=remember_me)
+    return _build_access_response(user, remember_me=remember_me)
 
 
 @router.post("/register", response_model=TokenResponse)
@@ -148,7 +163,7 @@ async def register(request: UserRegister, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     
-    return _build_access_response(new_user)
+    return _build_access_response(new_user, remember_me=True)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -251,10 +266,17 @@ async def refresh_access_token(
         _clear_refresh_cookie(response)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive")
 
-    new_refresh_token = _create_or_rotate_session(db=db, user=user, request=request, existing_session=session)
+    remember_me = bool(session.is_persistent)
+    new_refresh_token = _create_or_rotate_session(
+        db=db,
+        user=user,
+        request=request,
+        is_persistent=remember_me,
+        existing_session=session,
+    )
     db.commit()
-    _set_refresh_cookie(response, new_refresh_token)
-    return _build_access_response(user)
+    _set_refresh_cookie(response, new_refresh_token, is_persistent=remember_me)
+    return _build_access_response(user, remember_me=remember_me)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken, updateAuthToken, updateStoredUser } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, setAuthSession, updateAuthToken, updateStoredUser } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -118,6 +118,7 @@ export type ApiUser = {
 export type AuthLoginResponse = {
   access_token: string;
   token_type: string;
+  remember_me: boolean;
   user: ApiUser;
 };
 
@@ -591,11 +592,28 @@ export type ApiOpenAIIntegrationTestResponse = {
 };
 
 export const api = {
-  login: (email: string, password: string) =>
+  login: (email: string, password: string, rememberMe = true) =>
     request<AuthLoginResponse>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, remember_me: rememberMe }),
     }, false, true),
+
+  restoreSession: async () => {
+    if (getAuthToken()) return true;
+    try {
+      const response = await request<AuthLoginResponse>(
+        "/auth/refresh",
+        { method: "POST" },
+        false,
+        true,
+        false,
+      );
+      setAuthSession(response.access_token, response.user, response.remember_me);
+      return true;
+    } catch {
+      return false;
+    }
+  },
 
   changePassword: (payload: { current_password: string; new_password: string }) =>
     request<void>("/auth/change-password", {

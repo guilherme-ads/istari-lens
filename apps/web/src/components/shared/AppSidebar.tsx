@@ -20,6 +20,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getStoredUser } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 export function AppSidebar() {
   const navigate = useNavigate();
@@ -38,6 +39,11 @@ export function AppSidebar() {
       ]
       : []),
   ];
+
+  const handleLogout = async () => {
+    await api.logout();
+    navigate("/login");
+  };
 
   return (
     <Sidebar collapsible="icon">
@@ -102,7 +108,7 @@ export function AppSidebar() {
               <TooltipTrigger asChild>
                 <SidebarMenuButton asChild>
                   <button
-                    onClick={() => navigate("/login")}
+                    onClick={handleLogout}
                     className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
                   >
                     <LogOut className="h-4 w-4 shrink-0" />
