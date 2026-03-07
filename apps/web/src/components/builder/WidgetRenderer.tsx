@@ -573,11 +573,18 @@ export const WidgetRenderer = ({
   forcedLoading = false,
 }: RendererProps) => {
   const isTextWidget = widget.config.widget_type === "text";
-  const shouldFetch = !disableFetch && !!dashboardId && !isTextWidget;
+  const numericDashboardId = Number(dashboardId);
+  const numericWidgetId = Number(widget.id);
+  const hasPersistedWidgetId = Number.isFinite(numericWidgetId) && numericWidgetId > 0;
+  const shouldFetch = !disableFetch
+    && Number.isFinite(numericDashboardId)
+    && numericDashboardId > 0
+    && !isTextWidget
+    && hasPersistedWidgetId;
 
   const widgetQuery = useQuery({
     queryKey: ["widget-data", dashboardId, widget.id],
-    queryFn: () => api.getDashboardWidgetData(Number(dashboardId), Number(widget.id)),
+    queryFn: () => api.getDashboardWidgetData(numericDashboardId, numericWidgetId),
     enabled: shouldFetch,
   });
 
@@ -787,6 +794,9 @@ export const WidgetRenderer = ({
   }
   if (disableFetch && preloadedError) {
     return <EmptyWidgetState text={preloadedError} />;
+  }
+  if (!disableFetch && !hasPersistedWidgetId) {
+    return <EmptyWidgetState text="Salve o dashboard para carregar dados do widget." />;
   }
   if (!disableFetch && widgetQuery.isLoading) {
     return <EmptyWidgetState text="Carregando dados..." />;

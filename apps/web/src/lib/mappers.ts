@@ -293,6 +293,7 @@ export const mapDataset = (item: ApiDataset, dashboardIds: string[] = []): Datas
       name: String(col.name),
       type: normalizeColumnType(String(col.type)),
       source: typeof col.source === "string" ? col.source : undefined,
+      description: typeof col.description === "string" && col.description.trim() ? col.description.trim() : undefined,
     })),
   dashboardIds,
   createdAt: normalizeApiDateTime(item.created_at),

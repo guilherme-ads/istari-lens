@@ -223,6 +223,7 @@ export type ApiDataset = {
     name: string;
     type: "numeric" | "temporal" | "text" | "boolean";
     source?: string;
+    description?: string;
   }>;
   is_active: boolean;
   view?: ApiView | null;
@@ -595,6 +596,28 @@ export type ApiDashboardImportPreviewResponse = {
   conflicts: ApiDashboardImportConflict[];
 };
 
+export type ApiAIGeneratedWidget = {
+  id: string;
+  title: string;
+  position: number;
+  config_version: number;
+  config: Record<string, unknown>;
+};
+
+export type ApiAIGeneratedSection = {
+  id: string;
+  title: string;
+  show_title: boolean;
+  columns: 1 | 2 | 3 | 4;
+  widgets: ApiAIGeneratedWidget[];
+};
+
+export type ApiAIGenerateDashboardResponse = {
+  title: string;
+  explanation: string;
+  sections: ApiAIGeneratedSection[];
+};
+
 export type ApiDashboardEditLockResponse = {
   dashboard_id: number;
   is_locked: boolean;
@@ -820,6 +843,12 @@ export const api = {
     is_active?: boolean;
     view_id?: number;
     base_query_spec?: ApiDatasetBaseQuerySpec;
+    semantic_columns?: Array<{
+      name: string;
+      type: "numeric" | "temporal" | "text" | "boolean";
+      source?: string;
+      description?: string;
+    }>;
   }) =>
     request<ApiDataset>("/datasets", { method: "POST", body: JSON.stringify(payload) }),
 
@@ -831,6 +860,12 @@ export const api = {
       is_active: boolean;
       view_id: number;
       base_query_spec: ApiDatasetBaseQuerySpec;
+      semantic_columns: Array<{
+        name: string;
+        type: "numeric" | "temporal" | "text" | "boolean";
+        source?: string;
+        description?: string;
+      }>;
     }>,
   ) => request<ApiDataset>(`/datasets/${datasetId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
@@ -963,6 +998,9 @@ export const api = {
 
   previewDashboardImport: (payload: { dataset_id?: number; dashboard: Record<string, unknown> }) =>
     request<ApiDashboardImportPreviewResponse>("/dashboards/import/preview", { method: "POST", body: JSON.stringify(payload) }),
+
+  generateDashboardWithAi: (payload: { dataset_id: number; prompt: string; title?: string }) =>
+    request<ApiAIGenerateDashboardResponse>("/dashboards/ai/generate", { method: "POST", body: JSON.stringify(payload) }),
 
   importDashboard: (payload: { dataset_id?: number; dashboard: Record<string, unknown> }) =>
     request<ApiDashboard>("/dashboards/import", { method: "POST", body: JSON.stringify(payload) }),

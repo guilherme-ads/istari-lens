@@ -33,7 +33,7 @@ class User(Base):
     )
     spreadsheet_imports = relationship("SpreadsheetImport", back_populates="created_by_user")
     dashboard_email_shares_created = relationship("DashboardEmailShare", back_populates="created_by_user")
-    dashboard_edit_locks = relationship("DashboardEditLock")
+    dashboard_edit_locks = relationship("DashboardEditLock", back_populates="user", overlaps="user")
     auth_sessions = relationship("AuthSession", back_populates="user", cascade="all, delete-orphan")
 
 
@@ -164,7 +164,13 @@ class Dashboard(Base):
     created_by_user = relationship("User", back_populates="dashboards")
     email_shares = relationship("DashboardEmailShare", back_populates="dashboard", cascade="all, delete-orphan")
     versions = relationship("DashboardVersion", back_populates="dashboard", cascade="all, delete-orphan")
-    edit_lock = relationship("DashboardEditLock", back_populates="dashboard", cascade="all, delete-orphan", uselist=False)
+    edit_lock = relationship(
+        "DashboardEditLock",
+        back_populates="dashboard",
+        cascade="all, delete-orphan",
+        uselist=False,
+        overlaps="dashboard",
+    )
 
     __table_args__ = (
         Index("dashboard_dataset_idx", "dataset_id"),
@@ -241,8 +247,8 @@ class DashboardEditLock(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    dashboard = relationship("Dashboard", back_populates="edit_lock")
-    user = relationship("User")
+    dashboard = relationship("Dashboard", back_populates="edit_lock", overlaps="edit_lock")
+    user = relationship("User", back_populates="dashboard_edit_locks", overlaps="dashboard_edit_locks")
 
 
 class Analysis(Base):

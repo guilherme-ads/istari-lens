@@ -443,6 +443,34 @@ class DashboardImportPreviewResponse(BaseModel):
     conflicts: List[DashboardImportConflictResponse] = Field(default_factory=list)
 
 
+class DashboardAIGenerateRequest(BaseModel):
+    dataset_id: int
+    prompt: str = Field(default="")
+    title: Optional[str] = None
+
+
+class DashboardAIGenerateWidgetResponse(BaseModel):
+    id: str
+    title: str
+    position: int
+    config_version: int = 1
+    config: dict[str, Any]
+
+
+class DashboardAIGenerateSectionResponse(BaseModel):
+    id: str
+    title: str
+    show_title: bool = True
+    columns: Literal[1, 2, 3, 4] = 2
+    widgets: List[DashboardAIGenerateWidgetResponse] = Field(default_factory=list)
+
+
+class DashboardAIGenerateResponse(BaseModel):
+    title: str
+    explanation: str
+    sections: List[DashboardAIGenerateSectionResponse] = Field(default_factory=list)
+
+
 class DashboardPublicResponse(BaseModel):
     id: int
     dataset_id: int

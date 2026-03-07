@@ -523,6 +523,19 @@ def validate_widget_config_against_columns(
         if order.metric_ref and order.metric_ref not in metric_refs:
             _add_error(errors, f"order_by[{idx}].metric_ref", f"Unknown metric_ref '{order.metric_ref}'")
 
+    if config.widget_type in {"bar", "column", "donut"}:
+        if len(config.order_by) > 1:
+            _add_error(errors, "order_by", "Categorical widget supports at most one order_by rule")
+        if config.order_by:
+            selected_dimension = config.dimensions[0] if config.dimensions else None
+            first_order = config.order_by[0]
+            if first_order.column and selected_dimension and first_order.column != selected_dimension:
+                _add_error(
+                    errors,
+                    "order_by[0].column",
+                    "Categorical widget order_by.column must match the selected dimension",
+                )
+
     if config.widget_type == "table":
         if config.limit is not None and config.limit <= 0:
             _add_error(errors, "limit", "limit must be greater than zero")

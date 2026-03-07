@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { DashboardCanvas } from "@/components/builder/DashboardCanvas";
 import { AddWidgetDialog } from "@/components/builder/AddWidgetDialog";
 import { WidgetConfigPanel } from "@/components/builder/WidgetConfigPanel";
+import DashboardSetup from "@/components/builder/DashboardSetup";
 import {
   createSection,
   createDefaultWidgetConfig,
@@ -158,12 +159,9 @@ const BuilderPage = () => {
   const canEditExistingDashboard = !!existingDashboard && existingDashboard.accessLevel !== "view";
 
   const [activeDashboardId, setActiveDashboardId] = useState<string | undefined>(dashboardId);
+  const [setupDone, setSetupDone] = useState(!!dashboardId);
   const [dashboardTitle, setDashboardTitle] = useState("Novo Dashboard");
-  const [sections, setSections] = useState<DashboardSection[]>(() => {
-    const section = createSection();
-    section.title = "Visao Geral";
-    return [section];
-  });
+  const [sections, setSections] = useState<DashboardSection[]>([]);
   const [nativeFilters, setNativeFilters] = useState<DraftNativeFilter[]>([
     { id: `nf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
@@ -216,7 +214,19 @@ const BuilderPage = () => {
         })
         : [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }],
     );
+    setSetupDone(true);
   }, [existingDashboard]);
+
+  useEffect(() => {
+    if (dashboardId) {
+      setSetupDone(true);
+      return;
+    }
+    setSetupDone(false);
+    setSections([]);
+    setDashboardTitle("Novo Dashboard");
+    initialSnapshotRef.current = null;
+  }, [dashboardId]);
 
   const viewColumnsQuery = useQuery({
     queryKey: ["view-columns", view?.schema, view?.name],
@@ -408,6 +418,7 @@ const BuilderPage = () => {
   const makeTempWidgetId = useCallback(() => `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, []);
 
   useEffect(() => {
+    if (!setupDone && !existingDashboard) return;
     if (!initialSnapshotRef.current && !existingDashboard) {
       initialSnapshotRef.current = {
         title: dashboardTitle,
@@ -424,9 +435,10 @@ const BuilderPage = () => {
         existingDashboard.nativeFilters.map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
       ),
     };
-  }, [dashboardTitle, existingDashboard, preparedNativeFilters, sections, serializeNativeFilters, serializeSections]);
+  }, [dashboardTitle, existingDashboard, preparedNativeFilters, sections, serializeNativeFilters, serializeSections, setupDone]);
 
   const isDirty = useMemo(() => {
+    if (!setupDone && !existingDashboard) return false;
     const baseline = initialSnapshotRef.current;
     if (!baseline) return true;
     return (
@@ -434,7 +446,7 @@ const BuilderPage = () => {
       || baseline.sections !== serializeSections(sections)
       || baseline.nativeFilters !== serializeNativeFilters(preparedNativeFilters)
     );
-  }, [dashboardTitle, sections, preparedNativeFilters, serializeNativeFilters, serializeSections]);
+  }, [dashboardTitle, existingDashboard, preparedNativeFilters, sections, serializeNativeFilters, serializeSections, setupDone]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -446,21 +458,21 @@ const BuilderPage = () => {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isDirty]);
 
-  const lockQuery = useQuery({
-    queryKey: ["dashboard-edit-lock", activeDashboardId],
-    queryFn: () => api.acquireDashboardLock(Number(activeDashboardId)),
-    enabled: !!activeDashboardId && canEditExistingDashboard,
-    retry: false,
-  });
-  const lockErrorMessage = lockQuery.error instanceof ApiError ? String(lockQuery.error.detail || lockQuery.error.message) : null;
-  const isLockedByAnotherUser = !!lockErrorMessage && lockQuery.error instanceof ApiError && lockQuery.error.status === 409;
-
-  useEffect(() => {
-    if (!activeDashboardId) return;
-    return () => {
-      void api.releaseDashboardLock(Number(activeDashboardId)).catch(() => undefined);
-    };
-  }, [activeDashboardId]);
+  const buildWidgetsPayload = useCallback((sourceSections: DashboardSection[]) => (
+    sourceSections.flatMap((section, sectionIndex) =>
+      section.widgets.map((widget, widgetIndex) => {
+        const numericId = Number(widget.id);
+        return {
+          id: Number.isFinite(numericId) ? numericId : undefined,
+          widget_type: widget.config.widget_type,
+          title: widget.title || `${widget.config.widget_type.toUpperCase()} - ${datasetSourceLabel}`,
+          position: (sectionIndex * 1000) + widgetIndex,
+          config: widget.config as never,
+          config_version: widget.configVersion || 1,
+        };
+      }),
+    )
+  ), [datasetSourceLabel]);
 
   const upsertDashboard = useMutation({
     mutationFn: async () => {
@@ -479,19 +491,7 @@ const BuilderPage = () => {
         setActiveDashboardId(dashboardIdToSave);
         navigate(`/datasets/${datasetId}/builder/${dashboardIdToSave}`, { replace: true });
       }
-      const widgetsPayload = sections.flatMap((section, sectionIndex) =>
-        section.widgets.map((widget, widgetIndex) => {
-          const numericId = Number(widget.id);
-          return {
-            id: Number.isFinite(numericId) ? numericId : undefined,
-            widget_type: widget.config.widget_type,
-            title: widget.title || `${widget.config.widget_type.toUpperCase()} - ${datasetSourceLabel}`,
-            position: (sectionIndex * 1000) + widgetIndex,
-            config: widget.config as never,
-            config_version: widget.configVersion || 1,
-          };
-        }),
-      );
+      const widgetsPayload = buildWidgetsPayload(sections);
       const updatedDashboard = await api.saveDashboard(Number(dashboardIdToSave), {
         name: dashboardTitle,
         description: null,
@@ -774,6 +774,58 @@ const BuilderPage = () => {
     if (!confirmDiscardIfDirty()) return;
     navigate(to);
   }, [confirmDiscardIfDirty, navigate]);
+  const handleSetupStart = useCallback(async (title: string, setupSections: DashboardSection[]) => {
+    const normalizedTitle = title.trim() || "Novo Dashboard";
+    const normalizedSections = setupSections.length > 0 ? setupSections : [{ ...createSection(), title: "Visao Geral" }];
+    const emptyNativeFilters: DraftNativeFilter[] = [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }];
+    setDashboardTitle(normalizedTitle);
+    setSections(normalizedSections);
+    setNativeFilters(emptyNativeFilters);
+    setSetupDone(true);
+
+    if (!datasetId || normalizedSections.length === 0 || normalizedSections.every((section) => section.widgets.length === 0)) {
+      initialSnapshotRef.current = {
+        title: normalizedTitle,
+        sections: serializeSections(normalizedSections),
+        nativeFilters: serializeNativeFilters([]),
+      };
+      return;
+    }
+
+    try {
+      const created = await api.createDashboard({
+        dataset_id: Number(datasetId),
+        name: normalizedTitle,
+        description: null,
+        is_active: true,
+        layout_config: [],
+        native_filters: [],
+      });
+      const saved = await api.saveDashboard(Number(created.id), {
+        name: normalizedTitle,
+        description: null,
+        is_active: true,
+        layout_config: sectionsToLayoutConfig(normalizedSections),
+        native_filters: [],
+        widgets: buildWidgetsPayload(normalizedSections),
+      });
+      const mapped = mapDashboard(saved);
+      setActiveDashboardId(String(saved.id));
+      setDashboardTitle(mapped.title);
+      setSections(mapped.sections);
+      initialSnapshotRef.current = {
+        title: mapped.title,
+        sections: serializeSections(mapped.sections),
+        nativeFilters: serializeNativeFilters([]),
+      };
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      navigate(`/datasets/${datasetId}/builder/${saved.id}`, { replace: true });
+      toast({ title: "Dashboard inicial criado" });
+    } catch (error) {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao criar dashboard inicial";
+      toast({ title: "Erro no setup", description: message, variant: "destructive" });
+    }
+  }, [buildWidgetsPayload, datasetId, navigate, queryClient, serializeNativeFilters, serializeSections, toast]);
 
   const handleExportDashboardJson = useCallback(async () => {
     const targetId = activeDashboardId || dashboardId;
@@ -968,6 +1020,20 @@ const BuilderPage = () => {
     );
   }
 
+  if (!isEditingExistingDashboard && !setupDone) {
+    return (
+      <div className="bg-background min-h-screen">
+        <DashboardSetup
+          columns={datasetColumns}
+          datasetId={Number(dataset.id)}
+          viewName={datasetSourceLabel}
+          initialTitle={dashboardTitle}
+          onStart={handleSetupStart}
+        />
+      </div>
+    );
+  }
+
   if (isEditingExistingDashboard && !existingDashboard) {
     return (
       <div className="bg-background flex flex-col flex-1">
@@ -991,54 +1057,6 @@ const BuilderPage = () => {
           <div className="text-center space-y-3">
             <h2 className="text-title text-foreground">Acesso negado</h2>
             <p className="text-body text-muted-foreground">Você tem acesso somente de visualização para este dashboard.</p>
-            <Button variant="outline" onClick={() => navigateWithDiscard(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
-              <ChevronLeft className="h-4 w-4 mr-1" /> Ir para visualização
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (isEditingExistingDashboard && canEditExistingDashboard && !!activeDashboardId && lockQuery.isLoading) {
-    return (
-      <div className="bg-background">
-        <main className="container py-6">
-          <EmptyState icon={<LayoutDashboard className="h-5 w-5" />} title="Validando bloqueio de edicao" description="Aguarde..." />
-        </main>
-      </div>
-    );
-  }
-
-  if (
-    isEditingExistingDashboard
-    && canEditExistingDashboard
-    && !!activeDashboardId
-    && lockQuery.isError
-    && !isLockedByAnotherUser
-  ) {
-    return (
-      <div className="bg-background flex flex-col flex-1">
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-3">
-            <h2 className="text-title text-foreground">Nao foi possivel abrir em modo edicao</h2>
-            <p className="text-body text-muted-foreground">Falha ao validar bloqueio de edicao.</p>
-            <Button variant="outline" onClick={() => navigateWithDiscard(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
-              <ChevronLeft className="h-4 w-4 mr-1" /> Ir para visualizacao
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (isEditingExistingDashboard && isLockedByAnotherUser) {
-    return (
-      <div className="bg-background flex flex-col flex-1">
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-3">
-            <h2 className="text-title text-foreground">Dashboard bloqueado para edição</h2>
-            <p className="text-body text-muted-foreground">{lockErrorMessage || "Outro usuário está editando este dashboard."}</p>
             <Button variant="outline" onClick={() => navigateWithDiscard(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Ir para visualização
             </Button>

@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from statistics import mean
 import json
+import logging
 from uuid import uuid4
 
 from app.shared.infrastructure.database import get_db
@@ -20,6 +22,7 @@ from app.modules.core.legacy.models import (
     View,
 )
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
+from app.modules.dashboards.application.ai_generation import generate_dashboard_with_ai_service
 from app.modules.core.legacy.schemas import (
     DashboardResponse,
     DashboardCreateRequest,
@@ -47,6 +50,8 @@ from app.modules.core.legacy.schemas import (
     DashboardImportRequest,
     DashboardImportConflictResponse,
     DashboardImportPreviewResponse,
+    DashboardAIGenerateRequest,
+    DashboardAIGenerateResponse,
     DashboardPublicResponse,
     DashboardEditLockResponse,
 )
@@ -63,6 +68,7 @@ ACCESS_RANK = {"view": 1, "edit": 2, "owner": 3}
 DATASET_WIDGET_VIEW_NAME = "__dataset_base"
 LOCK_TTL_MINUTES = 15
 MAX_DASHBOARD_VERSIONS = 3
+logger = logging.getLogger("uvicorn.error")
 
 
 def _normalize_email(value: str) -> str:
@@ -356,13 +362,15 @@ def _lock_response(dashboard: Dashboard, current_user: User | None) -> Dashboard
     )
 
 
-def _require_dashboard_edit_lock(dashboard: Dashboard, current_user: User, db: Session) -> None:
-    _clean_expired_lock(dashboard, db)
-    lock = dashboard.edit_lock
-    if lock and lock.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Dashboard is currently locked for editing by {lock.user.email if lock.user else 'another user'}",
+def _commit_widget_execution_stats(db: Session, *, dashboard_id: int, widget_ids: list[int]) -> None:
+    try:
+        db.commit()
+    except StaleDataError:
+        db.rollback()
+        logger.warning(
+            "Skipped widget execution stats commit due to stale row: dashboard_id=%s widget_ids=%s",
+            dashboard_id,
+            widget_ids,
         )
 
 
@@ -385,11 +393,13 @@ def _apply_dashboard_snapshot(
     incoming = snapshot.get("widgets") if isinstance(snapshot.get("widgets"), list) else []
     existing_by_id = {widget.id: widget for widget in dashboard.widgets or []}
     retained_ids: set[int] = set()
-    remapped_widget_ids: dict[int, int] = {}
+    remapped_widget_ids: dict[str, int] = {}
+    created_widget_ids_in_order: list[int] = []
     for index, item in enumerate(incoming):
         if not isinstance(item, dict):
             continue
         raw_id = item.get("id")
+        source_widget_key = str(raw_id) if raw_id is not None else None
         source_widget_id = int(raw_id) if isinstance(raw_id, int) else None
         widget = existing_by_id.get(source_widget_id) if source_widget_id is not None else None
         config_payload = item.get("config")
@@ -415,8 +425,9 @@ def _apply_dashboard_snapshot(
             widget.config_version = int(item.get("config_version") or widget.config_version or 1)
             widget.visualization_config = item.get("visualization_config")
         retained_ids.add(widget.id)
-        if source_widget_id is not None:
-            remapped_widget_ids[source_widget_id] = widget.id
+        if source_widget_key is not None:
+            remapped_widget_ids[source_widget_key] = widget.id
+        created_widget_ids_in_order.append(widget.id)
 
     for widget in list(dashboard.widgets or []):
         if widget.id not in retained_ids:
@@ -424,6 +435,7 @@ def _apply_dashboard_snapshot(
 
     # Preserve section/row placement while adapting source widget IDs to persisted IDs.
     normalized_layout: list[dict] = []
+    fallback_widget_index = 0
     for section in raw_layout:
         if not isinstance(section, dict):
             continue
@@ -435,8 +447,10 @@ def _apply_dashboard_snapshot(
                 if not isinstance(entry, dict):
                     continue
                 raw_widget_id = entry.get("widget_id")
-                widget_id = int(raw_widget_id) if isinstance(raw_widget_id, int) else None
-                mapped_id = remapped_widget_ids.get(widget_id) if widget_id is not None else None
+                mapped_id = remapped_widget_ids.get(str(raw_widget_id)) if raw_widget_id is not None else None
+                if mapped_id is None and fallback_widget_index < len(created_widget_ids_in_order):
+                    mapped_id = created_widget_ids_in_order[fallback_widget_index]
+                    fallback_widget_index += 1
                 if mapped_id is None:
                     continue
                 next_entry = dict(entry)
@@ -1018,6 +1032,33 @@ async def list_dashboard_shareable_users(
     ]
 
 
+@router.post("/ai/generate", response_model=DashboardAIGenerateResponse)
+async def generate_dashboard_with_ai(
+    request: DashboardAIGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+    dataset = (
+        db.query(Dataset)
+        .options(joinedload(Dataset.view).joinedload(View.columns))
+        .filter(Dataset.id == request.dataset_id)
+        .first()
+    )
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    column_types = _dataset_column_types(dataset)
+    payload = await generate_dashboard_with_ai_service(
+        db=db,
+        dataset_name=dataset.name,
+        column_types=column_types,
+        semantic_columns=dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else [],
+        prompt=request.prompt,
+        title=request.title,
+    )
+    return DashboardAIGenerateResponse.model_validate(payload)
+
+
 @router.get("/public/{public_share_key}", response_model=DashboardPublicResponse)
 async def get_public_dashboard(
     public_share_key: str,
@@ -1164,10 +1205,8 @@ async def save_dashboard(
             joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.email_shares),
-            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
         ],
     )
-    _require_dashboard_edit_lock(dashboard, current_user, db)
     _persist_dashboard_version(db, dashboard, current_user)
 
     snapshot = {
@@ -1236,10 +1275,8 @@ async def restore_dashboard_version(
         options=[
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.email_shares),
-            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
         ],
     )
-    _require_dashboard_edit_lock(dashboard, current_user, db)
     version = (
         db.query(DashboardVersion)
         .filter(DashboardVersion.id == version_id, DashboardVersion.dashboard_id == dashboard_id)
@@ -1376,11 +1413,6 @@ async def acquire_dashboard_lock(
     _clean_expired_lock(dashboard, db)
     lock = dashboard.edit_lock
     now = datetime.utcnow()
-    if lock and lock.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Dashboard is currently locked for editing by {lock.user.email if lock.user else 'another user'}",
-        )
     if lock is None:
         lock = DashboardEditLock(
             dashboard_id=dashboard.id,
@@ -1495,10 +1527,8 @@ async def update_dashboard(
             joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.email_shares),
-            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
         ],
     )
-    _require_dashboard_edit_lock(dashboard, current_user, db)
     _persist_dashboard_version(db, dashboard, current_user)
 
     if request.name is not None:
@@ -1529,7 +1559,7 @@ async def delete_dashboard(
         dashboard_id,
         current_user,
         min_level="owner",
-        options=[joinedload(Dashboard.email_shares), joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user)],
+        options=[joinedload(Dashboard.email_shares)],
     )
     if level != "owner":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the dashboard owner can delete it")
@@ -1704,10 +1734,8 @@ async def create_widget(
             joinedload(Dashboard.dataset).joinedload(Dataset.view).joinedload(View.columns),
             joinedload(Dashboard.widgets),
             joinedload(Dashboard.email_shares),
-            joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user),
         ],
     )
-    _require_dashboard_edit_lock(dashboard, current_user, db)
     _persist_dashboard_version(db, dashboard, current_user)
 
     config = _parse_widget_config(request)
@@ -1743,9 +1771,8 @@ async def update_widget(
         dashboard_id,
         current_user,
         min_level="edit",
-        options=[joinedload(Dashboard.email_shares), joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user)],
+        options=[joinedload(Dashboard.email_shares)],
     )
-    _require_dashboard_edit_lock(dashboard, current_user, db)
     _persist_dashboard_version(db, dashboard, current_user)
     widget = db.query(DashboardWidget).filter(
         DashboardWidget.id == widget_id,
@@ -1794,9 +1821,8 @@ async def delete_widget(
         dashboard_id,
         current_user,
         min_level="edit",
-        options=[joinedload(Dashboard.email_shares), joinedload(Dashboard.edit_lock).joinedload(DashboardEditLock.user)],
+        options=[joinedload(Dashboard.email_shares)],
     )
-    _require_dashboard_edit_lock(dashboard, current_user, db)
     _persist_dashboard_version(db, dashboard, current_user)
     widget = db.query(DashboardWidget).filter(
         DashboardWidget.id == widget_id,
@@ -1875,7 +1901,7 @@ async def get_widget_data(
     result = result_by_widget[widget.id]
     widget.last_execution_ms = result.metadata.execution_time_ms
     widget.last_executed_at = datetime.utcnow()
-    db.commit()
+    _commit_widget_execution_stats(db, dashboard_id=dashboard_id, widget_ids=[widget.id])
     return DashboardWidgetDataResponse(
         columns=result.payload.columns,
         rows=result.payload.rows,
@@ -1984,7 +2010,7 @@ async def get_widget_data_batch(
                 sql_hash=execution.metadata.sql_hash,
             )
         )
-    db.commit()
+    _commit_widget_execution_stats(db, dashboard_id=dashboard_id, widget_ids=list(request.widget_ids))
 
     return DashboardWidgetBatchDataResponse(results=results)
 

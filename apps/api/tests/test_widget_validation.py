@@ -134,6 +134,41 @@ def test_bar_allows_temporal_week_dimension_token() -> None:
     validate_widget_config_against_columns(config, COLUMN_TYPES)
 
 
+def test_bar_rejects_order_by_column_different_from_selected_dimension() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "bar",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["estacao"],
+            "filters": [],
+            "order_by": [{"column": "id_recarga", "direction": "asc"}],
+        }
+    )
+    with pytest.raises(WidgetConfigValidationError) as exc:
+        validate_widget_config_against_columns(config, COLUMN_TYPES)
+    assert "order_by[0].column" in exc.value.field_errors
+
+
+def test_bar_rejects_multiple_order_by_rules() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "bar",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "count", "column": "id_recarga"}],
+            "dimensions": ["estacao"],
+            "filters": [],
+            "order_by": [
+                {"metric_ref": "m0", "direction": "desc"},
+                {"column": "estacao", "direction": "asc"},
+            ],
+        }
+    )
+    with pytest.raises(WidgetConfigValidationError) as exc:
+        validate_widget_config_against_columns(config, COLUMN_TYPES)
+    assert "order_by" in exc.value.field_errors
+
+
 def test_column_allows_temporal_weekday_dimension_token() -> None:
     config = WidgetConfig.model_validate(
         {
