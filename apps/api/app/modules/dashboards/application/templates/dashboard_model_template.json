@@ -6,6 +6,7 @@
     "supported_section_columns": [1, 2, 3, 4],
     "supported_widget_width": [1, 2, 3, 4],
     "supported_widget_height": [0.5, 1, 2],
+    "widget_width_must_fit_section_columns": true,
     "supported_widget_types": ["kpi", "line", "bar", "column", "donut", "table", "text", "dre"],
     "metric_ops": ["count", "sum", "avg", "min", "max", "distinct_count"],
     "time_granularity": ["day", "week", "month", "hour", "timestamp"],

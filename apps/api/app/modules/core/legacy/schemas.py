@@ -468,6 +468,7 @@ class DashboardAIGenerateSectionResponse(BaseModel):
 class DashboardAIGenerateResponse(BaseModel):
     title: str
     explanation: str
+    planning_steps: List[str] = Field(default_factory=list)
     sections: List[DashboardAIGenerateSectionResponse] = Field(default_factory=list)
 
 

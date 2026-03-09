@@ -615,6 +615,7 @@ export type ApiAIGeneratedSection = {
 export type ApiAIGenerateDashboardResponse = {
   title: string;
   explanation: string;
+  planning_steps: string[];
   sections: ApiAIGeneratedSection[];
 };
 

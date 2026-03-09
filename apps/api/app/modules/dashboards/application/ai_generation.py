@@ -25,7 +25,7 @@ AI_DASHBOARD_MODEL_PATH = Path(__file__).resolve().parent / "templates" / "dashb
 AI_DASHBOARD_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "dashboard_generation_system_prompt.txt"
 LEGACY_JSON_OUTPUT_INSTRUCTION = (
     "Responda exclusivamente em JSON valido, sem markdown, no formato: "
-    '{"explanation":"...","sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
+    '{"explanation":"...","planning_steps":["..."],"sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
 )
 logger = logging.getLogger("uvicorn.error")
 
@@ -192,6 +192,16 @@ def _coerce_size_payload(raw_size: Any, *, default_width: int, default_height: f
     }
 
 
+def _coerce_section_columns(raw_value: Any, default: int = 2) -> int:
+    if isinstance(raw_value, (int, float)):
+        value = int(raw_value)
+    elif isinstance(raw_value, str) and raw_value.isdigit():
+        value = int(raw_value)
+    else:
+        value = default
+    return value if 1 <= value <= 4 else default
+
+
 def _dashboard_plan_response_schema() -> dict[str, Any]:
     widget_types = ["kpi", "line", "bar", "column", "donut", "table", "text", "dre"]
     return {
@@ -202,6 +212,10 @@ def _dashboard_plan_response_schema() -> dict[str, Any]:
             "additionalProperties": False,
             "properties": {
                 "explanation": {"type": "string"},
+                "planning_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
                 "sections": {
                     "type": "array",
                     "items": {
@@ -233,6 +247,27 @@ def _dashboard_plan_response_schema() -> dict[str, Any]:
             "required": ["explanation", "sections"],
         },
     }
+
+
+def _normalize_planning_steps(raw_steps: Any, explanation: str) -> list[str]:
+    normalized: list[str] = []
+    if isinstance(raw_steps, list):
+        for item in raw_steps:
+            if not isinstance(item, str):
+                continue
+            value = item.strip()
+            if not value:
+                continue
+            normalized.append(value.rstrip("."))
+    if normalized:
+        return normalized[:8]
+
+    fallback_steps = [
+        segment.strip().rstrip(".")
+        for segment in explanation.split(".")
+        if segment.strip()
+    ]
+    return fallback_steps[:5]
 
 
 def _extract_plan_from_responses_output(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -603,6 +638,7 @@ async def generate_dashboard_with_ai_service(
         prompt=prompt,
     )
     explanation = str(plan.get("explanation") or "Estrutura gerada com base no prompt e nas colunas disponiveis.")
+    planning_steps = _normalize_planning_steps(plan.get("planning_steps"), explanation)
     raw_sections = plan.get("sections") if isinstance(plan.get("sections"), list) else []
     audit_issues: list[dict[str, Any]] = []
 
@@ -611,6 +647,7 @@ async def generate_dashboard_with_ai_service(
     for section_index, section in enumerate(raw_sections):
         if not isinstance(section, dict):
             continue
+        section_columns = _coerce_section_columns(section.get("columns"), default=2)
         raw_widgets = section.get("widgets") if isinstance(section.get("widgets"), list) else []
         widgets: list[dict[str, Any]] = []
         for widget_index, raw_widget in enumerate(raw_widgets):
@@ -625,9 +662,10 @@ async def generate_dashboard_with_ai_service(
             widget_type = str(raw_widget.get("type") or config_widget_type or "table").lower()
             if widget_type not in {"kpi", "line", "bar", "column", "donut", "table", "text", "dre"}:
                 widget_type = "table"
-            default_width = 4 if widget_type in {"line", "table"} else 1
+            default_width = min(section_columns, 4 if widget_type in {"line", "table"} else 1)
             default_height = 2 if widget_type in {"line", "table"} else 1
-            width = _coerce_width(raw_widget.get("width"), default_width)
+            requested_width = _coerce_width(raw_widget.get("width"), default_width)
+            width = min(section_columns, requested_width)
             height = _coerce_height(raw_widget.get("height"), default_height)
             widget_title = str(raw_widget.get("title") or f"{widget_type.upper()} {widget_index + 1}")
             fallback_config = _setup_default_widget_config(
@@ -653,6 +691,7 @@ async def generate_dashboard_with_ai_service(
                     default_width=default_width,
                     default_height=default_height,
                 )
+                candidate_size["width"] = min(section_columns, _coerce_width(candidate_size.get("width"), default_width))
                 if "width" in raw_widget:
                     candidate_size["width"] = width
                 if "height" in raw_widget:
@@ -689,7 +728,7 @@ async def generate_dashboard_with_ai_service(
                     widget_type="table",
                     columns=columns,
                     title=widget_title,
-                    width=4,
+                    width=min(section_columns, 4),
                     height=2,
                 )
                 parsed_final_config = WidgetConfig.model_validate(config)
@@ -713,6 +752,8 @@ async def generate_dashboard_with_ai_service(
                     issues.append("auto-repair aplicado antes da validacao final")
                 if used_fallback_config:
                     issues.append("fallback aplicado")
+                if requested_width > section_columns:
+                    issues.append("width ajustado para respeitar o limite de colunas da secao")
                 audit_issues.append(
                     {
                         "section_index": section_index,
@@ -733,6 +774,16 @@ async def generate_dashboard_with_ai_service(
                         "issues": ["config invalido retornado pela IA; fallback aplicado"],
                     }
                 )
+            if requested_width > section_columns:
+                audit_issues.append(
+                    {
+                        "section_index": section_index,
+                        "widget_index": widget_index,
+                        "widget_title": widget_title,
+                        "widget_type": widget_type,
+                        "issues": [f"width {requested_width} ajustado para {section_columns} (columns da secao)"],
+                    }
+                )
 
             widgets.append(
                 {
@@ -744,15 +795,6 @@ async def generate_dashboard_with_ai_service(
                 }
             )
         section_title = str(section.get("title") or f"Secao {section_index + 1}")
-        raw_columns = section.get("columns")
-        if isinstance(raw_columns, (int, float)):
-            section_columns = int(raw_columns)
-        elif isinstance(raw_columns, str) and raw_columns.isdigit():
-            section_columns = int(raw_columns)
-        else:
-            section_columns = 2
-        if section_columns < 1 or section_columns > 4:
-            section_columns = 2
         response_sections.append(
             {
                 "id": f"sec-ai-{section_index}-{uuid4().hex[:6]}",
@@ -782,9 +824,14 @@ async def generate_dashboard_with_ai_service(
             }
         ]
         explanation = "Nao foi possivel gerar widgets com seguranca. Criamos uma secao base para voce ajustar."
+        planning_steps = _normalize_planning_steps(
+            [],
+            "Validei o retorno da IA e apliquei fallback seguro. Estruturei uma secao base para voce continuar.",
+        )
 
     return {
         "title": (title or "").strip() or "Novo Dashboard",
         "explanation": explanation,
+        "planning_steps": planning_steps,
         "sections": response_sections,
     }

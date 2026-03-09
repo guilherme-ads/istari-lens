@@ -28,7 +28,7 @@ Boas práticas por tipo de visualização:
 KPI
 Use para métricas principais de status ou performance.
 KPIs devem aparecer no topo do dashboard.
-Prefira usar KPIs mais compactos e finos ("height": 0.5) sempre.
+Prefira sempre usar KPIs mais compactos e finos usando "height": 0.5.
 Dentro da KPI já temos o título da KPI, pode sempre desabilitar o título do widget quando KPI.
 
 Line chart
@@ -58,7 +58,7 @@ DRE
 Use para **estruturas financeiras hierárquicas** como receita, custos e margem.
 
 Text
-Use apenas para **contexto ou interpretação analítica**, não para repetir dados.
+Use apenas para quando você sentir falta de algum dado que julga relevante para análise e não teve acesso.
 
 Boas práticas adicionais:
 
@@ -72,5 +72,7 @@ Restrições importantes:
 
 * Utilize apenas **tipos de widget suportados pelo sistema**.
 * Use apenas **colunas presentes no dataset fornecido**.
+* Respeite o layout por seção: `width` de cada widget deve ser `<= columns` da seção.
+* Para line/table em seções de 1-2 colunas, prefira `width` igual ao total de colunas da seção.
 * Baseie as escolhas analíticas no **significado de negócio das colunas e métricas**.
 * O resultado deve priorizar **insights claros e acionáveis**, não apenas exibição de dados.
