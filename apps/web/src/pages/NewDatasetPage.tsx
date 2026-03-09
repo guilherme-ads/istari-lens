@@ -30,20 +30,32 @@ type SelectedColumn = {
   resource: "r0" | "r1";
   column: string;
   alias: string;
+  semanticType: "numeric" | "temporal" | "text" | "boolean";
+  description: string;
   enabled: boolean;
 };
 
 type ComputedDraft = {
   id: string;
   alias: string;
+  description: string;
   left: string;
   op: "add" | "sub" | "mul" | "div";
   right: string;
 };
 
 type HydrationDraft = {
-  include: Array<{ resource: "r0" | "r1"; column: string; alias: string }>;
+  include: Array<{ resource: "r0" | "r1"; column: string; alias: string; description?: string }>;
   computed: ComputedDraft[];
+};
+
+const normalizeSemanticType = (value: string): "numeric" | "temporal" | "text" | "boolean" => {
+  if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") return value;
+  const raw = (value || "").toLowerCase();
+  if (["int", "numeric", "decimal", "real", "double", "float", "money"].some((token) => raw.includes(token))) return "numeric";
+  if (["date", "time", "timestamp"].some((token) => raw.includes(token))) return "temporal";
+  if (raw.includes("bool")) return "boolean";
+  return "text";
 };
 
 const NewDatasetPage = () => {
@@ -154,6 +166,8 @@ const NewDatasetPage = () => {
             resource,
             column: column.name,
             alias: defaultAlias,
+            semanticType: normalizeSemanticType(column.type),
+            description: "",
             enabled: resource === "r0",
           };
         });
@@ -174,8 +188,13 @@ const NewDatasetPage = () => {
     let joinType: "left" | "inner" = "left";
     let joinLeftColumn = "";
     let joinRightColumn = "";
-    const includeItems: Array<{ resource: "r0" | "r1"; column: string; alias: string }> = [];
+    const includeItems: Array<{ resource: "r0" | "r1"; column: string; alias: string; description?: string }> = [];
     const computedItems: ComputedDraft[] = [];
+    const semanticDescriptionByName = new Map(
+      (editingDataset.semanticColumns || [])
+        .filter((item) => !!item.name)
+        .map((item) => [item.name, item.description || ""]),
+    );
 
     if (baseQuerySpec?.base?.resources?.length) {
       const resources = baseQuerySpec.base.resources;
@@ -206,6 +225,7 @@ const NewDatasetPage = () => {
           resource: mappedResource,
           column: item.column,
           alias: item.alias,
+          description: semanticDescriptionByName.get(item.alias) || "",
         });
       });
 
@@ -219,6 +239,7 @@ const NewDatasetPage = () => {
         computedItems.push({
           id: `cc-hydrated-${index}-${item.alias}`,
           alias: item.alias,
+          description: semanticDescriptionByName.get(item.alias) || "",
           left,
           op: op as ComputedDraft["op"],
           right,
@@ -272,6 +293,7 @@ const NewDatasetPage = () => {
           ...next[key],
           enabled: true,
           alias: item.alias,
+          description: item.description || "",
         };
       });
       return next;
@@ -325,6 +347,22 @@ const NewDatasetPage = () => {
           expr: { op: item.op, args: [{ column: item.left.trim() }, { column: item.right.trim() }] },
           data_type: "numeric" as const,
         }));
+      const semanticColumns = [
+        ...enabledColumns.map((item) => ({
+          name: item.alias.trim(),
+          type: normalizeSemanticType(item.semanticType),
+          source: "projected" as const,
+          description: item.description.trim() || undefined,
+        })),
+        ...computedColumns
+          .filter((item) => item.alias.trim())
+          .map((item) => ({
+            name: item.alias.trim(),
+            type: "numeric" as const,
+            source: "computed" as const,
+            description: item.description.trim() || undefined,
+          })),
+      ];
 
       const baseQuerySpec: ApiDatasetBaseQuerySpec = {
         version: 1,
@@ -354,6 +392,7 @@ const NewDatasetPage = () => {
           name: form.name.trim(),
           description: form.description.trim(),
           base_query_spec: baseQuerySpec,
+          semantic_columns: semanticColumns,
         });
       }
       return api.createDataset({
@@ -362,6 +401,7 @@ const NewDatasetPage = () => {
         name: form.name.trim(),
         description: form.description.trim(),
         base_query_spec: baseQuerySpec,
+        semantic_columns: semanticColumns,
       });
     },
     onSuccess: async () => {
@@ -532,7 +572,7 @@ const NewDatasetPage = () => {
             </div>
 
             <div className="glass-card p-6 space-y-3">
-              <Label className="text-heading">Preprocessamento: colunas (selecao + rename)</Label>
+              <Label className="text-heading">Preprocessamento: colunas (selecao + rename + descricao opcional)</Label>
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
@@ -552,7 +592,7 @@ const NewDatasetPage = () => {
               </label>
               <div className="rounded-md border border-border p-2 space-y-2 max-h-52 overflow-y-auto">
                 {columnEntries.map(([key, item]) => (
-                  <div key={key} className="grid grid-cols-[auto_1fr_1fr] gap-2 items-center">
+                  <div key={key} className="grid grid-cols-[auto_1fr_1fr_1.3fr] gap-2 items-center">
                     <input
                       type="checkbox"
                       checked={item.enabled}
@@ -573,6 +613,17 @@ const NewDatasetPage = () => {
                         }))}
                       placeholder="alias"
                     />
+                    <Input
+                      className="h-8 text-xs"
+                      value={item.description}
+                      onChange={(e) =>
+                        setSelectedColumns((prev) => ({
+                          ...prev,
+                          [key]: { ...prev[key], description: e.target.value },
+                        }))}
+                      placeholder="descricao da coluna (opcional)"
+                      disabled={!item.enabled}
+                    />
                   </div>
                 ))}
               </div>
@@ -588,7 +639,7 @@ const NewDatasetPage = () => {
                   onClick={() =>
                     setComputedColumns((prev) => [
                       ...prev,
-                      { id: `cc-${Date.now()}-${Math.random()}`, alias: "", left: "", op: "sub", right: "" },
+                      { id: `cc-${Date.now()}-${Math.random()}`, alias: "", description: "", left: "", op: "sub", right: "" },
                     ])}
                 >
                   <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar
@@ -596,7 +647,7 @@ const NewDatasetPage = () => {
               </div>
               <div className="space-y-2">
                 {computedColumns.map((item) => (
-                  <div key={item.id} className="grid grid-cols-[1fr_1fr_100px_1fr_auto] gap-2 items-center">
+                  <div key={item.id} className="grid grid-cols-[1fr_1fr_100px_1fr_1fr_auto] gap-2 items-center">
                     <Input
                       className="h-8 text-xs"
                       value={item.alias}
@@ -626,6 +677,12 @@ const NewDatasetPage = () => {
                         {aliasOptions.map((alias) => <SelectItem key={`r-${item.id}-${alias}`} value={alias}>{alias}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    <Input
+                      className="h-8 text-xs"
+                      value={item.description}
+                      onChange={(e) => setComputedColumns((prev) => prev.map((row) => (row.id === item.id ? { ...row, description: e.target.value } : row)))}
+                      placeholder="descricao (opcional)"
+                    />
                     <Button size="icon" variant="ghost" className="h-8 w-8 destructive-icon-btn" onClick={() => setComputedColumns((prev) => prev.filter((row) => row.id !== item.id))}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>

@@ -27,7 +27,7 @@ const LoginPage = () => {
     }
     setLoading(true);
     try {
-      const response = await api.login(email, password);
+      const response = await api.login(email, password, rememberMe);
       setAuthSession(response.access_token, response.user, rememberMe);
       navigate("/home");
     } catch (err) {

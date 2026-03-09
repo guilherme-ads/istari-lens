@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.routes import admin_users, auth
 from app.modules.auth.application.security import hash_password
-from app.modules.core.legacy.models import Base, User
+from app.modules.core.legacy.models import AuthSession, Base, User
 from app.shared.infrastructure.database import get_db
 
 
@@ -60,10 +60,11 @@ def _seed_users() -> tuple[User, User]:
     return admin, regular
 
 
-def _login(client: TestClient, email: str, password: str) -> str:
-    response = client.post("/auth/login", json={"email": email, "password": password})
+def _login(client: TestClient, email: str, password: str, remember_me: bool = True) -> str:
+    response = client.post("/auth/login", json={"email": email, "password": password, "remember_me": remember_me})
     assert response.status_code == 200, response.text
     assert "set-cookie" in response.headers
+    assert response.json()["remember_me"] is remember_me
     return response.json()["access_token"]
 
 
@@ -218,3 +219,45 @@ def test_logout_all_revokes_active_sessions():
 
     refresh_after_logout_all = client.post("/auth/refresh")
     assert refresh_after_logout_all.status_code == 401
+
+
+def test_login_cookie_persistence_tracks_remember_me_flag():
+    _seed_users()
+    client = _make_client()
+
+    remembered_login = client.post(
+        "/auth/login",
+        json={"email": "user@test.com", "password": "userpass123", "remember_me": True},
+    )
+    assert remembered_login.status_code == 200
+    assert remembered_login.json()["remember_me"] is True
+    remembered_cookie = remembered_login.headers.get("set-cookie", "")
+    assert "Max-Age=" in remembered_cookie
+
+    transient_login = client.post(
+        "/auth/login",
+        json={"email": "user@test.com", "password": "userpass123", "remember_me": False},
+    )
+    assert transient_login.status_code == 200
+    assert transient_login.json()["remember_me"] is False
+    transient_cookie = transient_login.headers.get("set-cookie", "")
+    assert "Max-Age=" not in transient_cookie
+
+    db: Session = TestingSessionLocal()
+    try:
+        session = db.query(AuthSession).order_by(AuthSession.id.desc()).first()
+        assert session is not None
+        assert session.is_persistent is False
+    finally:
+        db.close()
+
+
+def test_refresh_preserves_non_persistent_session_mode():
+    _seed_users()
+    client = _make_client()
+
+    _login(client, "user@test.com", "userpass123", remember_me=False)
+    refresh = client.post("/auth/refresh")
+    assert refresh.status_code == 200
+    assert refresh.json()["remember_me"] is False
+    assert "Max-Age=" not in refresh.headers.get("set-cookie", "")

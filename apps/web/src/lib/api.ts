@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken, updateAuthToken, updateStoredUser } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, setAuthSession, updateAuthToken, updateStoredUser } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -118,6 +118,7 @@ export type ApiUser = {
 export type AuthLoginResponse = {
   access_token: string;
   token_type: string;
+  remember_me: boolean;
   user: ApiUser;
 };
 
@@ -222,6 +223,7 @@ export type ApiDataset = {
     name: string;
     type: "numeric" | "temporal" | "text" | "boolean";
     source?: string;
+    description?: string;
   }>;
   is_active: boolean;
   view?: ApiView | null;
@@ -289,8 +291,9 @@ export type ApiDashboard = {
   created_by_id?: number | null;
   is_owner: boolean;
   access_level: "owner" | "edit" | "view";
-  access_source: "owner" | "direct" | "workspace";
-  visibility: "private" | "workspace_view" | "workspace_edit";
+  access_source: "owner" | "direct" | "workspace" | "public";
+  visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
+  public_share_key?: string | null;
   name: string;
   description?: string | null;
   is_active: boolean;
@@ -309,8 +312,9 @@ export type ApiDashboardCatalogItem = {
   created_by_id?: number | null;
   is_owner: boolean;
   access_level: "owner" | "edit" | "view";
-  access_source: "owner" | "direct" | "workspace";
-  visibility: "private" | "workspace_view" | "workspace_edit";
+  access_source: "owner" | "direct" | "workspace" | "public";
+  visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
+  public_share_key?: string | null;
   created_by_name?: string | null;
   created_by_email?: string | null;
   widget_count: number;
@@ -538,8 +542,90 @@ export type ApiDashboardEmailShare = {
 
 export type ApiDashboardSharingResponse = {
   dashboard_id: number;
-  visibility: "private" | "workspace_view" | "workspace_edit";
+  visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
+  public_share_key?: string | null;
   shares: ApiDashboardEmailShare[];
+};
+
+export type ApiPublicDashboard = {
+  id: number;
+  dataset_id: number;
+  visibility: "public_view";
+  public_share_key?: string | null;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
+  layout_config?: Record<string, unknown>[];
+  native_filters?: Array<{ column: string; op: string; value?: unknown }>;
+  widgets: ApiDashboardWidget[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiDashboardVersion = {
+  id: number;
+  dashboard_id: number;
+  version_number: number;
+  created_by_id?: number | null;
+  created_at: string;
+};
+
+export type ApiDashboardExportResponse = {
+  format: "istari.dashboard.v1";
+  exported_at: string;
+  dashboard: Record<string, unknown>;
+};
+
+export type ApiDashboardImportConflict = {
+  scope: "widget" | "native_filter" | "metadata";
+  code: string;
+  message: string;
+  widget_index?: number | null;
+  widget_title?: string | null;
+  field?: string | null;
+};
+
+export type ApiDashboardImportPreviewResponse = {
+  source_dataset_id?: number | null;
+  target_dataset_id: number;
+  same_dataset: boolean;
+  compatibility: "compatible" | "partial" | "incompatible";
+  total_widgets: number;
+  valid_widgets: number;
+  invalid_widgets: number;
+  conflicts: ApiDashboardImportConflict[];
+};
+
+export type ApiAIGeneratedWidget = {
+  id: string;
+  title: string;
+  position: number;
+  config_version: number;
+  config: Record<string, unknown>;
+};
+
+export type ApiAIGeneratedSection = {
+  id: string;
+  title: string;
+  show_title: boolean;
+  columns: 1 | 2 | 3 | 4;
+  widgets: ApiAIGeneratedWidget[];
+};
+
+export type ApiAIGenerateDashboardResponse = {
+  title: string;
+  explanation: string;
+  planning_steps: string[];
+  sections: ApiAIGeneratedSection[];
+};
+
+export type ApiDashboardEditLockResponse = {
+  dashboard_id: number;
+  is_locked: boolean;
+  is_locked_by_current_user: boolean;
+  locked_by_user_id?: number | null;
+  locked_by_email?: string | null;
+  expires_at?: string | null;
 };
 
 export type ApiDashboardShareableUser = {
@@ -591,11 +677,28 @@ export type ApiOpenAIIntegrationTestResponse = {
 };
 
 export const api = {
-  login: (email: string, password: string) =>
+  login: (email: string, password: string, rememberMe = true) =>
     request<AuthLoginResponse>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, remember_me: rememberMe }),
     }, false, true),
+
+  restoreSession: async () => {
+    if (getAuthToken()) return true;
+    try {
+      const response = await request<AuthLoginResponse>(
+        "/auth/refresh",
+        { method: "POST" },
+        false,
+        true,
+        false,
+      );
+      setAuthSession(response.access_token, response.user, response.remember_me);
+      return true;
+    } catch {
+      return false;
+    }
+  },
 
   changePassword: (payload: { current_password: string; new_password: string }) =>
     request<void>("/auth/change-password", {
@@ -741,6 +844,12 @@ export const api = {
     is_active?: boolean;
     view_id?: number;
     base_query_spec?: ApiDatasetBaseQuerySpec;
+    semantic_columns?: Array<{
+      name: string;
+      type: "numeric" | "temporal" | "text" | "boolean";
+      source?: string;
+      description?: string;
+    }>;
   }) =>
     request<ApiDataset>("/datasets", { method: "POST", body: JSON.stringify(payload) }),
 
@@ -752,6 +861,12 @@ export const api = {
       is_active: boolean;
       view_id: number;
       base_query_spec: ApiDatasetBaseQuerySpec;
+      semantic_columns: Array<{
+        name: string;
+        type: "numeric" | "temporal" | "text" | "boolean";
+        source?: string;
+        description?: string;
+      }>;
     }>,
   ) => request<ApiDataset>(`/datasets/${datasetId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
@@ -793,7 +908,7 @@ export const api = {
 
   updateDashboardVisibility: (
     dashboardId: number,
-    payload: { visibility: "private" | "workspace_view" | "workspace_edit" },
+    payload: { visibility: "private" | "workspace_view" | "workspace_edit" | "public_view" },
   ) => request<ApiDashboardSharingResponse>(`/dashboards/${dashboardId}/sharing/visibility`, { method: "PUT", body: JSON.stringify(payload) }),
 
   upsertDashboardEmailShare: (
@@ -851,6 +966,67 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ widget_ids: widgetIds, global_filters: globalFilters }),
     }),
+
+  saveDashboard: (
+    dashboardId: number,
+    payload: {
+      name?: string;
+      description?: string | null;
+      is_active?: boolean;
+      visibility?: "private" | "workspace_view" | "workspace_edit" | "public_view";
+      layout_config: Record<string, unknown>[];
+      native_filters: Array<{ column: string; op: string; value?: unknown }>;
+      widgets: Array<{
+        id?: number;
+        widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
+        title?: string;
+        position?: number;
+        config: ApiWidgetConfig;
+        config_version?: number;
+        visualization_config?: Record<string, unknown>;
+      }>;
+    },
+  ) => request<ApiDashboard>(`/dashboards/${dashboardId}/save`, { method: "POST", body: JSON.stringify(payload) }),
+
+  listDashboardVersions: (dashboardId: number) =>
+    request<ApiDashboardVersion[]>(`/dashboards/${dashboardId}/versions`),
+
+  restoreDashboardVersion: (dashboardId: number, versionId: number) =>
+    request<ApiDashboard>(`/dashboards/${dashboardId}/versions/${versionId}/restore`, { method: "POST" }),
+
+  exportDashboard: (dashboardId: number) =>
+    request<ApiDashboardExportResponse>(`/dashboards/${dashboardId}/export`),
+
+  previewDashboardImport: (payload: { dataset_id?: number; dashboard: Record<string, unknown> }) =>
+    request<ApiDashboardImportPreviewResponse>("/dashboards/import/preview", { method: "POST", body: JSON.stringify(payload) }),
+
+  generateDashboardWithAi: (payload: { dataset_id: number; prompt: string; title?: string }) =>
+    request<ApiAIGenerateDashboardResponse>("/dashboards/ai/generate", { method: "POST", body: JSON.stringify(payload) }),
+
+  importDashboard: (payload: { dataset_id?: number; dashboard: Record<string, unknown> }) =>
+    request<ApiDashboard>("/dashboards/import", { method: "POST", body: JSON.stringify(payload) }),
+
+  getDashboardLock: (dashboardId: number) =>
+    request<ApiDashboardEditLockResponse>(`/dashboards/${dashboardId}/lock`),
+
+  acquireDashboardLock: (dashboardId: number) =>
+    request<ApiDashboardEditLockResponse>(`/dashboards/${dashboardId}/lock/acquire`, { method: "POST" }),
+
+  releaseDashboardLock: (dashboardId: number) =>
+    request<ApiDashboardEditLockResponse>(`/dashboards/${dashboardId}/lock`, { method: "DELETE" }),
+
+  getPublicDashboard: (publicShareKey: string) =>
+    request<ApiPublicDashboard>(`/dashboards/public/${encodeURIComponent(publicShareKey)}`, undefined, false),
+
+  getPublicDashboardWidgetsData: (
+    publicShareKey: string,
+    widgetIds: number[],
+    globalFilters: Array<{ column: string; op: string; value?: unknown }> = [],
+  ) =>
+    request<ApiDashboardWidgetBatchDataResponse>(`/dashboards/public/${encodeURIComponent(publicShareKey)}/widgets/data`, {
+      method: "POST",
+      body: JSON.stringify({ widget_ids: widgetIds, global_filters: globalFilters }),
+    }, false),
 
   getDashboardDebugQueries: (
     dashboardId: number,

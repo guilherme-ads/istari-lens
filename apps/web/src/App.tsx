@@ -1,26 +1,28 @@
+import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { getStoredUser, hasAuthSession } from "./lib/auth";
-import HomePage from "./pages/HomePage";
-import LoginPage from "./pages/LoginPage";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ThemeProvider } from "./components/ui/theme-provider";
 import AppLayout from "./components/shared/AppLayout";
-import OverviewPage from "./pages/OverviewPage";
+import { getStoredUser, hasAuthSession } from "./lib/auth";
+import { api } from "./lib/api";
+import AccountPage from "./pages/AccountPage";
 import AdminPage from "./pages/AdminPage";
-import DatasetsPage from "./pages/DatasetsPage";
-import NewDatasetPage from "./pages/NewDatasetPage";
+import AdminUsersPage from "./pages/AdminUsersPage";
+import ApiConfigPage from "./pages/ApiConfigPage";
+import BuilderPage from "./pages/BuilderPage";
+import DashboardViewPage from "./pages/DashboardViewPage";
 import DashboardsPage from "./pages/DashboardsPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
-import DashboardViewPage from "./pages/DashboardViewPage";
-import BuilderPage from "./pages/BuilderPage";
-import ApiConfigPage from "./pages/ApiConfigPage";
-import SharedAnalysisPage from "./pages/SharedAnalysisPage";
+import DatasetsPage from "./pages/DatasetsPage";
+import HomePage from "./pages/HomePage";
+import LoginPage from "./pages/LoginPage";
+import NewDatasetPage from "./pages/NewDatasetPage";
 import NotFound from "./pages/NotFound";
-import AdminUsersPage from "./pages/AdminUsersPage";
-import AccountPage from "./pages/AccountPage";
-import { ThemeProvider } from "./components/ui/theme-provider";
+import OverviewPage from "./pages/OverviewPage";
+import SharedAnalysisPage from "./pages/SharedAnalysisPage";
 
 const queryClient = new QueryClient();
 
@@ -40,46 +42,74 @@ const RedirectIfAuthenticated = ({ children }: { children: JSX.Element }) => {
   return children;
 };
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-          {/* Public pages — no sidebar */}
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
-          <Route path="/shared/:shareToken" element={<SharedAnalysisPage />} />
-          <Route
-            path="/presentation/datasets/:datasetId/dashboard/:dashboardId"
-            element={<RequireAuth><DashboardViewPage /></RequireAuth>}
-          />
+const App = () => {
+  const [authReady, setAuthReady] = useState(hasAuthSession());
 
-          {/* Authenticated pages — sidebar layout */}
-          <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-            <Route path="/home" element={<OverviewPage />} />
-            <Route path="/datasets" element={<DatasetsPage />} />
-            <Route path="/datasets/new" element={<NewDatasetPage />} />
-            <Route path="/datasets/:datasetId/edit" element={<NewDatasetPage />} />
-            <Route path="/dashboards" element={<DashboardsPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
-            <Route path="/datasets/:datasetId/dashboard/:dashboardId" element={<DashboardViewPage />} />
-            <Route path="/datasets/:datasetId/builder" element={<BuilderPage />} />
-            <Route path="/datasets/:datasetId/builder/:dashboardId" element={<BuilderPage />} />
-            <Route path="/api-config" element={<RequireAdmin><ApiConfigPage /></RequireAdmin>} />
-            <Route path="/admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />
-            <Route path="/admin/users" element={<RequireAdmin><AdminUsersPage /></RequireAdmin>} />
-          </Route>
+  useEffect(() => {
+    let cancelled = false;
 
-          <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </ThemeProvider>
-  </QueryClientProvider>
-);
+    if (hasAuthSession()) {
+      setAuthReady(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      await api.restoreSession();
+      if (!cancelled) setAuthReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            {authReady ? (
+              <Routes>
+                <Route path="/" element={<HomePage />} />
+                <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
+                <Route path="/shared/:shareToken" element={<SharedAnalysisPage />} />
+                <Route
+                  path="/presentation/datasets/:datasetId/dashboard/:dashboardId"
+                  element={<DashboardViewPage />}
+                />
+                <Route
+                  path="/public/dashboard/:dashboardId"
+                  element={<DashboardViewPage />}
+                />
+
+                <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+                  <Route path="/home" element={<OverviewPage />} />
+                  <Route path="/datasets" element={<DatasetsPage />} />
+                  <Route path="/datasets/new" element={<NewDatasetPage />} />
+                  <Route path="/datasets/:datasetId/edit" element={<NewDatasetPage />} />
+                  <Route path="/dashboards" element={<DashboardsPage />} />
+                  <Route path="/account" element={<AccountPage />} />
+                  <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
+                  <Route path="/datasets/:datasetId/dashboard/:dashboardId" element={<DashboardViewPage />} />
+                  <Route path="/datasets/:datasetId/builder" element={<BuilderPage />} />
+                  <Route path="/datasets/:datasetId/builder/:dashboardId" element={<BuilderPage />} />
+                  <Route path="/api-config" element={<RequireAdmin><ApiConfigPage /></RequireAdmin>} />
+                  <Route path="/admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />
+                  <Route path="/admin/users" element={<RequireAdmin><AdminUsersPage /></RequireAdmin>} />
+                </Route>
+
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            ) : null}
+          </BrowserRouter>
+        </TooltipProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

@@ -33,6 +33,7 @@ class User(Base):
     )
     spreadsheet_imports = relationship("SpreadsheetImport", back_populates="created_by_user")
     dashboard_email_shares_created = relationship("DashboardEmailShare", back_populates="created_by_user")
+    dashboard_edit_locks = relationship("DashboardEditLock", back_populates="user", overlaps="user")
     auth_sessions = relationship("AuthSession", back_populates="user", cascade="all, delete-orphan")
 
 
@@ -45,6 +46,7 @@ class AuthSession(Base):
     ip_address = Column(String(64), nullable=True)
     user_agent = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_persistent = Column(Boolean, nullable=False, default=True, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
     last_used_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True, index=True)
@@ -152,6 +154,7 @@ class Dashboard(Base):
     native_filters = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True, index=True)
     visibility = Column(String(32), nullable=False, default="private", index=True)
+    public_share_key = Column(String(64), nullable=True, unique=True, index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -160,6 +163,14 @@ class Dashboard(Base):
     widgets = relationship("DashboardWidget", back_populates="dashboard", cascade="all, delete-orphan")
     created_by_user = relationship("User", back_populates="dashboards")
     email_shares = relationship("DashboardEmailShare", back_populates="dashboard", cascade="all, delete-orphan")
+    versions = relationship("DashboardVersion", back_populates="dashboard", cascade="all, delete-orphan")
+    edit_lock = relationship(
+        "DashboardEditLock",
+        back_populates="dashboard",
+        cascade="all, delete-orphan",
+        uselist=False,
+        overlaps="dashboard",
+    )
 
     __table_args__ = (
         Index("dashboard_dataset_idx", "dataset_id"),
@@ -206,6 +217,38 @@ class DashboardWidget(Base):
     __table_args__ = (
         Index("widget_dashboard_idx", "dashboard_id"),
     )
+
+
+class DashboardVersion(Base):
+    __tablename__ = "dashboard_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_id = Column(Integer, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False)
+    snapshot = Column(JSON, nullable=False, default=dict)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    dashboard = relationship("Dashboard", back_populates="versions")
+
+    __table_args__ = (
+        Index("dashboard_versions_dashboard_version_idx", "dashboard_id", "version_number", unique=True),
+    )
+
+
+class DashboardEditLock(Base):
+    __tablename__ = "dashboard_edit_locks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_id = Column(Integer, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False, index=True, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    acquired_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dashboard = relationship("Dashboard", back_populates="edit_lock", overlaps="edit_lock")
+    user = relationship("User", back_populates="dashboard_edit_locks", overlaps="dashboard_edit_locks")
 
 
 class Analysis(Base):

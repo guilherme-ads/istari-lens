@@ -11,6 +11,48 @@ from app.modules.auth.adapters.api.dependencies import get_current_user, get_cur
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
+def _semantic_description_map(raw_items: list[dict[str, Any]] | None) -> dict[str, str]:
+    if not isinstance(raw_items, list):
+        return {}
+    result: dict[str, str] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        description = item.get("description")
+        if not isinstance(description, str):
+            continue
+        normalized = description.strip()
+        if not normalized:
+            continue
+        result[name.strip()] = normalized
+    return result
+
+
+def _apply_semantic_descriptions(
+    semantic_columns: list[dict[str, Any]],
+    description_map: dict[str, str],
+) -> list[dict[str, Any]]:
+    if not semantic_columns:
+        return semantic_columns
+    if not description_map:
+        return semantic_columns
+    enriched: list[dict[str, Any]] = []
+    for item in semantic_columns:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        name = next_item.get("name")
+        if isinstance(name, str):
+            description = description_map.get(name.strip())
+            if description:
+                next_item["description"] = description
+        enriched.append(next_item)
+    return enriched
+
+
 def _resolve_dataset_view(
     *,
     db: Session,
@@ -67,6 +109,9 @@ async def list_datasets(
     )
     response_items: list[DatasetResponse] = []
     for dataset in datasets:
+        persisted_descriptions = _semantic_description_map(
+            dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else None
+        )
         runtime_semantic_columns = dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else []
         if isinstance(dataset.base_query_spec, dict):
             try:
@@ -77,6 +122,7 @@ async def list_datasets(
                 )
             except HTTPException:
                 runtime_semantic_columns = dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else []
+        runtime_semantic_columns = _apply_semantic_descriptions(runtime_semantic_columns, persisted_descriptions)
         payload = DatasetResponse.model_validate(dataset)
         payload.semantic_columns = runtime_semantic_columns
         response_items.append(payload)
@@ -112,6 +158,10 @@ async def create_dataset(
         )
     else:
         semantic_columns = []
+    semantic_columns = _apply_semantic_descriptions(
+        semantic_columns,
+        _semantic_description_map(request.semantic_columns),
+    )
 
     dataset = Dataset(
         datasource_id=request.datasource_id,
@@ -161,7 +211,11 @@ async def update_dataset(
                 base_query_spec=resolved_base_query_spec,
             )
             dataset.base_query_spec = resolved_base_query_spec
-            dataset.semantic_columns = semantic_columns
+            dataset.semantic_columns = _apply_semantic_descriptions(
+                semantic_columns,
+                _semantic_description_map(request.semantic_columns)
+                or _semantic_description_map(dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else None),
+            )
     if request.base_query_spec is not None:
         resolved_base_query_spec, semantic_columns = validate_and_resolve_base_query_spec(
             db=db,
@@ -169,7 +223,17 @@ async def update_dataset(
             base_query_spec=request.base_query_spec,
         )
         dataset.base_query_spec = resolved_base_query_spec
-        dataset.semantic_columns = semantic_columns
+        dataset.semantic_columns = _apply_semantic_descriptions(
+            semantic_columns,
+            _semantic_description_map(request.semantic_columns)
+            or _semantic_description_map(dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else None),
+        )
+    elif request.semantic_columns is not None:
+        current_semantic = dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else []
+        dataset.semantic_columns = _apply_semantic_descriptions(
+            [dict(item) for item in current_semantic if isinstance(item, dict)],
+            _semantic_description_map(request.semantic_columns),
+        )
     if request.is_active is not None:
         dataset.is_active = request.is_active
 
