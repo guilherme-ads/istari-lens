@@ -180,6 +180,10 @@ class DashboardWidgetResponse(BaseModel):
         from_attributes = True
 
 
+class DashboardNativeFilterConfig(FilterConfig):
+    visible: bool = False
+
+
 class DashboardResponse(BaseModel):
     id: int
     dataset_id: int
@@ -193,7 +197,7 @@ class DashboardResponse(BaseModel):
     description: Optional[str]
     is_active: bool
     layout_config: List[dict] = Field(default_factory=list)
-    native_filters: List[FilterConfig] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     widgets: List[DashboardWidgetResponse]
     created_at: datetime
     updated_at: datetime
@@ -207,7 +211,7 @@ class DashboardCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
     layout_config: List[dict] = Field(default_factory=list)
-    native_filters: List[FilterConfig] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     is_active: bool = True
     visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"] = "private"
 
@@ -216,7 +220,7 @@ class DashboardUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     layout_config: Optional[List[dict]] = None
-    native_filters: Optional[List[FilterConfig]] = None
+    native_filters: Optional[List[DashboardNativeFilterConfig]] = None
     is_active: Optional[bool] = None
 
 
@@ -283,7 +287,7 @@ class DashboardWidgetBatchDataResponse(BaseModel):
 
 
 class DashboardDebugQueriesRequest(BaseModel):
-    native_filters_override: Optional[List[FilterConfig]] = None
+    native_filters_override: Optional[List[DashboardNativeFilterConfig]] = None
     global_filters: List[FilterConfig] = Field(default_factory=list)
     mode: Literal["widget", "dashboard"] = "widget"
 
@@ -397,7 +401,7 @@ class DashboardSaveRequest(BaseModel):
     is_active: Optional[bool] = None
     visibility: Optional[Literal["private", "workspace_view", "workspace_edit", "public_view"]] = None
     layout_config: List[dict] = Field(default_factory=list)
-    native_filters: List[FilterConfig] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     widgets: List[DashboardWidgetSnapshotPayload] = Field(default_factory=list)
 
 
@@ -469,6 +473,7 @@ class DashboardAIGenerateResponse(BaseModel):
     title: str
     explanation: str
     planning_steps: List[str] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     sections: List[DashboardAIGenerateSectionResponse] = Field(default_factory=list)
 
 
@@ -481,7 +486,7 @@ class DashboardPublicResponse(BaseModel):
     description: Optional[str]
     is_active: bool
     layout_config: List[dict] = Field(default_factory=list)
-    native_filters: List[FilterConfig] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     widgets: List[DashboardWidgetResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

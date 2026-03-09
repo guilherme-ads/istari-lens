@@ -9,11 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ChatInput, ChatMessages, ChatSuggestions, type ChatMessageData } from "@/components/shared/Chat";
 import { createDefaultWidgetConfig, type DashboardSection, type DashboardWidget, type WidgetType } from "@/types/dashboard";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type ApiDashboardNativeFilter } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 type SemanticColumn = { name: string; type: string };
-type CreationFlowState = "mode_selection" | "ai_creation" | "manual_creation" | "dashboard_preview";
+type CreationFlowState = "mode_selection" | "ai_creation" | "dashboard_preview";
 type CreationSource = "ai" | "manual";
 type ChatMessage = {
   id: string;
@@ -448,29 +448,6 @@ const AIDashboardCreator = ({
   );
 };
 
-const ManualDashboardBuilder = ({
-  onPrepare,
-  onBack,
-}: {
-  onPrepare: () => void;
-  onBack: () => void;
-}) => (
-  <div className="glass-card p-6 space-y-4">
-    <div>
-      <p className="text-title text-foreground">Criar dashboard manualmente</p>
-      <p className="mt-1 text-sm text-muted-foreground">Vamos preparar a estrutura inicial para voce abrir o builder manual.</p>
-    </div>
-    <div className="flex items-center gap-2">
-      <Button variant="outline" onClick={onBack}>
-        <ArrowLeft className="mr-1.5 h-4 w-4" /> Voltar
-      </Button>
-      <Button onClick={onPrepare}>
-        Continuar <ArrowRight className="ml-1.5 h-4 w-4" />
-      </Button>
-    </div>
-  </div>
-);
-
 const DashboardPreview = ({
   creationSource,
   title,
@@ -609,7 +586,7 @@ const DashboardSetup = ({
   datasetId: number;
   viewName: string;
   initialTitle?: string;
-  onStart: (title: string, sections: DashboardSection[]) => void;
+  onStart: (title: string, sections: DashboardSection[], nativeFilters?: ApiDashboardNativeFilter[]) => void;
 }) => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -622,6 +599,7 @@ const DashboardSetup = ({
   const [generatedSections, setGeneratedSections] = useState<DashboardSection[]>([]);
   const [generatedExplanation, setGeneratedExplanation] = useState("");
   const [generatedPlanningSteps, setGeneratedPlanningSteps] = useState<string[]>([]);
+  const [generatedNativeFilters, setGeneratedNativeFilters] = useState<ApiDashboardNativeFilter[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
 
@@ -641,6 +619,7 @@ const DashboardSetup = ({
     setGeneratedSections([]);
     setGeneratedExplanation("");
     setGeneratedPlanningSteps([]);
+    setGeneratedNativeFilters([]);
     setShowReasoning(true);
   };
 
@@ -774,32 +753,29 @@ const DashboardSetup = ({
         title: widget.title,
         position: widget.position,
         configVersion: widget.config_version,
-        config: widget.config as DashboardWidget["config"],
+        config: widget.config as unknown as DashboardWidget["config"],
       })),
     }));
     setGeneratedSections(mappedSections);
     setGeneratedExplanation(aiResult.explanation || "Estrutura gerada com IA.");
     setGeneratedPlanningSteps((aiResult.planning_steps || []).filter((item) => typeof item === "string" && item.trim().length > 0));
+    setGeneratedNativeFilters((aiResult.native_filters || []).map((item) => ({
+      column: item.column,
+      op: item.op,
+      value: item.value,
+      visible: typeof item.visible === "boolean" ? item.visible : true,
+    })));
     await typeAssistantMessage(`Dashboard montado com ${mappedSections.length} secoes. Se estiver tudo certo, clique em "Gerar dashboard".`);
     setIsGenerating(false);
   };
 
   const handleCreateGeneratedDashboard = () => {
     if (generatedSections.length === 0) return;
-    onStart(normalizedTitle, generatedSections);
-  };
-
-  const handlePrepareManualDraft = () => {
-    resetGeneratedPayload();
-    setGeneratedSections(createManualSections());
-    setGeneratedExplanation("Estrutura inicial manual pronta.");
-    setGeneratedPlanningSteps([]);
-    setCreationSource("manual");
-    setFlowState("dashboard_preview");
+    onStart(normalizedTitle, generatedSections, generatedNativeFilters);
   };
 
   const handleBackFromPreview = () => {
-    setFlowState(creationSource === "ai" ? "ai_creation" : "manual_creation");
+    setFlowState(creationSource === "ai" ? "ai_creation" : "mode_selection");
   };
 
   return (
@@ -821,9 +797,7 @@ const DashboardSetup = ({
             <p className="mt-1.5 text-body text-muted-foreground">
               {flowState === "mode_selection"
                 ? "Escolha como deseja iniciar."
-                : flowState === "manual_creation"
-                  ? "Modo manual selecionado."
-                  : "Revise a estrutura antes de abrir o builder."}
+                : "Revise a estrutura antes de abrir o builder."}
             </p>
           </>
         )}
@@ -840,7 +814,7 @@ const DashboardSetup = ({
             isCheckingAi={integrationQuery.isLoading}
             onSelectManual={() => {
               setCreationSource("manual");
-              setFlowState("manual_creation");
+              onStart(normalizedTitle, createManualSections());
             }}
             onSelectAi={enterAiCreation}
             onGoApiConfig={() => navigate("/api-config")}
@@ -864,15 +838,6 @@ const DashboardSetup = ({
         </motion.div>
       )}
 
-      {flowState === "manual_creation" && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-          <ManualDashboardBuilder
-            onPrepare={handlePrepareManualDraft}
-            onBack={() => setFlowState("mode_selection")}
-          />
-        </motion.div>
-      )}
-
       {flowState === "dashboard_preview" && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <DashboardPreview
@@ -885,7 +850,7 @@ const DashboardSetup = ({
             showReasoning={showReasoning}
             onToggleReasoning={() => setShowReasoning((current) => !current)}
             onBack={handleBackFromPreview}
-            onCreate={() => onStart(normalizedTitle, generatedSections)}
+            onCreate={() => onStart(normalizedTitle, generatedSections, generatedNativeFilters)}
           />
         </motion.div>
       )}

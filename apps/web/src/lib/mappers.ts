@@ -342,6 +342,7 @@ export const mapDashboard = (item: ApiDashboard): Dashboard => {
       column: asString(filter.column),
       op: asString(filter.op, "eq") as Dashboard["nativeFilters"][number]["op"],
       value: filter.value,
+      visible: typeof filter.visible === "boolean" ? filter.visible : false,
     })),
     sections,
     createdAt: normalizeApiDateTime(item.created_at),

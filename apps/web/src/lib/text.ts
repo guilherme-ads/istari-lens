@@ -18,7 +18,7 @@ const MOJIBAKE_MAP: Array<[string, string]> = [
 export const normalizeText = (value: string): string => {
   let next = value;
   for (const [from, to] of MOJIBAKE_MAP) {
-    next = next.replaceAll(from, to);
+    next = next.split(from).join(to);
   }
   return next;
 };

@@ -117,6 +117,7 @@ const getMetricLabel = (widget: DashboardWidget): string => {
   }
   const metric = widget.config.metrics[0];
   if (!metric) return "Metrica";
+  if (metric.alias && metric.alias.trim()) return metric.alias.trim();
   if (metric.op === "count") {
     return metric.column ? `CONTAGEM(${metric.column})` : "CONTAGEM(*)";
   }
@@ -124,6 +125,23 @@ const getMetricLabel = (widget: DashboardWidget): string => {
     return `CONTAGEM ÚNICA(${metric.column || "*"})`;
   }
   return `${aggLabelMap[metric.op]}(${metric.column || "*"})`;
+};
+
+const resolvePrimaryMetricKey = (widget: DashboardWidget, rows: Record<string, unknown>[]): string => {
+  const firstMetricAlias = widget.config.metrics[0]?.alias?.trim();
+  if (firstMetricAlias && rows.some((row) => Object.prototype.hasOwnProperty.call(row, firstMetricAlias))) {
+    return firstMetricAlias;
+  }
+  if (rows.some((row) => Object.prototype.hasOwnProperty.call(row, "m0"))) {
+    return "m0";
+  }
+  const dimKey = widget.config.dimensions[0];
+  const firstRow = rows[0] || {};
+  const candidate = Object.keys(firstRow).find((key) => {
+    if (key === dimKey) return false;
+    return key.startsWith("m");
+  });
+  return candidate || "m0";
 };
 
 const formatKpiValueFull = (
@@ -602,6 +620,9 @@ export const WidgetRenderer = ({
   const lineMetricBaseLabelByKey = widget.config.widget_type === "line"
     ? Object.fromEntries(
       widget.config.metrics.map((metric, index) => {
+        if (metric.alias && metric.alias.trim()) {
+          return [`m${index}`, metric.alias.trim()];
+        }
         if (metric.op === "count") {
           return [`m${index}`, metric.column ? `CONTAGEM(${metric.column})` : "CONTAGEM(*)"];
         }
@@ -897,7 +918,8 @@ export const WidgetRenderer = ({
   }
 
   if (type === "kpi") {
-    const value = Number(rows[0]?.m0 || 0);
+    const metricKey = resolvePrimaryMetricKey(widget, rows);
+    const value = Number(rows[0]?.[metricKey] || 0);
     const showAs = widget.config.kpi_show_as || "number_2";
     const decimals = widget.config.kpi_decimals ?? 2;
     const prefix = widget.config.kpi_prefix;
@@ -1003,13 +1025,14 @@ export const WidgetRenderer = ({
 
   const dim = widget.config.dimensions[0];
   const dimKey = dim || "__dim";
-  const chartRows = rows.map((row) => ({ ...row, m0: toFiniteNumber(row.m0) }));
+  const metricKey = resolvePrimaryMetricKey(widget, rows);
+  const chartRows = rows.map((row) => ({ ...row, [metricKey]: toFiniteNumber(row[metricKey]) }));
 
   if (type === "bar") {
     const showBarLabels = widget.config.bar_data_labels_enabled !== false;
     const fixedBarHeight = 22;
     const barGap = 8;
-    const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row.m0)), 0);
+    const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
     const barAxisMax = barDataMax > 0 ? barDataMax * 1.18 : 1;
     const barChartHeight = Math.max(chartHeight, rows.length * (fixedBarHeight + barGap) + 24);
     return (
@@ -1040,10 +1063,10 @@ export const WidgetRenderer = ({
                 }}
               />
               <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
-              <Bar dataKey="m0" fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
+              <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
                 {showBarLabels && (
                   <LabelList
-                    dataKey="m0"
+                    dataKey={metricKey}
                     content={(props: Record<string, unknown>) => {
                       const value = props.value;
                       const x = Number(props.x || 0);
@@ -1089,10 +1112,10 @@ export const WidgetRenderer = ({
             tickFormatter={(value) => formatChartValueCompact(value)}
           />
           <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
-          <Bar dataKey="m0" fill={chartPalette[0]} radius={[6, 6, 0, 0]}>
+          <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[6, 6, 0, 0]}>
             {showColumnLabels && (
               <LabelList
-                dataKey="m0"
+                dataKey={metricKey}
                 content={(props: Record<string, unknown>) => {
                   const value = props.value;
                   const x = Number(props.x || 0);
@@ -1122,14 +1145,14 @@ export const WidgetRenderer = ({
   const donutLabelBottomPadding = 10 + donutLegendReservedHeight;
   const donutRows = chartRows.length > 5
     ? (() => {
-        const sorted = [...chartRows].sort((a, b) => toFiniteNumber(b.m0) - toFiniteNumber(a.m0));
+        const sorted = [...chartRows].sort((a, b) => toFiniteNumber(b[metricKey]) - toFiniteNumber(a[metricKey]));
         const top3 = sorted.slice(0, 3);
         const remaining = sorted.slice(3);
-        const othersValue = remaining.reduce((sum, row) => sum + toFiniteNumber(row.m0), 0);
-        return othersValue > 0 ? [...top3, { [dimKey]: "Outros", m0: othersValue }] : top3;
+        const othersValue = remaining.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
+        return othersValue > 0 ? [...top3, { [dimKey]: "Outros", [metricKey]: othersValue }] : top3;
       })()
     : chartRows;
-  const donutTotal = donutRows.reduce((sum, row) => sum + toFiniteNumber(row.m0), 0);
+  const donutTotal = donutRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
   const shouldShowDonutLabel = (entry: { percent?: number }) =>
     Number(entry?.percent || 0) * 100 >= donutLabelMinPercent;
 
@@ -1148,7 +1171,7 @@ export const WidgetRenderer = ({
         {donutShowLegend && <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10 }} />}
         <Pie
           data={donutRows}
-          dataKey="m0"
+          dataKey={metricKey}
           nameKey={dimKey}
           cy={donutShowLegend ? "44%" : "50%"}
           innerRadius="56%"

@@ -285,6 +285,13 @@ export type ApiDashboardWidget = {
   updated_at: string;
 };
 
+export type ApiDashboardNativeFilter = {
+  column: string;
+  op: string;
+  value?: unknown;
+  visible?: boolean;
+};
+
 export type ApiDashboard = {
   id: number;
   dataset_id: number;
@@ -298,7 +305,7 @@ export type ApiDashboard = {
   description?: string | null;
   is_active: boolean;
   layout_config?: Record<string, unknown>[];
-  native_filters?: Array<{ column: string; op: string; value?: unknown }>;
+  native_filters?: ApiDashboardNativeFilter[];
   widgets: ApiDashboardWidget[];
   created_at: string;
   updated_at: string;
@@ -556,7 +563,7 @@ export type ApiPublicDashboard = {
   description?: string | null;
   is_active: boolean;
   layout_config?: Record<string, unknown>[];
-  native_filters?: Array<{ column: string; op: string; value?: unknown }>;
+  native_filters?: ApiDashboardNativeFilter[];
   widgets: ApiDashboardWidget[];
   created_at: string;
   updated_at: string;
@@ -616,6 +623,7 @@ export type ApiAIGenerateDashboardResponse = {
   title: string;
   explanation: string;
   planning_steps: string[];
+  native_filters: ApiDashboardNativeFilter[];
   sections: ApiAIGeneratedSection[];
 };
 
@@ -887,7 +895,7 @@ export const api = {
     description?: string;
     is_active?: boolean;
     layout_config?: Record<string, unknown>[];
-    native_filters?: Array<{ column: string; op: string; value?: unknown }>;
+    native_filters?: ApiDashboardNativeFilter[];
   }) => request<ApiDashboard>("/dashboards", { method: "POST", body: JSON.stringify(payload) }),
 
   updateDashboard: (
@@ -897,7 +905,7 @@ export const api = {
       description: string;
       is_active: boolean;
       layout_config: Record<string, unknown>[];
-      native_filters: Array<{ column: string; op: string; value?: unknown }>;
+      native_filters: ApiDashboardNativeFilter[];
     }>,
   ) => request<ApiDashboard>(`/dashboards/${dashboardId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
@@ -975,7 +983,7 @@ export const api = {
       is_active?: boolean;
       visibility?: "private" | "workspace_view" | "workspace_edit" | "public_view";
       layout_config: Record<string, unknown>[];
-      native_filters: Array<{ column: string; op: string; value?: unknown }>;
+      native_filters: ApiDashboardNativeFilter[];
       widgets: Array<{
         id?: number;
         widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
@@ -1031,7 +1039,7 @@ export const api = {
   getDashboardDebugQueries: (
     dashboardId: number,
     payload: {
-      native_filters_override?: Array<{ column: string; op: string; value?: unknown }>;
+      native_filters_override?: ApiDashboardNativeFilter[];
       global_filters?: Array<{ column: string; op: string; value?: unknown }>;
       mode?: "widget" | "dashboard";
     } = {},
