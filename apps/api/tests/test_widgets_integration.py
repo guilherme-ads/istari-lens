@@ -26,6 +26,38 @@ class _FakeEngineClient:
         cls.last_specs = []
         cls._seen = {}
 
+    @staticmethod
+    def _matches_filter(row: dict, filter_item: dict) -> bool:
+        field = filter_item.get("field")
+        op = filter_item.get("op")
+        value = filter_item.get("value")
+        current = row.get(field)
+        if op == "eq":
+            return str(current) == str(value)
+        if op == "neq":
+            return str(current) != str(value)
+        if op == "gt":
+            return float(current) > float(value)
+        if op == "gte":
+            return float(current) >= float(value)
+        if op == "lt":
+            return float(current) < float(value)
+        if op == "lte":
+            return float(current) <= float(value)
+        if op == "in" and isinstance(value, list):
+            return str(current) in {str(item) for item in value}
+        return True
+
+    @classmethod
+    def _base_rows(cls) -> list[dict]:
+        return [
+            {"id_recarga": 1, "estacao": "SP", "kwh": 10, "valor": 20},
+            {"id_recarga": 2, "estacao": "SP", "kwh": 20, "valor": 30},
+            {"id_recarga": 3, "estacao": "SP", "kwh": 30, "valor": 40},
+            {"id_recarga": 4, "estacao": "RJ", "kwh": 15, "valor": 25},
+            {"id_recarga": 5, "estacao": "RJ", "kwh": 25, "valor": 35},
+        ]
+
     async def execute_query(
         self,
         *,
@@ -51,6 +83,48 @@ class _FakeEngineClient:
         self.__class__._seen[canonical] = seen + 1
 
         widget_type = query_spec.get("widget_type")
+        dimensions = query_spec.get("dimensions") or []
+        metrics = query_spec.get("metrics") or []
+        if isinstance(dimensions, list) and dimensions and isinstance(metrics, list) and metrics:
+            rows = self.__class__._base_rows()
+            filters = query_spec.get("filters") or []
+            for item in filters:
+                if isinstance(item, dict):
+                    rows = [row for row in rows if self.__class__._matches_filter(row, item)]
+
+            groups: dict[tuple, list[dict]] = {}
+            for row in rows:
+                key = tuple(row.get(dimension) for dimension in dimensions)
+                groups.setdefault(key, []).append(row)
+
+            output_rows: list[dict] = []
+            for key, grouped_rows in groups.items():
+                out = {dimension: key[index] for index, dimension in enumerate(dimensions)}
+                for metric_index, metric in enumerate(metrics):
+                    if not isinstance(metric, dict):
+                        continue
+                    agg = metric.get("agg")
+                    field = metric.get("field")
+                    alias = metric.get("alias") or f"m{metric_index}"
+                    if agg == "count":
+                        out[alias] = sum(1 for row in grouped_rows if field is None or row.get(field) is not None)
+                    elif agg == "sum":
+                        out[alias] = sum(float(row.get(field) or 0) for row in grouped_rows)
+                    else:
+                        out[alias] = 0
+                output_rows.append(out)
+
+            columns = [*dimensions, *[(metric.get("alias") or f"m{idx}") for idx, metric in enumerate(metrics) if isinstance(metric, dict)]]
+            return {
+                "columns": columns,
+                "rows": output_rows,
+                "row_count": len(output_rows),
+                "execution_time_ms": 7,
+                "sql_hash": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+                "cache_hit": seen > 0,
+                "deduped": False,
+            }
+
         if widget_type == "table":
             columns = query_spec.get("columns") or ["c0"]
             rows = [{column: (42 if idx == 0 else f"v{idx}") for idx, column in enumerate(columns)}]
@@ -424,6 +498,97 @@ def test_kpis_are_batched_by_engine_pipeline(client: TestClient) -> None:
     assert len(items) == 2
     assert all(item["batched"] is True for item in items)
     assert _FakeEngineClient.execute_count == 2
+
+
+def test_kpis_with_variable_filters_are_consolidated_into_single_query(client: TestClient) -> None:
+    kpi_total = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Total",
+            "position": 0,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_sp = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "SP",
+            "position": 1,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [{"column": "estacao", "op": "eq", "value": "SP"}],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_energy_sp = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Energia SP",
+            "position": 2,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "sum", "column": "kwh"}],
+                "dimensions": [],
+                "filters": [{"column": "estacao", "op": "eq", "value": "SP"}],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_ratio = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Proporcao SP",
+            "position": 3,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "kpi_type": "derived",
+                "formula": "(SP / Total) * 100",
+                "dependencies": ["SP", "Total"],
+                "kpi_dependencies": [
+                    {"source_type": "widget", "widget_id": kpi_sp, "alias": "SP"},
+                    {"source_type": "widget", "widget_id": kpi_total, "alias": "Total"},
+                ],
+                "metrics": [],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+
+    response = client.post(
+        "/dashboards/1/widgets/data",
+        json={"widget_ids": [kpi_total, kpi_sp, kpi_energy_sp, kpi_ratio], "global_filters": []},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    by_widget_id = {item["widget_id"]: item for item in payload["results"]}
+    assert by_widget_id[kpi_total]["rows"][0]["m0"] == 5
+    assert by_widget_id[kpi_sp]["rows"][0]["m0"] == 3
+    assert by_widget_id[kpi_energy_sp]["rows"][0]["m0"] == 60
+    assert by_widget_id[kpi_ratio]["rows"][0]["m0"] == 60
+    assert _FakeEngineClient.execute_count == 1
 
 
 def test_debug_queries_dashboard_mode_returns_single_execution_units(client: TestClient) -> None:

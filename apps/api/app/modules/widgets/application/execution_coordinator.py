@@ -83,13 +83,31 @@ class DashboardWidgetExecutionCoordinator:
             for widget in widgets
             if not _is_text_widget(configs_by_widget_id[widget.id]) and not _is_dashboard_derived_kpi(configs_by_widget_id[widget.id])
         ]
+        consolidated_results: dict[int, WidgetExecutionResult] = {}
         if requested_non_derived_ids:
-            batched_results = await self._execute_engine_batch(
+            consolidated_results = await self._execute_kpi_consolidated_groups(
                 dashboard_id=dashboard_id,
                 dataset_id=dataset_id,
                 dataset=dataset,
                 access=access,
                 widget_ids=requested_non_derived_ids,
+                configs_by_widget_id=configs_by_widget_id,
+                correlation_id=correlation_id,
+            )
+            for widget_id, execution in consolidated_results.items():
+                results[widget_id] = execution
+                engine_result_cache[_engine_cache_key(widget_id, configs_by_widget_id[widget_id].filters)] = execution
+
+        remaining_non_derived_ids = [
+            widget_id for widget_id in requested_non_derived_ids if widget_id not in consolidated_results
+        ]
+        if remaining_non_derived_ids:
+            batched_results = await self._execute_engine_batch(
+                dashboard_id=dashboard_id,
+                dataset_id=dataset_id,
+                dataset=dataset,
+                access=access,
+                widget_ids=remaining_non_derived_ids,
                 configs_by_widget_id=configs_by_widget_id,
                 correlation_id=correlation_id,
             )
@@ -163,6 +181,156 @@ class DashboardWidgetExecutionCoordinator:
                 )
             )
         return units
+
+    async def _execute_kpi_consolidated_groups(
+        self,
+        *,
+        dashboard_id: int,
+        dataset_id: int,
+        dataset: Dataset | None,
+        access: Any,
+        widget_ids: list[int],
+        configs_by_widget_id: dict[int, WidgetConfig],
+        correlation_id: str | None,
+    ) -> dict[int, WidgetExecutionResult]:
+        candidates_by_view: dict[str, list[int]] = {}
+        for widget_id in widget_ids:
+            config = configs_by_widget_id.get(widget_id)
+            if config is None or not _is_kpi_consolidation_candidate(config):
+                continue
+            candidates_by_view.setdefault(config.view_name, []).append(widget_id)
+
+        results: dict[int, WidgetExecutionResult] = {}
+        for _, view_widget_ids in candidates_by_view.items():
+            if len(view_widget_ids) < 2:
+                continue
+
+            filter_maps: dict[int, dict[str, FilterConfig]] = {
+                widget_id: { _filter_key(item): item for item in configs_by_widget_id[widget_id].filters }
+                for widget_id in view_widget_ids
+            }
+            common_keys = set(filter_maps[view_widget_ids[0]].keys())
+            for widget_id in view_widget_ids[1:]:
+                common_keys &= set(filter_maps[widget_id].keys())
+
+            common_filters = [
+                item
+                for item in configs_by_widget_id[view_widget_ids[0]].filters
+                if _filter_key(item) in common_keys
+            ]
+
+            variable_filters_by_widget: dict[int, list[FilterConfig]] = {}
+            variable_filter_columns: set[str] = set()
+            supported_group = True
+            for widget_id in view_widget_ids:
+                variable_filters = [
+                    item
+                    for item in configs_by_widget_id[widget_id].filters
+                    if _filter_key(item) not in common_keys
+                ]
+                if not all(_is_supported_consolidation_filter(item) for item in variable_filters):
+                    supported_group = False
+                    break
+                variable_filters_by_widget[widget_id] = variable_filters
+                variable_filter_columns.update(item.column for item in variable_filters)
+            if not supported_group:
+                continue
+            # Skip groups that have no per-widget filter variation; engine batch already handles them.
+            if not variable_filter_columns:
+                continue
+            # Guardrail to avoid exploding grouped cardinality in a single query.
+            if len(variable_filter_columns) > 2:
+                continue
+
+            metric_keys: list[tuple[str, str | None]] = []
+            metric_alias_by_key: dict[tuple[str, str | None], str] = {}
+            for widget_id in view_widget_ids:
+                metric = configs_by_widget_id[widget_id].metrics[0]
+                key = (metric.op, metric.column)
+                if key in metric_alias_by_key:
+                    continue
+                alias = f"m{len(metric_keys)}"
+                metric_keys.append(key)
+                metric_alias_by_key[key] = alias
+
+            consolidated_spec = {
+                "resource_id": configs_by_widget_id[view_widget_ids[0]].view_name,
+                "widget_type": "kpi",
+                "metrics": [
+                    {
+                        "field": metric_column,
+                        "agg": metric_op,
+                        "alias": metric_alias_by_key[(metric_op, metric_column)],
+                    }
+                    for metric_op, metric_column in metric_keys
+                ],
+                "dimensions": sorted(variable_filter_columns),
+                "filters": [{"field": item.column, "op": item.op, "value": item.value} for item in common_filters],
+                "order_by": [],
+                "top_n": None,
+                "offset": 0,
+                "time": None,
+                "composite_metric": None,
+                "derived_metric": None,
+                "dre_rows": [],
+            }
+
+            try:
+                engine_payload = await get_engine_client().execute_query(
+                    datasource_id=access.datasource_id,
+                    workspace_id=access.workspace_id,
+                    dataset_id=dataset_id,
+                    query_spec=_compose_dataset_query_spec(dataset=dataset, query_spec=consolidated_spec),
+                    datasource_url=access.datasource_url,
+                    actor_user_id=access.actor_user_id,
+                    correlation_id=correlation_id,
+                )
+            except HTTPException:
+                continue
+            except Exception:
+                continue
+
+            rows = engine_payload.get("rows", [])
+            if not isinstance(rows, list):
+                rows = []
+            grouped_dimensions = consolidated_spec["dimensions"]
+            for widget_id in view_widget_ids:
+                metric = configs_by_widget_id[widget_id].metrics[0]
+                metric_alias = metric_alias_by_key.get((metric.op, metric.column), "m0")
+                variable_filters = variable_filters_by_widget.get(widget_id, [])
+                value = _aggregate_consolidated_metric(
+                    rows=rows,
+                    grouped_dimensions=grouped_dimensions,
+                    filters=variable_filters,
+                    metric_alias=metric_alias,
+                )
+
+                payload = DashboardWidgetDataResponse(
+                    columns=["m0"],
+                    rows=[{"m0": value}],
+                    row_count=1,
+                )
+                metadata = WidgetExecutionMetadata(
+                    cache_hit=bool(engine_payload.get("cache_hit", False)),
+                    stale=False,
+                    deduped=False,
+                    batched=True,
+                    degraded=False,
+                    execution_time_ms=int(engine_payload.get("execution_time_ms", 0)),
+                    sql_hash=engine_payload.get("sql_hash"),
+                    source="engine_kpi_consolidated",
+                )
+                execution = WidgetExecutionResult(widget_id=widget_id, payload=payload, metadata=metadata)
+                results[widget_id] = execution
+                _log_widget_execution(
+                    dashboard_id=dashboard_id,
+                    widget_id=widget_id,
+                    dataset_id=dataset_id,
+                    metadata=metadata,
+                    correlation_id=correlation_id,
+                )
+
+        return results
 
     async def _execute_engine_batch(
         self,
@@ -558,6 +726,138 @@ def _is_text_widget(config: WidgetConfig) -> bool:
 
 def _is_dashboard_derived_kpi(config: WidgetConfig) -> bool:
     return config.widget_type == "kpi" and config.kpi_type == "derived" and len(config.kpi_dependencies) > 0
+
+
+def _is_kpi_consolidation_candidate(config: WidgetConfig) -> bool:
+    if config.widget_type != "kpi":
+        return False
+    if config.kpi_type != "atomic":
+        return False
+    if config.composite_metric is not None:
+        return False
+    if config.time is not None:
+        return False
+    if config.dimensions:
+        return False
+    if len(config.metrics) != 1:
+        return False
+    metric = config.metrics[0]
+    return metric.op in {"count", "sum"}
+
+
+def _filter_key(filter_config: FilterConfig) -> str:
+    return json.dumps(filter_config.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _is_supported_consolidation_filter(filter_config: FilterConfig) -> bool:
+    return filter_config.op in {
+        "eq",
+        "neq",
+        "gt",
+        "lt",
+        "gte",
+        "lte",
+        "in",
+        "not_in",
+        "contains",
+        "is_null",
+        "not_null",
+        "between",
+    } and bool(filter_config.column)
+
+
+def _coerce_numeric(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _values_equal(left: Any, right: Any) -> bool:
+    left_num = _coerce_numeric(left)
+    right_num = _coerce_numeric(right)
+    if left_num is not None and right_num is not None:
+        return left_num == right_num
+    return str(left) == str(right)
+
+
+def _compare_order(left: Any, right: Any) -> int:
+    left_num = _coerce_numeric(left)
+    right_num = _coerce_numeric(right)
+    if left_num is not None and right_num is not None:
+        if left_num < right_num:
+            return -1
+        if left_num > right_num:
+            return 1
+        return 0
+    left_str = "" if left is None else str(left)
+    right_str = "" if right is None else str(right)
+    if left_str < right_str:
+        return -1
+    if left_str > right_str:
+        return 1
+    return 0
+
+
+def _row_matches_filter(row: dict[str, Any], filter_config: FilterConfig) -> bool:
+    value = row.get(filter_config.column)
+    op = filter_config.op
+    target = filter_config.value
+    if op == "is_null":
+        return value is None
+    if op == "not_null":
+        return value is not None
+    if op == "between":
+        if not isinstance(target, list) or len(target) != 2:
+            return False
+        return _compare_order(value, target[0]) >= 0 and _compare_order(value, target[1]) <= 0
+    if op in {"in", "not_in"}:
+        if isinstance(target, list):
+            match = any(_values_equal(value, item) for item in target)
+        else:
+            match = _values_equal(value, target)
+        return match if op == "in" else not match
+    if op == "contains":
+        if value is None:
+            return False
+        return str(target or "") in str(value)
+    if op == "eq":
+        return _values_equal(value, target)
+    if op == "neq":
+        return not _values_equal(value, target)
+    if op == "gt":
+        return _compare_order(value, target) > 0
+    if op == "lt":
+        return _compare_order(value, target) < 0
+    if op == "gte":
+        return _compare_order(value, target) >= 0
+    if op == "lte":
+        return _compare_order(value, target) <= 0
+    return False
+
+
+def _aggregate_consolidated_metric(
+    *,
+    rows: list[Any],
+    grouped_dimensions: list[str],
+    filters: list[FilterConfig],
+    metric_alias: str,
+) -> float:
+    total = 0.0
+    for raw_row in rows:
+        if not isinstance(raw_row, dict):
+            continue
+        projected = {dimension: raw_row.get(dimension) for dimension in grouped_dimensions}
+        if not all(_row_matches_filter(projected, filter_config) for filter_config in filters):
+            continue
+        raw_metric = raw_row.get(metric_alias)
+        metric_value = _coerce_numeric(raw_metric)
+        if metric_value is None:
+            continue
+        total += metric_value
+    return total
 
 
 def _engine_payload_to_execution_result(

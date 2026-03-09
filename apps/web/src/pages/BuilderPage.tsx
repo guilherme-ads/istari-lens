@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef, type ChangeEvent } f
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Plus, Save, Share2, ChevronLeft, Check, LayoutDashboard, Eye, Pencil, Monitor, Trash2, CalendarIcon, Code2, RefreshCw, Download, Upload, History } from "lucide-react";
+import { Plus, Save, Share2, ChevronLeft, Check, LayoutDashboard, Eye, EyeOff, Pencil, Monitor, Trash2, CalendarIcon, Code2, RefreshCw, Download, Upload, History } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,13 @@ type DraftNativeFilter = {
   dateValue?: Date;
   dateRange?: DateRange;
   relativePreset?: RelativeDatePreset;
+  visible: boolean;
 };
 type PreparedNativeFilter = {
   column: string;
   op: DashboardFilterOp;
   value?: string | string[] | { relative: RelativeDatePreset };
+  visible?: boolean;
 };
 type CategoricalValueHint = {
   values: string[];
@@ -139,6 +141,65 @@ const mergeColumnType = (currentType: string, nextType: string): "numeric" | "te
   return next;
 };
 
+const prepareNativeFilters = (
+  nativeFilters: DraftNativeFilter[],
+  temporalColumnNames: Set<string>,
+): PreparedNativeFilter[] => {
+  const parsedFilters: PreparedNativeFilter[] = [];
+  for (const filter of nativeFilters) {
+    if (!filter.column) continue;
+    const isTemporal = temporalColumnNames.has(filter.column);
+    if (filter.op === "is_null" || filter.op === "not_null") {
+      parsedFilters.push({ column: filter.column, op: filter.op, visible: filter.visible });
+      continue;
+    }
+    if (isTemporal && filter.op === "relative") {
+      parsedFilters.push({
+        column: filter.column,
+        op: "between",
+        value: { relative: (filter.relativePreset || "last_7_days") as RelativeDatePreset },
+        visible: filter.visible,
+      });
+      continue;
+    }
+    if (isTemporal && filter.op === "between") {
+      if (!filter.dateRange?.from || !filter.dateRange?.to) continue;
+      parsedFilters.push({
+        column: filter.column,
+        op: "between",
+        value: [dateToApi(filter.dateRange.from), dateToApi(filter.dateRange.to)],
+        visible: filter.visible,
+      });
+      continue;
+    }
+    if (isTemporal) {
+      if (!filter.dateValue) continue;
+      parsedFilters.push({ column: filter.column, op: filter.op, value: dateToApi(filter.dateValue), visible: filter.visible });
+      continue;
+    }
+    if (filter.op === "in" || filter.op === "not_in") {
+      const values = Array.isArray(filter.value)
+        ? filter.value.map((value) => String(value).trim()).filter(Boolean)
+        : String(filter.value || "").split(",").map((value) => value.trim()).filter(Boolean);
+      if (values.length === 0) continue;
+      parsedFilters.push({ column: filter.column, op: filter.op, value: values, visible: filter.visible });
+      continue;
+    }
+    if (filter.op === "between") {
+      const rangeValues = Array.isArray(filter.value)
+        ? filter.value.map((value) => String(value).trim())
+        : String(filter.value || "").split(",").map((value) => value.trim());
+      if (rangeValues.length < 2 || !rangeValues[0] || !rangeValues[1]) continue;
+      parsedFilters.push({ column: filter.column, op: "between", value: [rangeValues[0], rangeValues[1]], visible: filter.visible });
+      continue;
+    }
+    const scalar = Array.isArray(filter.value) ? String(filter.value[0] || "") : String(filter.value || "");
+    if (!scalar.trim()) continue;
+    parsedFilters.push({ column: filter.column, op: filter.op, value: scalar, visible: filter.visible });
+  }
+  return parsedFilters;
+};
+
 const BuilderPage = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -163,7 +224,7 @@ const BuilderPage = () => {
   const [dashboardTitle, setDashboardTitle] = useState("Novo Dashboard");
   const [sections, setSections] = useState<DashboardSection[]>([]);
   const [nativeFilters, setNativeFilters] = useState<DraftNativeFilter[]>([
-    { id: `nf-${Date.now()}`, column: "", op: "eq", value: "" },
+    { id: `nf-${Date.now()}`, column: "", op: "eq", value: "", visible: true },
   ]);
   const [refreshingWidgetIds, setRefreshingWidgetIds] = useState<Set<string>>(() => new Set());
   const [categoricalValueHints, setCategoricalValueHints] = useState<Record<string, CategoricalValueHint>>({});
@@ -210,9 +271,10 @@ const BuilderPage = () => {
             dateValue: !isBetween && !relativePreset ? parseDate(filter.value) : undefined,
             dateRange: isBetween ? { from, to } : undefined,
             relativePreset: relativePreset || "last_7_days",
+            visible: filter.visible ?? false,
           };
         })
-        : [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }],
+        : [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "", visible: true }],
     );
     setSetupDone(true);
   }, [existingDashboard]);
@@ -270,6 +332,25 @@ const BuilderPage = () => {
     () => new Set(datasetColumns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal").map((column) => column.name)),
     [datasetColumns],
   );
+  const buildBlankNativeFilter = useCallback((visible = true): DraftNativeFilter => ({
+    id: `nf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    column: "",
+    op: "eq",
+    value: "",
+    visible,
+  }), []);
+  const buildInitialGlobalNativeFilter = useCallback((): DraftNativeFilter => {
+    const temporalColumn = datasetColumns.find((column) => normalizeSemanticColumnType(column.type) === "temporal");
+    if (!temporalColumn) return buildBlankNativeFilter(true);
+    return {
+      id: `nf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      column: temporalColumn.name,
+      op: "relative",
+      value: "",
+      relativePreset: "last_30_days",
+      visible: true,
+    };
+  }, [buildBlankNativeFilter, datasetColumns]);
   const columnTypeByName = useMemo(
     () => Object.fromEntries(datasetColumns.map((column) => [column.name, normalizeSemanticColumnType(column.type)])),
     [datasetColumns],
@@ -364,53 +445,7 @@ const BuilderPage = () => {
   }, [editingWidget?.config.filters, isCategoricalColumn, loadCategoricalValues, nativeFilters]);
 
   const preparedNativeFilters = useMemo<PreparedNativeFilter[]>(() => {
-    const parsedFilters: PreparedNativeFilter[] = [];
-    for (const filter of nativeFilters) {
-      if (!filter.column) continue;
-      const isTemporal = temporalColumnNames.has(filter.column);
-      if (filter.op === "is_null" || filter.op === "not_null") {
-        parsedFilters.push({ column: filter.column, op: filter.op });
-        continue;
-      }
-      if (isTemporal && filter.op === "relative") {
-        parsedFilters.push({
-          column: filter.column,
-          op: "between",
-          value: { relative: (filter.relativePreset || "last_7_days") as RelativeDatePreset },
-        });
-        continue;
-      }
-      if (isTemporal && filter.op === "between") {
-        if (!filter.dateRange?.from || !filter.dateRange?.to) continue;
-        parsedFilters.push({ column: filter.column, op: "between", value: [dateToApi(filter.dateRange.from), dateToApi(filter.dateRange.to)] });
-        continue;
-      }
-      if (isTemporal) {
-        if (!filter.dateValue) continue;
-        parsedFilters.push({ column: filter.column, op: filter.op, value: dateToApi(filter.dateValue) });
-        continue;
-      }
-      if (filter.op === "in" || filter.op === "not_in") {
-        const values = Array.isArray(filter.value)
-          ? filter.value.map((value) => String(value).trim()).filter(Boolean)
-          : String(filter.value || "").split(",").map((value) => value.trim()).filter(Boolean);
-        if (values.length === 0) continue;
-        parsedFilters.push({ column: filter.column, op: filter.op, value: values });
-        continue;
-      }
-      if (filter.op === "between") {
-        const rangeValues = Array.isArray(filter.value)
-          ? filter.value.map((value) => String(value).trim())
-          : String(filter.value || "").split(",").map((value) => value.trim());
-        if (rangeValues.length < 2 || !rangeValues[0] || !rangeValues[1]) continue;
-        parsedFilters.push({ column: filter.column, op: "between", value: [rangeValues[0], rangeValues[1]] });
-        continue;
-      }
-      const scalar = Array.isArray(filter.value) ? String(filter.value[0] || "") : String(filter.value || "");
-      if (!scalar.trim()) continue;
-      parsedFilters.push({ column: filter.column, op: filter.op, value: scalar });
-    }
-    return parsedFilters;
+    return prepareNativeFilters(nativeFilters, temporalColumnNames);
   }, [nativeFilters, temporalColumnNames]);
   const serializeSections = useCallback((value: DashboardSection[]) => JSON.stringify(sectionsToLayoutConfig(value)), []);
   const serializeNativeFilters = useCallback((value: PreparedNativeFilter[]) => JSON.stringify(value), []);
@@ -432,7 +467,12 @@ const BuilderPage = () => {
       title: existingDashboard.title,
       sections: serializeSections(existingDashboard.sections),
       nativeFilters: serializeNativeFilters(
-        existingDashboard.nativeFilters.map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
+        existingDashboard.nativeFilters.map((filter) => ({
+          column: filter.column,
+          op: normalizeDashboardFilterOp(filter.op),
+          value: filter.value as PreparedNativeFilter["value"],
+          visible: filter.visible,
+        })),
       ),
     };
   }, [dashboardTitle, existingDashboard, preparedNativeFilters, sections, serializeNativeFilters, serializeSections, setupDone]);
@@ -774,20 +814,49 @@ const BuilderPage = () => {
     if (!confirmDiscardIfDirty()) return;
     navigate(to);
   }, [confirmDiscardIfDirty, navigate]);
-  const handleSetupStart = useCallback(async (title: string, setupSections: DashboardSection[]) => {
+  const handleSetupStart = useCallback(async (
+    title: string,
+    setupSections: DashboardSection[],
+    setupNativeFilters?: PreparedNativeFilter[],
+  ) => {
     const normalizedTitle = title.trim() || "Novo Dashboard";
     const normalizedSections = setupSections.length > 0 ? setupSections : [{ ...createSection(), title: "Visao Geral" }];
-    const emptyNativeFilters: DraftNativeFilter[] = [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }];
+    const seededNativeFilters: DraftNativeFilter[] = (setupNativeFilters && setupNativeFilters.length > 0)
+      ? setupNativeFilters.map((filter, index) => {
+          const relativePreset = typeof filter.value === "object" && filter.value !== null && "relative" in filter.value
+            ? (String((filter.value as Record<string, unknown>).relative) as RelativeDatePreset)
+            : undefined;
+          const normalizedOp = relativePreset ? "relative" : normalizeDashboardFilterOp(filter.op);
+          const isBetween = normalizedOp === "between" && Array.isArray(filter.value) && filter.value.length === 2;
+          const from = isBetween ? parseDate(filter.value[0]) : undefined;
+          const to = isBetween ? parseDate(filter.value[1]) : undefined;
+          return {
+            id: `nf-setup-${Date.now()}-${index}`,
+            column: filter.column,
+            op: normalizedOp,
+            value: Array.isArray(filter.value)
+              ? filter.value.map((item) => String(item))
+              : typeof filter.value === "string"
+                ? filter.value
+                : "",
+            dateValue: !isBetween && !relativePreset ? parseDate(filter.value) : undefined,
+            dateRange: isBetween ? { from, to } : undefined,
+            relativePreset: relativePreset || "last_7_days",
+            visible: filter.visible ?? true,
+          };
+        })
+      : [buildInitialGlobalNativeFilter()];
+    const seededPreparedNativeFilters = prepareNativeFilters(seededNativeFilters, temporalColumnNames);
     setDashboardTitle(normalizedTitle);
     setSections(normalizedSections);
-    setNativeFilters(emptyNativeFilters);
+    setNativeFilters(seededNativeFilters);
     setSetupDone(true);
 
     if (!datasetId || normalizedSections.length === 0 || normalizedSections.every((section) => section.widgets.length === 0)) {
       initialSnapshotRef.current = {
         title: normalizedTitle,
         sections: serializeSections(normalizedSections),
-        nativeFilters: serializeNativeFilters([]),
+        nativeFilters: serializeNativeFilters(seededPreparedNativeFilters),
       };
       return;
     }
@@ -799,14 +868,14 @@ const BuilderPage = () => {
         description: null,
         is_active: true,
         layout_config: [],
-        native_filters: [],
+        native_filters: seededPreparedNativeFilters,
       });
       const saved = await api.saveDashboard(Number(created.id), {
         name: normalizedTitle,
         description: null,
         is_active: true,
         layout_config: sectionsToLayoutConfig(normalizedSections),
-        native_filters: [],
+        native_filters: seededPreparedNativeFilters,
         widgets: buildWidgetsPayload(normalizedSections),
       });
       const mapped = mapDashboard(saved);
@@ -816,7 +885,7 @@ const BuilderPage = () => {
       initialSnapshotRef.current = {
         title: mapped.title,
         sections: serializeSections(mapped.sections),
-        nativeFilters: serializeNativeFilters([]),
+        nativeFilters: serializeNativeFilters(seededPreparedNativeFilters),
       };
       await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
       navigate(`/datasets/${datasetId}/builder/${saved.id}`, { replace: true });
@@ -825,7 +894,17 @@ const BuilderPage = () => {
       const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao criar dashboard inicial";
       toast({ title: "Erro no setup", description: message, variant: "destructive" });
     }
-  }, [buildWidgetsPayload, datasetId, navigate, queryClient, serializeNativeFilters, serializeSections, toast]);
+  }, [
+    buildInitialGlobalNativeFilter,
+    buildWidgetsPayload,
+    datasetId,
+    navigate,
+    queryClient,
+    serializeNativeFilters,
+    serializeSections,
+    temporalColumnNames,
+    toast,
+  ]);
 
   const handleExportDashboardJson = useCallback(async () => {
     const targetId = activeDashboardId || dashboardId;
@@ -1249,7 +1328,7 @@ const BuilderPage = () => {
               />
             </div>
             <div className="lg:w-2/3">
-              <Label className="text-heading">Filtro nativo (oculto ao salvar)</Label>
+              <Label className="text-heading">Filtros nativos e globais</Label>
               <div className="mt-2 space-y-2">
                 {nativeFilters.map((filter, filterIndex) => {
                   const isTemporal = temporalColumnNames.has(filter.column);
@@ -1272,8 +1351,8 @@ const BuilderPage = () => {
                     ? [String(filter.value[0] || ""), String(filter.value[1] || "")]
                     : ["", ""];
                   const rowLayoutClass = isTemporal
-                    ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto] gap-2 items-center"
-                    : "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(220px,1fr)_auto] gap-2 items-center";
+                    ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto_auto] gap-2 items-center"
+                    : "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(220px,1fr)_auto_auto] gap-2 items-center";
                   return (
                     <div key={filter.id} className={rowLayoutClass}>
                       <Select
@@ -1487,6 +1566,18 @@ const BuilderPage = () => {
                         </Popover>
                       )}
 
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8"
+                        onClick={() =>
+                          setNativeFilters((prev) => prev.map((item) => (item.id === filter.id ? { ...item, visible: !item.visible } : item)))
+                        }
+                        title={filter.visible ? "Ocultar no filtro global" : "Exibir no filtro global"}
+                      >
+                        {filter.visible ? <Eye className="h-3.5 w-3.5 text-foreground" /> : <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />}
+                      </Button>
+
                       {filterIndex > 0 ? (
                         <Button
                           size="icon"
@@ -1509,7 +1600,7 @@ const BuilderPage = () => {
                       size="sm"
                       variant="outline"
                       className="h-8 text-xs"
-                      onClick={() => setNativeFilters((prev) => [...prev, { id: `nf-${Date.now()}-${Math.random()}`, column: "", op: "eq", value: "" }])}
+                      onClick={() => setNativeFilters((prev) => [...prev, buildBlankNativeFilter(true)])}
                     >
                       <Plus className="h-3.5 w-3.5 mr-1.5" /> Adicionar filtro nativo
                     </Button>
@@ -1518,12 +1609,12 @@ const BuilderPage = () => {
                       size="sm"
                       variant="ghost"
                       className="h-8 text-xs"
-                      onClick={() => setNativeFilters([{ id: `nf-${Date.now()}-${Math.random()}`, column: "", op: "eq", value: "" }])}
+                      onClick={() => setNativeFilters([buildInitialGlobalNativeFilter()])}
                     >
                       Limpar filtros
                     </Button>
                   </div>
-                  <span className="text-[11px] text-muted-foreground">Aplicados antes de qualquer filtro visível</span>
+                  <span className="text-[11px] text-muted-foreground">Use o ícone de olho para definir se o filtro aparece como global.</span>
                 </div>
               </div>
             </div>

@@ -35,6 +35,7 @@ from app.modules.core.legacy.schemas import (
     DashboardWidgetBatchDataResponse,
     DashboardWidgetBatchDataItemResponse,
     DashboardCatalogItemResponse,
+    DashboardNativeFilterConfig,
     DashboardEmailShareResponse,
     DashboardShareUpsertRequest,
     DashboardVisibilityUpdateRequest,
@@ -629,11 +630,15 @@ def _view_column_types(dashboard: Dashboard) -> dict[str, str]:
     return _dataset_column_types(dataset)
 
 
-def _validate_dashboard_native_filters(filters: list[FilterConfig], dashboard: Dashboard) -> None:
-    _validate_native_filters_against_column_types(filters, _view_column_types(dashboard))
+def _validate_dashboard_native_filters(filters: list[DashboardNativeFilterConfig], dashboard: Dashboard) -> None:
+    runtime_filters = [_native_filter_to_runtime(item) for item in filters]
+    _validate_native_filters_against_column_types(runtime_filters, _view_column_types(dashboard))
 
 
-def _validate_native_filters_against_column_types(filters: list[FilterConfig], column_types: dict[str, str]) -> None:
+def _validate_native_filters_against_column_types(
+    filters: list[DashboardNativeFilterConfig | FilterConfig],
+    column_types: dict[str, str],
+) -> None:
     if not filters:
         return
     invalid: list[str] = []
@@ -667,17 +672,39 @@ def _parse_widget_config(payload: DashboardWidgetCreateRequest | DashboardWidget
         raise HTTPException(status_code=400, detail=f"Invalid widget config schema: {exc}")
 
 
-def _parse_native_filters_from_payload(raw_filters: list) -> list[FilterConfig]:
+def _parse_native_filters_from_payload(raw_filters: list) -> list[DashboardNativeFilterConfig]:
     try:
-        return [FilterConfig.model_validate(item) for item in raw_filters]
+        return [DashboardNativeFilterConfig.model_validate(item) for item in raw_filters]
     except Exception:
         return []
+
+
+def _native_filter_to_runtime(filter_config: DashboardNativeFilterConfig | FilterConfig) -> FilterConfig:
+    return FilterConfig(
+        column=filter_config.column,
+        op=filter_config.op,
+        value=filter_config.value,
+    )
+
+
+def _native_filters_to_runtime(
+    filters: list[DashboardNativeFilterConfig | FilterConfig],
+    *,
+    include_visible: bool = False,
+) -> list[FilterConfig]:
+    runtime_filters: list[FilterConfig] = []
+    for item in filters:
+        visible = bool(getattr(item, "visible", False))
+        if not include_visible and visible:
+            continue
+        runtime_filters.append(_native_filter_to_runtime(item))
+    return runtime_filters
 
 
 def _resolve_widget_config(
     widget: DashboardWidget,
     global_filters: list[FilterConfig] | None = None,
-    native_filters_override: list[FilterConfig] | None = None,
+    native_filters_override: list[DashboardNativeFilterConfig] | None = None,
 ) -> WidgetConfig:
     payload = widget.query_config
     if isinstance(payload, dict) and "widget_type" not in payload and "type" in payload:
@@ -687,12 +714,13 @@ def _resolve_widget_config(
             payload["view_name"] = _dataset_widget_view_name(dashboard)
 
     config = WidgetConfig.model_validate(payload)
-    dashboard_native_filters: list[FilterConfig] = native_filters_override or []
+    dashboard_native_filters: list[DashboardNativeFilterConfig] = native_filters_override or []
     if native_filters_override is None and widget.dashboard and isinstance(widget.dashboard.native_filters, list):
         dashboard_native_filters = _parse_native_filters_from_payload(widget.dashboard.native_filters)
+    runtime_native_filters = _native_filters_to_runtime(dashboard_native_filters, include_visible=False)
 
     if config.widget_type != "text":
-        merged_filters = [*dashboard_native_filters, *config.filters, *(global_filters or [])]
+        merged_filters = [*runtime_native_filters, *config.filters, *(global_filters or [])]
         config = config.model_copy(
             update={
                 "filters": merged_filters,

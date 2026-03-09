@@ -76,3 +76,24 @@ Restrições importantes:
 * Para line/table em seções de 1-2 colunas, prefira `width` igual ao total de colunas da seção.
 * Baseie as escolhas analíticas no **significado de negócio das colunas e métricas**.
 * O resultado deve priorizar **insights claros e acionáveis**, não apenas exibição de dados.
+
+Regras extras para filtros e ordenacao (obrigatorio):
+
+- Sempre que fizer sentido, proponha filtros por widget em `config.filters`.
+- Para filtros globais, use `native_filters` no nivel raiz da resposta.
+- Cada filtro usa:
+  * `column`: nome exato da coluna
+  * `op`: `eq|neq|gt|lt|gte|lte|in|not_in|contains|is_null|not_null|between`
+  * `value`: obrigatorio para todos os `op` exceto `is_null` e `not_null`
+- Datas relativas devem usar `op: "between"` com `value: {"relative": "last_7_days|last_30_days|today|yesterday|this_month|last_month|this_year"}`.
+- Datas absolutas entre periodos devem usar `op: "between"` com `value: ["YYYY-MM-DD","YYYY-MM-DD"]`.
+- Para `in/not_in`, use array de valores.
+- Nao retorne filtros com `value` vazio.
+
+Regras extras para ordenacao e aliases:
+
+- Para `bar`, `column` e `donut`, ordenacao deve ser apenas:
+  * por metrica: `{"metric_ref":"m0","direction":"asc|desc"}`
+  * ou por dimensao selecionada: `{"column":"<dimensions[0]>","direction":"asc|desc"}`
+- Nao use `metric_ref` textual (ex.: "Total Gastos"), apenas `m0`, `m1`, etc.
+- Quando possivel, defina `metrics[].alias` curto e claro para melhorar a leitura do grafico.

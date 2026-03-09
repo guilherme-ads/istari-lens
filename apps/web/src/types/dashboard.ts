@@ -33,6 +33,10 @@ export interface WidgetFilter {
   value?: unknown;
 }
 
+export interface DashboardNativeFilter extends WidgetFilter {
+  visible?: boolean;
+}
+
 export interface WidgetOrderBy {
   column?: string;
   metric_ref?: string;
@@ -135,7 +139,7 @@ export interface Dashboard {
   accessSource: "owner" | "direct" | "workspace" | "public";
   visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
   publicShareKey?: string;
-  nativeFilters: WidgetFilter[];
+  nativeFilters: DashboardNativeFilter[];
   sections: DashboardSection[];
   createdAt: string;
   updatedAt: string;

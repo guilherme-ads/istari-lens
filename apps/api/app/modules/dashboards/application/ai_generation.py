@@ -25,9 +25,18 @@ AI_DASHBOARD_MODEL_PATH = Path(__file__).resolve().parent / "templates" / "dashb
 AI_DASHBOARD_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "dashboard_generation_system_prompt.txt"
 LEGACY_JSON_OUTPUT_INSTRUCTION = (
     "Responda exclusivamente em JSON valido, sem markdown, no formato: "
-    '{"explanation":"...","planning_steps":["..."],"sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
+    '{"explanation":"...","planning_steps":["..."],"native_filters":[{"column":"...","op":"eq|neq|gt|lt|gte|lte|in|not_in|contains|is_null|not_null|between","value":"...","visible":true}],"sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
 )
 logger = logging.getLogger("uvicorn.error")
+RELATIVE_DATE_PRESETS = {
+    "today",
+    "yesterday",
+    "last_7_days",
+    "last_30_days",
+    "this_year",
+    "this_month",
+    "last_month",
+}
 
 
 def _normalize_raw_type_to_semantic(raw_type: str) -> str:
@@ -216,6 +225,36 @@ def _dashboard_plan_response_schema() -> dict[str, Any]:
                     "type": "array",
                     "items": {"type": "string"},
                 },
+                "native_filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "column": {"type": "string"},
+                            "op": {
+                                "type": "string",
+                                "enum": [
+                                    "eq",
+                                    "neq",
+                                    "gt",
+                                    "lt",
+                                    "gte",
+                                    "lte",
+                                    "in",
+                                    "not_in",
+                                    "contains",
+                                    "is_null",
+                                    "not_null",
+                                    "between",
+                                ],
+                            },
+                            "value": {},
+                            "visible": {"type": "boolean"},
+                        },
+                        "required": ["column", "op"],
+                    },
+                },
                 "sections": {
                     "type": "array",
                     "items": {
@@ -337,6 +376,13 @@ def _is_blank_filter_value(value: Any) -> bool:
     return False
 
 
+def _is_relative_between_value(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    relative = value.get("relative")
+    return isinstance(relative, str) and relative.strip() in RELATIVE_DATE_PRESETS
+
+
 def _collect_filter_quality_issues(filters: list[FilterConfig]) -> list[str]:
     issues: list[str] = []
     for index, item in enumerate(filters):
@@ -347,6 +393,8 @@ def _collect_filter_quality_issues(filters: list[FilterConfig]) -> list[str]:
                 issues.append(f"filters[{index}] op='{op}' deveria vir sem value")
             continue
         if op == "between":
+            if _is_relative_between_value(value):
+                continue
             if not isinstance(value, list) or len(value) != 2 or any(_is_blank_filter_value(entry) for entry in value):
                 issues.append(f"filters[{index}] op='between' requer array com 2 valores preenchidos")
             continue
@@ -375,6 +423,9 @@ def _sanitize_filter_payload(raw_filters: Any) -> list[dict[str, Any]]:
             continue
         value = item.get("value")
         if op == "between":
+            if _is_relative_between_value(value):
+                sanitized.append({"column": column.strip(), "op": op, "value": {"relative": str(value.get("relative")).strip()}})
+                continue
             if isinstance(value, list) and len(value) == 2 and all(not _is_blank_filter_value(entry) for entry in value):
                 sanitized.append({"column": column.strip(), "op": op, "value": value})
             continue
@@ -387,6 +438,50 @@ def _sanitize_filter_payload(raw_filters: Any) -> list[dict[str, Any]]:
         if _is_blank_filter_value(value):
             continue
         sanitized.append({"column": column.strip(), "op": op or "eq", "value": value})
+    return sanitized
+
+
+def _sanitize_native_filter_payload(raw_filters: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_filters, list):
+        return []
+    sanitized: list[dict[str, Any]] = []
+    for item in raw_filters:
+        if not isinstance(item, dict):
+            continue
+        column = item.get("column")
+        if not isinstance(column, str) or not column.strip():
+            continue
+        op = str(item.get("op") or "").strip().lower()
+        if op not in {"eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "is_null", "not_null", "between"}:
+            op = "eq"
+        visible = bool(item.get("visible", True))
+        value = item.get("value")
+        if op in {"is_null", "not_null"}:
+            sanitized.append({"column": column.strip(), "op": op, "visible": visible})
+            continue
+        if op == "between":
+            if _is_relative_between_value(value):
+                sanitized.append(
+                    {
+                        "column": column.strip(),
+                        "op": op,
+                        "value": {"relative": str(value.get("relative")).strip()},
+                        "visible": visible,
+                    }
+                )
+                continue
+            if isinstance(value, list) and len(value) == 2 and all(not _is_blank_filter_value(entry) for entry in value):
+                sanitized.append({"column": column.strip(), "op": op, "value": value, "visible": visible})
+            continue
+        if op in {"in", "not_in"}:
+            if isinstance(value, list):
+                values = [entry for entry in value if not _is_blank_filter_value(entry)]
+                if values:
+                    sanitized.append({"column": column.strip(), "op": op, "value": values, "visible": visible})
+            continue
+        if _is_blank_filter_value(value):
+            continue
+        sanitized.append({"column": column.strip(), "op": op, "value": value, "visible": visible})
     return sanitized
 
 
@@ -639,6 +734,43 @@ async def generate_dashboard_with_ai_service(
     )
     explanation = str(plan.get("explanation") or "Estrutura gerada com base no prompt e nas colunas disponiveis.")
     planning_steps = _normalize_planning_steps(plan.get("planning_steps"), explanation)
+    raw_native_filters = plan.get("native_filters")
+    response_native_filters: list[dict[str, Any]] = []
+    for filter_index, raw_native_filter in enumerate(_sanitize_native_filter_payload(raw_native_filters)):
+        try:
+            parsed_native_filter = FilterConfig.model_validate(raw_native_filter)
+            validate_widget_config_against_columns(
+                WidgetConfig.model_validate(
+                    {
+                        "widget_type": "kpi",
+                        "view_name": DATASET_WIDGET_VIEW_NAME,
+                        "metrics": [{"op": "count"}],
+                        "dimensions": [],
+                        "filters": [parsed_native_filter.model_dump(mode="json")],
+                        "order_by": [],
+                    }
+                ),
+                column_types,
+            )
+            response_native_filters.append(
+                {
+                    "column": parsed_native_filter.column,
+                    "op": parsed_native_filter.op,
+                    "value": parsed_native_filter.value,
+                    "visible": bool(raw_native_filter.get("visible", True)),
+                }
+            )
+        except Exception as exc:
+            audit_issues_item = {
+                "native_filter_index": filter_index,
+                "issues": [f"native_filter invalido retornado pela IA: {_compact_error_message(exc)}"],
+            }
+            logger.warning(
+                "AI dashboard generation native filter issue: dataset=%s issue=%s",
+                dataset_name,
+                json.dumps(audit_issues_item, ensure_ascii=False),
+            )
+
     raw_sections = plan.get("sections") if isinstance(plan.get("sections"), list) else []
     audit_issues: list[dict[str, Any]] = []
 
@@ -833,5 +965,6 @@ async def generate_dashboard_with_ai_service(
         "title": (title or "").strip() or "Novo Dashboard",
         "explanation": explanation,
         "planning_steps": planning_steps,
+        "native_filters": response_native_filters,
         "sections": response_sections,
     }
