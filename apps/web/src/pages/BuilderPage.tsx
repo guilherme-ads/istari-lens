@@ -1,8 +1,8 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, type ChangeEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Plus, Save, Share2, ChevronLeft, Check, LayoutDashboard, Eye, Pencil, Monitor, Trash2, CalendarIcon, Code2, RefreshCw } from "lucide-react";
+import { Plus, Save, Share2, ChevronLeft, Check, LayoutDashboard, Eye, Pencil, Monitor, Trash2, CalendarIcon, Code2, RefreshCw, Download, Upload, History } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { DashboardCanvas } from "@/components/builder/DashboardCanvas";
 import { AddWidgetDialog } from "@/components/builder/AddWidgetDialog";
 import { WidgetConfigPanel } from "@/components/builder/WidgetConfigPanel";
+import DashboardSetup from "@/components/builder/DashboardSetup";
 import {
   createSection,
   createDefaultWidgetConfig,
@@ -24,9 +26,9 @@ import {
   type WidgetType,
 } from "@/types/dashboard";
 import { useCoreData } from "@/hooks/use-core-data";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type ApiDashboardImportPreviewResponse } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
-import { sectionsToLayoutConfig } from "@/lib/mappers";
+import { mapDashboard, sectionsToLayoutConfig } from "@/lib/mappers";
 import EmptyState from "@/components/shared/EmptyState";
 import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
 import { cn } from "@/lib/utils";
@@ -157,12 +159,9 @@ const BuilderPage = () => {
   const canEditExistingDashboard = !!existingDashboard && existingDashboard.accessLevel !== "view";
 
   const [activeDashboardId, setActiveDashboardId] = useState<string | undefined>(dashboardId);
+  const [setupDone, setSetupDone] = useState(!!dashboardId);
   const [dashboardTitle, setDashboardTitle] = useState("Novo Dashboard");
-  const [sections, setSections] = useState<DashboardSection[]>(() => {
-    const section = createSection();
-    section.title = "Visao Geral";
-    return [section];
-  });
+  const [sections, setSections] = useState<DashboardSection[]>([]);
   const [nativeFilters, setNativeFilters] = useState<DraftNativeFilter[]>([
     { id: `nf-${Date.now()}`, column: "", op: "eq", value: "" },
   ]);
@@ -171,6 +170,7 @@ const BuilderPage = () => {
   const [loadingCategoricalColumns, setLoadingCategoricalColumns] = useState<Record<string, boolean>>({});
   const hydratedDashboardIdRef = useRef<string | null>(null);
   const refreshTimersRef = useRef<Record<string, number>>({});
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => () => {
     Object.values(refreshTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
@@ -214,7 +214,19 @@ const BuilderPage = () => {
         })
         : [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }],
     );
+    setSetupDone(true);
   }, [existingDashboard]);
+
+  useEffect(() => {
+    if (dashboardId) {
+      setSetupDone(true);
+      return;
+    }
+    setSetupDone(false);
+    setSections([]);
+    setDashboardTitle("Novo Dashboard");
+    initialSnapshotRef.current = null;
+  }, [dashboardId]);
 
   const viewColumnsQuery = useQuery({
     queryKey: ["view-columns", view?.schema, view?.name],
@@ -326,7 +338,12 @@ const BuilderPage = () => {
   const [refreshingData, setRefreshingData] = useState(false);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [deleteDashboardOpen, setDeleteDashboardOpen] = useState(false);
-  const [syncingNativeFilters, setSyncingNativeFilters] = useState(false);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<ApiDashboardImportPreviewResponse | null>(null);
+  const [pendingImportDashboard, setPendingImportDashboard] = useState<Record<string, unknown> | null>(null);
+  const [importingDashboard, setImportingDashboard] = useState(false);
+  const [versionsPanelOpen, setVersionsPanelOpen] = useState(false);
+  const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
   const isAdmin = !!getStoredUser()?.is_admin;
 
   useEffect(() => {
@@ -395,47 +412,103 @@ const BuilderPage = () => {
     }
     return parsedFilters;
   }, [nativeFilters, temporalColumnNames]);
-  const preparedNativeFiltersKey = useMemo(() => JSON.stringify(preparedNativeFilters), [preparedNativeFilters]);
+  const serializeSections = useCallback((value: DashboardSection[]) => JSON.stringify(sectionsToLayoutConfig(value)), []);
+  const serializeNativeFilters = useCallback((value: PreparedNativeFilter[]) => JSON.stringify(value), []);
+  const initialSnapshotRef = useRef<{ title: string; sections: string; nativeFilters: string } | null>(null);
+  const makeTempWidgetId = useCallback(() => `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, []);
 
   useEffect(() => {
-    if (!activeDashboardId) return;
-    const debounceId = window.setTimeout(async () => {
-      try {
-        setSyncingNativeFilters(true);
-        await api.updateDashboard(Number(activeDashboardId), { native_filters: preparedNativeFilters });
-        await queryClient.invalidateQueries({ queryKey: ["widget-data", activeDashboardId], refetchType: "active" });
-      } catch {
-        // Intentionally silent to avoid noisy UX while typing filters.
-      } finally {
-        setSyncingNativeFilters(false);
-      }
-    }, 400);
+    if (!setupDone && !existingDashboard) return;
+    if (!initialSnapshotRef.current && !existingDashboard) {
+      initialSnapshotRef.current = {
+        title: dashboardTitle,
+        sections: serializeSections(sections),
+        nativeFilters: serializeNativeFilters(preparedNativeFilters),
+      };
+      return;
+    }
+    if (!existingDashboard) return;
+    initialSnapshotRef.current = {
+      title: existingDashboard.title,
+      sections: serializeSections(existingDashboard.sections),
+      nativeFilters: serializeNativeFilters(
+        existingDashboard.nativeFilters.map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
+      ),
+    };
+  }, [dashboardTitle, existingDashboard, preparedNativeFilters, sections, serializeNativeFilters, serializeSections, setupDone]);
 
-    return () => window.clearTimeout(debounceId);
-  }, [activeDashboardId, preparedNativeFiltersKey, preparedNativeFilters, queryClient]);
+  const isDirty = useMemo(() => {
+    if (!setupDone && !existingDashboard) return false;
+    const baseline = initialSnapshotRef.current;
+    if (!baseline) return true;
+    return (
+      baseline.title !== dashboardTitle
+      || baseline.sections !== serializeSections(sections)
+      || baseline.nativeFilters !== serializeNativeFilters(preparedNativeFilters)
+    );
+  }, [dashboardTitle, existingDashboard, preparedNativeFilters, sections, serializeNativeFilters, serializeSections, setupDone]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  const buildWidgetsPayload = useCallback((sourceSections: DashboardSection[]) => (
+    sourceSections.flatMap((section, sectionIndex) =>
+      section.widgets.map((widget, widgetIndex) => {
+        const numericId = Number(widget.id);
+        return {
+          id: Number.isFinite(numericId) ? numericId : undefined,
+          widget_type: widget.config.widget_type,
+          title: widget.title || `${widget.config.widget_type.toUpperCase()} - ${datasetSourceLabel}`,
+          position: (sectionIndex * 1000) + widgetIndex,
+          config: widget.config as never,
+          config_version: widget.configVersion || 1,
+        };
+      }),
+    )
+  ), [datasetSourceLabel]);
 
   const upsertDashboard = useMutation({
     mutationFn: async () => {
       if (!datasetId) throw new Error("Dataset invalido");
-      const payload = {
-        dataset_id: Number(datasetId),
+      let dashboardIdToSave = activeDashboardId;
+      if (!dashboardIdToSave) {
+        const created = await api.createDashboard({
+          dataset_id: Number(datasetId),
+          name: dashboardTitle,
+          description: null,
+          is_active: true,
+          layout_config: [],
+          native_filters: [],
+        });
+        dashboardIdToSave = String(created.id);
+        setActiveDashboardId(dashboardIdToSave);
+        navigate(`/datasets/${datasetId}/builder/${dashboardIdToSave}`, { replace: true });
+      }
+      const widgetsPayload = buildWidgetsPayload(sections);
+      const updatedDashboard = await api.saveDashboard(Number(dashboardIdToSave), {
         name: dashboardTitle,
         description: null,
         is_active: true,
         layout_config: sectionsToLayoutConfig(sections),
         native_filters: preparedNativeFilters,
+        widgets: widgetsPayload,
+      });
+      const mapped = mapDashboard(updatedDashboard);
+      setSections(mapped.sections);
+      setDashboardTitle(mapped.title);
+      initialSnapshotRef.current = {
+        title: mapped.title,
+        sections: serializeSections(mapped.sections),
+        nativeFilters: serializeNativeFilters(preparedNativeFilters),
       };
-
-      if (activeDashboardId) {
-        return api.updateDashboard(Number(activeDashboardId), {
-          name: payload.name,
-          description: null,
-          is_active: payload.is_active,
-          layout_config: payload.layout_config,
-          native_filters: payload.native_filters,
-        });
-      }
-      return api.createDashboard(payload);
+      return updatedDashboard;
     },
     onSuccess: async (dashboard) => {
       setActiveDashboardId(String(dashboard.id));
@@ -449,29 +522,6 @@ const BuilderPage = () => {
     },
   });
 
-  const ensureDashboard = useCallback(async (): Promise<string> => {
-    if (activeDashboardId) return activeDashboardId;
-    const created = await api.createDashboard({
-      dataset_id: Number(datasetId),
-      name: dashboardTitle,
-      description: null,
-      is_active: true,
-      layout_config: sectionsToLayoutConfig(sections),
-      native_filters: preparedNativeFilters,
-    });
-    const nextId = String(created.id);
-    setActiveDashboardId(nextId);
-    await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-    navigate(`/datasets/${datasetId}/builder/${created.id}`);
-    return nextId;
-  }, [activeDashboardId, dashboardTitle, datasetId, navigate, preparedNativeFilters, queryClient, sections]);
-
-  const persistLayout = useCallback(async (dashboardIdToSave: string, sectionsToSave: DashboardSection[]) => {
-    await api.updateDashboard(Number(dashboardIdToSave), {
-      layout_config: sectionsToLayoutConfig(sectionsToSave),
-    });
-  }, []);
-
   const handleAddWidget = useCallback((sectionId: string) => {
     setTargetSectionId(sectionId);
     setAddDialogOpen(true);
@@ -483,81 +533,46 @@ const BuilderPage = () => {
       toast({ title: "Não foi possivel carregar colunas do dataset", variant: "destructive" });
       return;
     }
-
-    const dashboardIdToUse = await ensureDashboard();
     const viewName = view ? `${view.schema}.${view.name}` : "__dataset_base";
     const defaultConfig = createDefaultWidgetConfig({
       type: widgetType,
       viewName,
       columns: datasetColumns,
     });
+    const mappedWidget: DashboardWidget = {
+      id: makeTempWidgetId(),
+      title: `${widgetType.toUpperCase()} - ${datasetSourceLabel}`,
+      position: 0,
+      configVersion: 1,
+      config: defaultConfig,
+    };
 
-    try {
-      const created = await api.createDashboardWidget(Number(dashboardIdToUse), {
-        widget_type: widgetType,
-        title: `${widgetType.toUpperCase()} - ${datasetSourceLabel}`,
-        position: 0,
-        config: defaultConfig,
-        config_version: 1,
-      });
-
-      const mappedWidget: DashboardWidget = {
-        id: String(created.id),
-        title: created.title || "",
-        position: created.position,
-        configVersion: created.config_version || 1,
-        config: created.query_config as unknown as DashboardWidget["config"],
-      };
-
-      const nextSections = sections.map((section) =>
-        section.id === targetSectionId ? { ...section, widgets: [...section.widgets, mappedWidget] } : section,
-      );
-      setSections(nextSections);
-      await persistLayout(dashboardIdToUse, nextSections);
-      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-      toast({ title: "Widget adicionado" });
-    } catch (error) {
-      const message = error instanceof ApiError ? JSON.stringify(error.detail || error.message) : "Falha ao criar widget";
-      toast({ title: "Erro ao criar widget", description: message, variant: "destructive" });
-    }
-  }, [dataset, datasetColumns, datasetSourceLabel, ensureDashboard, persistLayout, queryClient, sections, targetSectionId, toast, view]);
+    const nextSections = sections.map((section) =>
+      section.id === targetSectionId ? { ...section, widgets: [...section.widgets, mappedWidget] } : section,
+    );
+    setSections(nextSections);
+    toast({ title: "Widget adicionado (rascunho)" });
+  }, [dataset, datasetColumns, datasetSourceLabel, makeTempWidgetId, sections, targetSectionId, toast, view]);
 
   const handleDuplicateWidgetFromCard = useCallback(async (widget: DashboardWidget) => {
-    if (!activeDashboardId) return;
-    try {
-      const created = await api.createDashboardWidget(Number(activeDashboardId), {
-        widget_type: widget.config.widget_type,
-        title: widget.title ? `${widget.title} (copia)` : undefined,
-        position: 0,
-        config: JSON.parse(JSON.stringify(widget.config)),
-        config_version: widget.configVersion || 1,
-      });
+    const duplicatedWidget: DashboardWidget = {
+      ...widget,
+      id: makeTempWidgetId(),
+      title: widget.title ? `${widget.title} (copia)` : widget.title,
+      config: JSON.parse(JSON.stringify(widget.config)),
+    };
 
-      const duplicatedWidget: DashboardWidget = {
-        id: String(created.id),
-        title: created.title || "",
-        position: created.position,
-        configVersion: created.config_version || 1,
-        config: created.query_config as unknown as DashboardWidget["config"],
-      };
+    const nextSections = sections.map((section) => {
+      const index = section.widgets.findIndex((item) => item.id === widget.id);
+      if (index === -1) return section;
+      const widgets = [...section.widgets];
+      widgets.splice(index + 1, 0, duplicatedWidget);
+      return { ...section, widgets };
+    });
 
-      const nextSections = sections.map((section) => {
-        const index = section.widgets.findIndex((item) => item.id === widget.id);
-        if (index === -1) return section;
-        const widgets = [...section.widgets];
-        widgets.splice(index + 1, 0, duplicatedWidget);
-        return { ...section, widgets };
-      });
-
-      setSections(nextSections);
-      await persistLayout(activeDashboardId, nextSections);
-      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-      toast({ title: "Widget duplicado" });
-    } catch (error) {
-      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao duplicar widget";
-      toast({ title: "Erro ao duplicar widget", description: message, variant: "destructive" });
-    }
-  }, [activeDashboardId, persistLayout, queryClient, sections, toast]);
+    setSections(nextSections);
+    toast({ title: "Widget duplicado (rascunho)" });
+  }, [makeTempWidgetId, sections, toast]);
 
   const handleEditWidget = useCallback((widget: DashboardWidget) => {
     setEditingWidget(widget);
@@ -567,49 +582,30 @@ const BuilderPage = () => {
   }, [sections]);
 
   const handleSaveWidget = useCallback(async (updated: DashboardWidget) => {
-    if (!activeDashboardId) return;
     setRefreshingWidgetIds((prev) => {
       const next = new Set(prev);
       next.add(updated.id);
       return next;
     });
     try {
-      const response = await api.updateDashboardWidget(Number(activeDashboardId), Number(updated.id), {
-        title: updated.title,
-        widget_type: updated.config.widget_type,
-        config: updated.config,
-        config_version: updated.configVersion,
-      });
-
-      const persistedWidget: DashboardWidget = {
-        id: String(response.id),
-        title: response.title || "",
-        position: response.position,
-        configVersion: response.config_version || 1,
-        config: response.query_config as unknown as DashboardWidget["config"],
-      };
-
       const nextSections = sections.map((section) => ({
         ...section,
-        widgets: section.widgets.map((item) => (item.id === persistedWidget.id ? persistedWidget : item)),
+        widgets: section.widgets.map((item) => (item.id === updated.id ? updated : item)),
       }));
       setSections(nextSections);
-      setEditingWidget(persistedWidget);
-      await persistLayout(activeDashboardId, nextSections);
-      await queryClient.invalidateQueries({ queryKey: ["widget-data", activeDashboardId, persistedWidget.id], refetchType: "active" });
-      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-      if (refreshTimersRef.current[persistedWidget.id]) {
-        window.clearTimeout(refreshTimersRef.current[persistedWidget.id]);
+      setEditingWidget(updated);
+      if (refreshTimersRef.current[updated.id]) {
+        window.clearTimeout(refreshTimersRef.current[updated.id]);
       }
-      refreshTimersRef.current[persistedWidget.id] = window.setTimeout(() => {
+      refreshTimersRef.current[updated.id] = window.setTimeout(() => {
         setRefreshingWidgetIds((prev) => {
           const next = new Set(prev);
-          next.delete(persistedWidget.id);
+          next.delete(updated.id);
           return next;
         });
-        delete refreshTimersRef.current[persistedWidget.id];
+        delete refreshTimersRef.current[updated.id];
       }, 900);
-      toast({ title: "Widget atualizado" });
+      toast({ title: "Widget atualizado (rascunho)" });
     } catch (error) {
       setRefreshingWidgetIds((prev) => {
         const next = new Set(prev);
@@ -619,10 +615,10 @@ const BuilderPage = () => {
       const message = error instanceof ApiError ? JSON.stringify(error.detail || error.message) : "Falha ao salvar widget";
       toast({ title: "Erro ao salvar widget", description: message, variant: "destructive" });
     }
-  }, [activeDashboardId, persistLayout, queryClient, sections, toast]);
+  }, [sections, toast]);
 
   const handleDeleteWidget = useCallback(async () => {
-    if (!editingWidget || !activeDashboardId) return;
+    if (!editingWidget) return;
     try {
       if (refreshTimersRef.current[editingWidget.id]) {
         window.clearTimeout(refreshTimersRef.current[editingWidget.id]);
@@ -633,25 +629,21 @@ const BuilderPage = () => {
         next.delete(editingWidget.id);
         return next;
       });
-      await api.deleteDashboardWidget(Number(activeDashboardId), Number(editingWidget.id));
       const nextSections = sections.map((section) => ({
         ...section,
         widgets: section.widgets.filter((item) => item.id !== editingWidget.id),
       }));
       setSections(nextSections);
-      await persistLayout(activeDashboardId, nextSections);
       setConfigOpen(false);
       setEditingWidget(null);
-      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-      toast({ title: "Widget removido" });
+      toast({ title: "Widget removido (rascunho)" });
     } catch (error) {
       const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao remover widget";
       toast({ title: "Erro ao remover widget", description: message, variant: "destructive" });
     }
-  }, [activeDashboardId, editingWidget, persistLayout, queryClient, sections, toast]);
+  }, [editingWidget, sections, toast]);
 
   const handleToggleWidgetTitle = useCallback(async (widget: DashboardWidget) => {
-    if (!activeDashboardId) return;
     const nextShowTitle = widget.config.show_title === false;
     const updatedWidget: DashboardWidget = {
       ...widget,
@@ -661,10 +653,9 @@ const BuilderPage = () => {
       },
     };
     await handleSaveWidget(updatedWidget);
-  }, [activeDashboardId, handleSaveWidget]);
+  }, [handleSaveWidget]);
 
   const handleDeleteWidgetFromCard = useCallback(async (widget: DashboardWidget) => {
-    if (!activeDashboardId) return;
     try {
       if (refreshTimersRef.current[widget.id]) {
         window.clearTimeout(refreshTimersRef.current[widget.id]);
@@ -675,24 +666,21 @@ const BuilderPage = () => {
         next.delete(widget.id);
         return next;
       });
-      await api.deleteDashboardWidget(Number(activeDashboardId), Number(widget.id));
       const nextSections = sections.map((section) => ({
         ...section,
         widgets: section.widgets.filter((item) => item.id !== widget.id),
       }));
       setSections(nextSections);
-      await persistLayout(activeDashboardId, nextSections);
       if (editingWidget?.id === widget.id) {
         setConfigOpen(false);
         setEditingWidget(null);
       }
-      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-      toast({ title: "Widget removido" });
+      toast({ title: "Widget removido (rascunho)" });
     } catch (error) {
       const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao remover widget";
       toast({ title: "Erro ao remover widget", description: message, variant: "destructive" });
     }
-  }, [activeDashboardId, editingWidget?.id, persistLayout, queryClient, sections, toast]);
+  }, [editingWidget?.id, sections, toast]);
 
   const handleAddSection = useCallback((afterIndex?: number) => {
     setSections((prev) => {
@@ -706,34 +694,54 @@ const BuilderPage = () => {
         next = [...prev];
         next.splice(afterIndex, 0, section);
       }
-
-      if (activeDashboardId) {
-        void persistLayout(activeDashboardId, next).catch((error: unknown) => {
-          const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao salvar layout";
-          toast({ title: "Erro ao salvar layout", description: message, variant: "destructive" });
-        });
-      }
       return next;
     });
-  }, [activeDashboardId, persistLayout, toast]);
+  }, []);
 
   const handleSectionsChange = useCallback((nextSections: DashboardSection[]) => {
     setSections(nextSections);
-    if (!activeDashboardId) return;
-    void persistLayout(activeDashboardId, nextSections).catch((error: unknown) => {
-      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao salvar layout";
-      toast({ title: "Erro ao salvar layout", description: message, variant: "destructive" });
-    });
-  }, [activeDashboardId, persistLayout, toast]);
+  }, []);
+
+  const resolvePublicShareKey = useCallback(async (targetDashboardId: string) => {
+    const targetDashboard = dashboards.find((item) => item.id === targetDashboardId);
+    if (targetDashboard?.publicShareKey) return targetDashboard.publicShareKey;
+    const dashboard = await api.getDashboard(Number(targetDashboardId));
+    return dashboard.public_share_key || undefined;
+  }, [dashboards]);
 
   const handleShare = async () => {
     const targetDashboardId = activeDashboardId || dashboardId;
-    if (!datasetId || !targetDashboardId) return;
-    const shareUrl = `${window.location.origin}/presentation/datasets/${datasetId}/dashboard/${targetDashboardId}`;
+    if (!targetDashboardId) return;
+    const cachedDashboard = dashboards.find((item) => item.id === targetDashboardId);
+    let visibility = cachedDashboard?.visibility;
+    let publicShareKey = cachedDashboard?.publicShareKey;
+    if (!visibility || (visibility === "public_view" && !publicShareKey)) {
+      const dashboard = await api.getDashboard(Number(targetDashboardId));
+      visibility = dashboard.visibility;
+      publicShareKey = dashboard.public_share_key || undefined;
+    }
+    if (visibility === "public_view" && !publicShareKey) {
+      toast({ title: "Não foi possível gerar link público", variant: "destructive" });
+      return;
+    }
+    const internalUrl = `${window.location.origin}/datasets/${datasetId}/dashboard/${targetDashboardId}`;
+    const shareUrl = visibility === "public_view"
+      ? `${window.location.origin}/public/dashboard/${publicShareKey}`
+      : internalUrl;
     await navigator.clipboard.writeText(shareUrl);
     setShareSuccess(true);
     toast({ title: "Link copiado" });
     setTimeout(() => setShareSuccess(false), 2000);
+  };
+  const handleOpenPublicPresentation = async () => {
+    const targetDashboardId = activeDashboardId || dashboardId;
+    if (!targetDashboardId) return;
+    const publicShareKey = await resolvePublicShareKey(targetDashboardId);
+    if (!publicShareKey) {
+      toast({ title: "Não foi possível gerar link público", variant: "destructive" });
+      return;
+    }
+    navigateWithDiscard(`/public/dashboard/${publicShareKey}`);
   };
   const handleRefreshWidgetData = useCallback(async () => {
     const targetId = activeDashboardId || dashboardId;
@@ -758,9 +766,187 @@ const BuilderPage = () => {
       setRefreshingData(false);
     }
   }, [activeDashboardId, dashboardId, queryClient, toast]);
+  const confirmDiscardIfDirty = useCallback(() => {
+    if (!isDirty) return true;
+    return window.confirm("Existem alteracoes nao salvas. Deseja sair mesmo assim?");
+  }, [isDirty]);
+  const navigateWithDiscard = useCallback((to: string) => {
+    if (!confirmDiscardIfDirty()) return;
+    navigate(to);
+  }, [confirmDiscardIfDirty, navigate]);
+  const handleSetupStart = useCallback(async (title: string, setupSections: DashboardSection[]) => {
+    const normalizedTitle = title.trim() || "Novo Dashboard";
+    const normalizedSections = setupSections.length > 0 ? setupSections : [{ ...createSection(), title: "Visao Geral" }];
+    const emptyNativeFilters: DraftNativeFilter[] = [{ id: `nf-${Date.now()}`, column: "", op: "eq", value: "" }];
+    setDashboardTitle(normalizedTitle);
+    setSections(normalizedSections);
+    setNativeFilters(emptyNativeFilters);
+    setSetupDone(true);
+
+    if (!datasetId || normalizedSections.length === 0 || normalizedSections.every((section) => section.widgets.length === 0)) {
+      initialSnapshotRef.current = {
+        title: normalizedTitle,
+        sections: serializeSections(normalizedSections),
+        nativeFilters: serializeNativeFilters([]),
+      };
+      return;
+    }
+
+    try {
+      const created = await api.createDashboard({
+        dataset_id: Number(datasetId),
+        name: normalizedTitle,
+        description: null,
+        is_active: true,
+        layout_config: [],
+        native_filters: [],
+      });
+      const saved = await api.saveDashboard(Number(created.id), {
+        name: normalizedTitle,
+        description: null,
+        is_active: true,
+        layout_config: sectionsToLayoutConfig(normalizedSections),
+        native_filters: [],
+        widgets: buildWidgetsPayload(normalizedSections),
+      });
+      const mapped = mapDashboard(saved);
+      setActiveDashboardId(String(saved.id));
+      setDashboardTitle(mapped.title);
+      setSections(mapped.sections);
+      initialSnapshotRef.current = {
+        title: mapped.title,
+        sections: serializeSections(mapped.sections),
+        nativeFilters: serializeNativeFilters([]),
+      };
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      navigate(`/datasets/${datasetId}/builder/${saved.id}`, { replace: true });
+      toast({ title: "Dashboard inicial criado" });
+    } catch (error) {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao criar dashboard inicial";
+      toast({ title: "Erro no setup", description: message, variant: "destructive" });
+    }
+  }, [buildWidgetsPayload, datasetId, navigate, queryClient, serializeNativeFilters, serializeSections, toast]);
+
+  const handleExportDashboardJson = useCallback(async () => {
+    const targetId = activeDashboardId || dashboardId;
+    if (!targetId) {
+      toast({ title: "Salve o dashboard antes de exportar", variant: "destructive" });
+      return;
+    }
+    try {
+      const payload = await api.exportDashboard(Number(targetId));
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `dashboard-${targetId}.json`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Dashboard exportado" });
+    } catch (error) {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao exportar";
+      toast({ title: "Erro ao exportar", description: message, variant: "destructive" });
+    }
+  }, [activeDashboardId, dashboardId, toast]);
+
+  const executeDashboardImport = useCallback(async (rawDashboard: Record<string, unknown>) => {
+    if (!datasetId) return;
+    setImportingDashboard(true);
+    try {
+      const imported = await api.importDashboard({
+        dataset_id: Number(datasetId),
+        dashboard: rawDashboard,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      toast({ title: "Dashboard importado com sucesso" });
+      setImportConfirmOpen(false);
+      setImportPreview(null);
+      setPendingImportDashboard(null);
+      navigate(`/datasets/${datasetId}/builder/${imported.id}`);
+    } catch (error) {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao importar dashboard";
+      toast({ title: "Erro ao importar", description: message, variant: "destructive" });
+    } finally {
+      setImportingDashboard(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }, [datasetId, navigate, queryClient, toast]);
+
+  const handleImportDashboardJson = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !datasetId) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { dashboard?: Record<string, unknown> } | Record<string, unknown>;
+      const rawDashboard = ((parsed as { dashboard?: Record<string, unknown> }).dashboard || parsed) as Record<string, unknown>;
+      const preview = await api.previewDashboardImport({
+        dataset_id: Number(datasetId),
+        dashboard: rawDashboard,
+      });
+      const needsConfirmation = preview.compatibility === "partial" || !preview.same_dataset;
+      if (preview.compatibility === "incompatible") {
+        const firstConflict = preview.conflicts[0]?.message || "Dashboard incompativel com o dataset de destino.";
+        toast({
+          title: "Importacao bloqueada",
+          description: firstConflict,
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!needsConfirmation) {
+        await executeDashboardImport(rawDashboard);
+        return;
+      }
+      setImportPreview(preview);
+      setPendingImportDashboard(rawDashboard);
+      setImportConfirmOpen(true);
+    } catch (error) {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "JSON invalido para importacao";
+      toast({ title: "Erro ao importar", description: message, variant: "destructive" });
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }, [datasetId, executeDashboardImport, toast]);
+  const handleConfirmImportDashboard = useCallback(async () => {
+    if (!pendingImportDashboard || importingDashboard) return;
+    await executeDashboardImport(pendingImportDashboard);
+  }, [executeDashboardImport, importingDashboard, pendingImportDashboard]);
 
   const widgetCount = sections.reduce((total, section) => total + section.widgets.length, 0);
   const targetDashboardId = activeDashboardId || dashboardId;
+  const versionsQuery = useQuery({
+    queryKey: ["dashboard-versions", targetDashboardId],
+    queryFn: () => api.listDashboardVersions(Number(targetDashboardId)),
+    enabled: versionsPanelOpen && !!targetDashboardId,
+  });
+  useEffect(() => {
+    if (!versionsPanelOpen) return;
+    if (!versionsQuery.data || versionsQuery.data.length === 0) {
+      setSelectedVersionId(null);
+      return;
+    }
+    setSelectedVersionId((current) => current ?? versionsQuery.data[0].id);
+  }, [versionsPanelOpen, versionsQuery.data]);
+  const restoreVersionMutation = useMutation({
+    mutationFn: async () => {
+      const targetId = activeDashboardId || dashboardId;
+      if (!targetId || !selectedVersionId) {
+        throw new Error("Selecione uma versao para restaurar.");
+      }
+      return api.restoreDashboardVersion(Number(targetId), selectedVersionId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      toast({ title: "Versao restaurada" });
+      setVersionsPanelOpen(false);
+      navigate(0);
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof ApiError ? String(error.detail || error.message) : "Falha ao restaurar versao";
+      toast({ title: "Erro ao restaurar", description: message, variant: "destructive" });
+    },
+  });
+
   const debugQueriesQuery = useQuery({
     queryKey: ["dashboard-debug-queries", targetDashboardId, preparedNativeFilters, devModeSqlView],
     queryFn: () =>
@@ -786,6 +972,17 @@ const BuilderPage = () => {
       toast({ title: "Erro ao excluir", description: message, variant: "destructive" });
     }
   };
+  const importConflictsPreview = useMemo(() => {
+    if (!importPreview) return [];
+    return importPreview.conflicts.slice(0, 6);
+  }, [importPreview]);
+  const importDialogDescription = useMemo(() => {
+    if (!importPreview) return "";
+    if (importPreview.compatibility === "partial") {
+      return "Encontramos incompatibilidades parciais. Voce pode continuar, mas alguns widgets podem exigir ajustes.";
+    }
+    return "O dashboard foi criado em outro dataset. Revise os detalhes antes de importar.";
+  }, [importPreview]);
 
   if (isError) {
     return (
@@ -814,11 +1011,25 @@ const BuilderPage = () => {
           <div className="text-center space-y-3">
             <h2 className="text-title text-foreground">Dataset não encontrado</h2>
             <p className="text-body text-muted-foreground">O dataset solicitado não existe.</p>
-            <Button variant="outline" onClick={() => navigate("/datasets")}>
+            <Button variant="outline" onClick={() => navigateWithDiscard("/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar aos Datasets
             </Button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (!isEditingExistingDashboard && !setupDone) {
+    return (
+      <div className="bg-background min-h-screen">
+        <DashboardSetup
+          columns={datasetColumns}
+          datasetId={Number(dataset.id)}
+          viewName={datasetSourceLabel}
+          initialTitle={dashboardTitle}
+          onStart={handleSetupStart}
+        />
       </div>
     );
   }
@@ -830,7 +1041,7 @@ const BuilderPage = () => {
           <div className="text-center space-y-3">
             <h2 className="text-title text-foreground">Dashboard não encontrado</h2>
             <p className="text-body text-muted-foreground">Você não tem permissão para editar este dashboard ou ele não existe.</p>
-            <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
+            <Button variant="outline" onClick={() => navigateWithDiscard(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
             </Button>
           </div>
@@ -846,7 +1057,7 @@ const BuilderPage = () => {
           <div className="text-center space-y-3">
             <h2 className="text-title text-foreground">Acesso negado</h2>
             <p className="text-body text-muted-foreground">Você tem acesso somente de visualização para este dashboard.</p>
-            <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
+            <Button variant="outline" onClick={() => navigateWithDiscard(datasetId ? `/datasets/${datasetId}/dashboard/${dashboardId}` : "/dashboards")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Ir para visualização
             </Button>
           </div>
@@ -860,7 +1071,15 @@ const BuilderPage = () => {
       <div className="sticky top-12 z-40 border-b border-border bg-card/90 backdrop-blur-sm">
         <div className="container flex items-center justify-between h-12 gap-4">
           <div className="flex items-center gap-2 min-w-0">
-            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => navigate("/datasets")}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              onClick={() => {
+                if (!confirmDiscardIfDirty()) return;
+                navigate("/datasets");
+              }}
+            >
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <ContextualBreadcrumb
@@ -875,7 +1094,7 @@ const BuilderPage = () => {
 
           <div className="flex items-center gap-2 text-caption shrink-0">
             <span className="hidden sm:inline">
-              Base semantica: {datasetSourceLabel} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+              Base semantica: {datasetSourceLabel}
             </span>
             <div className="h-4 w-px bg-border hidden sm:block" />
             <Tooltip>
@@ -889,12 +1108,49 @@ const BuilderPage = () => {
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setPreviewMode((prev) => !prev)}>
-                  {previewMode ? <Pencil className="h-3 w-3 sm:mr-1" /> : <Eye className="h-3 w-3 sm:mr-1" />}
-                  <span className="hidden sm:inline">{previewMode ? "Editar" : "Preview"}</span>
+                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExportDashboardJson}>
+                  <Download className="h-3 w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Exportar</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">Visualizar dashboard sem modo de edicao</TooltipContent>
+              <TooltipContent className="text-xs">Exportar dashboard em JSON</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    if (!confirmDiscardIfDirty()) return;
+                    importInputRef.current?.click();
+                  }}
+                >
+                  <Upload className="h-3 w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Importar</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">Importar dashboard de JSON</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    if (!targetDashboardId) {
+                      toast({ title: "Salve o dashboard antes de restaurar versoes", variant: "destructive" });
+                      return;
+                    }
+                    setVersionsPanelOpen(true);
+                  }}
+                >
+                  <History className="h-3 w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Restaurar</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">Restaurar última versão salva</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -906,7 +1162,7 @@ const BuilderPage = () => {
                   onClick={handleRefreshWidgetData}
                 >
                   <RefreshCw className={cn("h-3 w-3 sm:mr-1", refreshingData && "animate-spin")} />
-                  <span className="hidden sm:inline">{refreshingData ? "Atualizando..." : "Atualizar dados"}</span>
+                  <span className="hidden sm:inline">{refreshingData ? "Atualizando..." : "Atualizar"}</span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent className="text-xs">Recarregar dados de todos os widgets</TooltipContent>
@@ -921,7 +1177,7 @@ const BuilderPage = () => {
                     onClick={() => setDevModeOpen((prev) => !prev)}
                   >
                     <Code2 className="h-3 w-3 sm:mr-1" />
-                    <span className="hidden sm:inline">Dev SQL</span>
+                    <span className="hidden sm:inline">Dev</span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent className="text-xs">Ver QuerySpecs resultantes por widget (admin)</TooltipContent>
@@ -950,8 +1206,8 @@ const BuilderPage = () => {
                       size="sm"
                       variant="outline"
                       className="h-8 text-xs"
-                      disabled={!datasetId || !(activeDashboardId || dashboardId)}
-                      onClick={() => navigate(`/presentation/datasets/${datasetId}/dashboard/${activeDashboardId || dashboardId}`)}
+                      disabled={!(activeDashboardId || dashboardId)}
+                      onClick={handleOpenPublicPresentation}
                     >
                       <Monitor className="h-3 w-3 sm:mr-1" />
                       <span className="hidden sm:inline">Apresentação</span>
@@ -1267,9 +1523,7 @@ const BuilderPage = () => {
                       Limpar filtros
                     </Button>
                   </div>
-                  <span className="text-[11px] text-muted-foreground">
-                    {syncingNativeFilters ? "Atualizando dados..." : "Aplicados antes de qualquer filtro visível"}
-                  </span>
+                  <span className="text-[11px] text-muted-foreground">Aplicados antes de qualquer filtro visível</span>
                 </div>
               </div>
             </div>
@@ -1430,6 +1684,73 @@ const BuilderPage = () => {
         )}
       </div>
 
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={handleImportDashboardJson}
+      />
+
+      <Sheet open={versionsPanelOpen} onOpenChange={setVersionsPanelOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Historico de versoes</SheetTitle>
+            <SheetDescription>Selecione uma versao para restaurar o dashboard.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-6 space-y-3">
+            {!targetDashboardId && (
+              <p className="text-sm text-muted-foreground">Salve o dashboard para visualizar versoes.</p>
+            )}
+            {targetDashboardId && versionsQuery.isLoading && (
+              <p className="text-sm text-muted-foreground">Carregando versoes...</p>
+            )}
+            {targetDashboardId && versionsQuery.isError && (
+              <p className="text-sm text-destructive">Falha ao carregar versoes.</p>
+            )}
+            {targetDashboardId && versionsQuery.data && versionsQuery.data.length === 0 && (
+              <p className="text-sm text-muted-foreground">Nenhuma versao disponivel.</p>
+            )}
+            {targetDashboardId && (versionsQuery.data || []).map((version) => {
+              const date = new Date(version.created_at);
+              const label = Number.isNaN(date.getTime())
+                ? version.created_at
+                : new Intl.DateTimeFormat("pt-BR", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }).format(date);
+              const selected = selectedVersionId === version.id;
+              return (
+                <button
+                  key={version.id}
+                  type="button"
+                  className={cn(
+                    "w-full rounded-md border p-3 text-left transition-colors",
+                    selected ? "border-accent bg-accent/10" : "border-border hover:bg-muted/40",
+                  )}
+                  onClick={() => setSelectedVersionId(version.id)}
+                >
+                  <p className="text-sm font-medium text-foreground">Versao #{version.version_number}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{label}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-6">
+            <Button
+              className="w-full"
+              disabled={!selectedVersionId || restoreVersionMutation.isPending}
+              onClick={() => restoreVersionMutation.mutate()}
+            >
+              {restoreVersionMutation.isPending ? "Restaurando..." : "Restaurar versao selecionada"}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
       <AddWidgetDialog
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
@@ -1450,6 +1771,41 @@ const BuilderPage = () => {
         onDelete={handleDeleteWidget}
       />
       <ConfirmDialog
+        open={importConfirmOpen}
+        onOpenChange={(open) => {
+          setImportConfirmOpen(open);
+          if (!open && !importingDashboard) {
+            setImportPreview(null);
+            setPendingImportDashboard(null);
+          }
+        }}
+        title="Confirmar importacao de dashboard"
+        description={importDialogDescription}
+        confirmLabel={importingDashboard ? "Importando..." : "Importar mesmo assim"}
+        onConfirm={() => {
+          void handleConfirmImportDashboard();
+        }}
+        details={importPreview ? (
+          <div className="mt-3 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Dataset origem: {importPreview.source_dataset_id ?? "-"} . Dataset destino: {importPreview.target_dataset_id}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Widgets validos: {importPreview.valid_widgets}/{importPreview.total_widgets} . Invalidos: {importPreview.invalid_widgets}
+            </p>
+            {importConflictsPreview.length > 0 && (
+              <ul className="list-disc pl-4 text-xs text-muted-foreground space-y-1 max-h-32 overflow-auto">
+                {importConflictsPreview.map((conflict, index) => (
+                  <li key={`${conflict.code}-${conflict.field || "field"}-${index}`}>
+                    {conflict.widget_title ? `${conflict.widget_title}: ` : ""}{conflict.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : undefined}
+      />
+      <ConfirmDialog
         open={deleteDashboardOpen}
         onOpenChange={setDeleteDashboardOpen}
         title="Excluir dashboard?"
@@ -1463,6 +1819,10 @@ const BuilderPage = () => {
 };
 
 export default BuilderPage;
+
+
+
+
 
 
 

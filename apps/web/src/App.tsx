@@ -79,7 +79,11 @@ const App = () => {
                 <Route path="/shared/:shareToken" element={<SharedAnalysisPage />} />
                 <Route
                   path="/presentation/datasets/:datasetId/dashboard/:dashboardId"
-                  element={<RequireAuth><DashboardViewPage /></RequireAuth>}
+                  element={<DashboardViewPage />}
+                />
+                <Route
+                  path="/public/dashboard/:dashboardId"
+                  element={<DashboardViewPage />}
                 />
 
                 <Route element={<RequireAuth><AppLayout /></RequireAuth>}>

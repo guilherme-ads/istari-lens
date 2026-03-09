@@ -132,8 +132,9 @@ export interface Dashboard {
   datasetId: string;
   isOwner: boolean;
   accessLevel: "owner" | "edit" | "view";
-  accessSource: "owner" | "direct" | "workspace";
-  visibility: "private" | "workspace_view" | "workspace_edit";
+  accessSource: "owner" | "direct" | "workspace" | "public";
+  visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
+  publicShareKey?: string;
   nativeFilters: WidgetFilter[];
   sections: DashboardSection[];
   createdAt: string;

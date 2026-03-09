@@ -39,7 +39,7 @@ const AppLayout = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur-md">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-card/80 backdrop-blur-md">
         <div className="container flex h-14 items-center justify-between">
           <div className="flex items-center gap-6">
             <Link to="/home" className="flex items-center gap-2.5 group">
@@ -241,7 +241,7 @@ const AppLayout = () => {
         </AnimatePresence>
       </header>
 
-      <main className="flex-1">
+      <main className="flex-1 pt-14">
         <Outlet />
       </main>
     </div>

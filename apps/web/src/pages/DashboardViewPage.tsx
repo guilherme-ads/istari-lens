@@ -24,6 +24,7 @@ import { WidgetRenderer } from "@/components/builder/WidgetRenderer";
 import type { DashboardSection } from "@/types/dashboard";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api } from "@/lib/api";
+import { mapDashboard } from "@/lib/mappers";
 import { exportDashboardToPdf } from "@/lib/dashboard-pdf";
 import EmptyState from "@/components/shared/EmptyState";
 import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
@@ -168,14 +169,56 @@ const DashboardViewPage = () => {
   const location = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { datasetId, dashboardId } = useParams<{ datasetId: string; dashboardId: string }>();
+  const { datasetId, dashboardId } = useParams<{ datasetId?: string; dashboardId?: string }>();
   const { datasets, views, dashboards, hasToken, isLoading, isError, errorMessage } = useCoreData();
   const { isLoading: isSimulatedLoading } = useSimulatedLoading();
-  const showLoadingSkeleton = isLoading || isSimulatedLoading;
   const isPresentationMode = location.pathname.startsWith("/presentation/");
+  const isPublicMode = location.pathname.startsWith("/public/");
+  const shouldUsePublicApi = isPublicMode;
 
-  const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
-  const dashboard = useMemo(() => dashboards.find((item) => item.id === dashboardId), [dashboards, dashboardId]);
+  const publicDashboardQuery = useQuery({
+    queryKey: ["public-dashboard", dashboardId],
+    queryFn: () => api.getPublicDashboard(String(dashboardId)),
+    enabled: !!dashboardId && shouldUsePublicApi,
+    retry: false,
+  });
+  const showLoadingSkeleton = isLoading || isSimulatedLoading || publicDashboardQuery.isLoading;
+  const mappedPublicDashboard = useMemo(
+    () => (publicDashboardQuery.data
+      ? mapDashboard({
+          ...publicDashboardQuery.data,
+          created_by_id: null,
+          is_owner: false,
+          access_level: "view",
+          access_source: "public",
+        })
+      : undefined),
+    [publicDashboardQuery.data],
+  );
+  const dashboard = useMemo(
+    () => dashboards.find((item) => item.id === dashboardId) || mappedPublicDashboard,
+    [dashboards, dashboardId, mappedPublicDashboard],
+  );
+  const resolvedDatasetId = datasetId
+    || dashboard?.datasetId
+    || (publicDashboardQuery.data ? String(publicDashboardQuery.data.dataset_id) : undefined);
+  const dataset = useMemo(
+    () => datasets.find((item) => item.id === resolvedDatasetId)
+      || (publicDashboardQuery.data
+        ? {
+            id: String(publicDashboardQuery.data.dataset_id),
+            datasourceId: "",
+            name: "Dashboard público",
+            description: "",
+            viewId: undefined,
+            baseQuerySpec: null,
+            semanticColumns: [],
+            dashboardIds: [String(publicDashboardQuery.data.id)],
+            createdAt: publicDashboardQuery.data.created_at,
+          }
+        : undefined),
+    [datasets, resolvedDatasetId, publicDashboardQuery.data],
+  );
   const canEditDashboard = (dashboard?.accessLevel || "view") !== "view";
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
   const datasetSourceLabel = useMemo(() => {
@@ -254,6 +297,7 @@ const DashboardViewPage = () => {
     return parsedFilters;
   }, [draftFilters, effectiveColumns]);
 
+  const canLoadWidgetData = shouldUsePublicApi ? !!publicDashboardQuery.data : hasToken;
   const widgetsDataQuery = useQuery({
     queryKey: [
       "dashboard-widget-data",
@@ -261,13 +305,21 @@ const DashboardViewPage = () => {
       widgets.map((widget) => widget.id).join(","),
       JSON.stringify(appliedFilters),
     ],
-    queryFn: () =>
-      api.getDashboardWidgetsData(
-        Number(dashboardId),
+    queryFn: () => {
+      if (!shouldUsePublicApi) {
+        return api.getDashboardWidgetsData(
+          Number(dashboardId),
+          widgets.map((widget) => Number(widget.id)),
+          appliedFilters,
+        );
+      }
+      return api.getPublicDashboardWidgetsData(
+        String(dashboardId),
         widgets.map((widget) => Number(widget.id)),
         appliedFilters,
-      ),
-    enabled: hasToken && !!dashboardId && widgets.length > 0,
+      );
+    },
+    enabled: canLoadWidgetData && !!dashboardId && widgets.length > 0,
   });
 
   const widgetDataById = useMemo(() => {
@@ -290,9 +342,17 @@ const DashboardViewPage = () => {
     queryFn: () => api.getDashboardSharing(Number(dashboardId)),
     enabled: shareOpen && !!dashboardId && !!dashboard?.isOwner,
   });
+  const publicShareKey = sharingQuery.data?.public_share_key
+    || dashboard?.publicShareKey
+    || publicDashboardQuery.data?.public_share_key
+    || dashboardId;
+  const publicShareUrl = `${window.location.origin}/public/dashboard/${publicShareKey || ""}`;
+  const internalShareUrl = `${window.location.origin}/datasets/${resolvedDatasetId || dashboard?.datasetId || ""}/dashboard/${dashboardId || ""}`;
+  const effectiveVisibility = sharingQuery.data?.visibility || dashboard?.visibility;
+  const shareUrl = effectiveVisibility === "public_view" ? publicShareUrl : internalShareUrl;
 
   const updateVisibilityMutation = useMutation({
-    mutationFn: (visibility: "private" | "workspace_view" | "workspace_edit") =>
+    mutationFn: (visibility: "private" | "workspace_view" | "workspace_edit" | "public_view") =>
       api.updateDashboardVisibility(Number(dashboardId), { visibility }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-sharing", dashboardId] });
@@ -379,7 +439,7 @@ const DashboardViewPage = () => {
     setAppliedFilters([]);
   };
 
-  if (!hasToken) {
+  if (!hasToken && !isPublicMode) {
     return (
       <div className="bg-background min-h-screen flex flex-col">
         <main className="container py-8 flex-1 flex items-center justify-center">
@@ -398,11 +458,15 @@ const DashboardViewPage = () => {
     );
   }
 
-  if (isError) {
+  if (isError || publicDashboardQuery.isError) {
     return (
       <div className="bg-background min-h-screen">
         <main className="container py-6">
-          <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar dashboard" description={errorMessage} />
+          <EmptyState
+            icon={<Database className="h-5 w-5" />}
+            title="Erro ao carregar dashboard"
+            description={errorMessage || (publicDashboardQuery.error as Error | undefined)?.message || "Falha ao carregar dashboard"}
+          />
         </main>
       </div>
     );
@@ -433,7 +497,7 @@ const DashboardViewPage = () => {
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
             <h2 className="text-title text-foreground">Dashboard não encontrado</h2>
-            <Button variant="outline" onClick={() => navigate(datasetId ? `/datasets/${datasetId}` : "/datasets")}>
+            <Button variant="outline" onClick={() => navigate(resolvedDatasetId ? `/datasets/${resolvedDatasetId}` : "/datasets")}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
             </Button>
           </div>
@@ -444,17 +508,17 @@ const DashboardViewPage = () => {
 
   return (
     <div className="bg-background min-h-screen flex flex-col flex-1">
-      {!isPresentationMode && <div className="sticky top-12 z-40 border-b border-border bg-card/90 backdrop-blur-sm print:hidden">
+      {!isPresentationMode && !isPublicMode && <div className="sticky top-12 z-40 border-b border-border bg-card/90 backdrop-blur-sm print:hidden">
         <div className="container flex items-center justify-between h-12 gap-4">
           <div className="flex items-center gap-2 min-w-0">
-            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => navigate(`/datasets/${datasetId}`)}>
+            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => navigate(resolvedDatasetId ? `/datasets/${resolvedDatasetId}` : "/datasets")}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <ContextualBreadcrumb
               className="hidden sm:block min-w-0"
               items={[
                 { label: "Datasets", href: "/datasets" },
-                { label: dataset.name, href: `/datasets/${datasetId}` },
+                { label: dataset.name, href: resolvedDatasetId ? `/datasets/${resolvedDatasetId}` : "/datasets" },
                 { label: dashboard.title },
               ]}
             />
@@ -465,6 +529,11 @@ const DashboardViewPage = () => {
               <Database className="h-3 w-3 inline mr-1" />
               Base semantica: {datasetSourceLabel}
             </span>
+            {dashboard.visibility === "public_view" && (
+              <Badge variant="secondary" className="text-[11px]">
+                Público
+              </Badge>
+            )}
             <div className="h-4 w-px bg-border hidden sm:block" />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -472,7 +541,10 @@ const DashboardViewPage = () => {
                   size="sm"
                   variant="outline"
                   className="h-8 text-xs"
-                  onClick={() => navigate(`/datasets/${datasetId}/builder/${dashboardId}`)}
+                  onClick={() => {
+                    if (!resolvedDatasetId || !dashboardId) return;
+                    navigate(`/datasets/${resolvedDatasetId}/builder/${dashboardId}`);
+                  }}
                   disabled={!canEditDashboard}
                 >
                   <Pencil className="h-3 w-3 sm:mr-1" />
@@ -506,7 +578,10 @@ const DashboardViewPage = () => {
                   size="sm"
                   variant="outline"
                   className="h-8 text-xs"
-                  onClick={() => navigate(`/presentation/datasets/${datasetId}/dashboard/${dashboardId}`)}
+                  onClick={() => {
+                    if (!publicShareKey) return;
+                    navigate(`/public/dashboard/${publicShareKey}`);
+                  }}
                 >
                   <Monitor className="h-3 w-3 sm:mr-1" />
                   <span className="hidden sm:inline">Apresentação</span>
@@ -758,7 +833,14 @@ const DashboardViewPage = () => {
             className="flex flex-col items-center justify-center py-24 gap-4"
           >
             <p className="text-sm text-muted-foreground">Este dashboard ainda não possui widgets.</p>
-            <Button variant="outline" onClick={() => navigate(`/datasets/${datasetId}/builder/${dashboardId}`)} disabled={!canEditDashboard}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!resolvedDatasetId || !dashboardId) return;
+                navigate(`/datasets/${resolvedDatasetId}/builder/${dashboardId}`);
+              }}
+              disabled={!canEditDashboard || !resolvedDatasetId || !dashboardId}
+            >
               <Pencil className="h-4 w-4 mr-1.5" /> Editar dashboard
             </Button>
           </motion.div>
@@ -784,7 +866,7 @@ const DashboardViewPage = () => {
           open={shareOpen}
           onOpenChange={setShareOpen}
           dashboardTitle={dashboard.title}
-          shareUrl={`${window.location.origin}/presentation/datasets/${datasetId}/dashboard/${dashboardId}`}
+          shareUrl={shareUrl}
           visibility={sharingQuery.data?.visibility}
           shares={sharingQuery.data?.shares || []}
           loading={sharingQuery.isLoading}
@@ -819,13 +901,13 @@ const ShareDashboardDialog = ({
   onOpenChange: (open: boolean) => void;
   dashboardTitle: string;
   shareUrl: string;
-  visibility?: "private" | "workspace_view" | "workspace_edit";
+  visibility?: "private" | "workspace_view" | "workspace_edit" | "public_view";
   shares: Array<{ id: number; email: string; permission: "view" | "edit" }>;
   loading: boolean;
   updatingVisibility: boolean;
   sharingByEmail: boolean;
   removingShare: boolean;
-  onVisibilityChange: (visibility: "private" | "workspace_view" | "workspace_edit") => void;
+  onVisibilityChange: (visibility: "private" | "workspace_view" | "workspace_edit" | "public_view") => void;
   onShareByEmail: (payload: { email: string; permission: "view" | "edit" }) => void;
   onRemoveShare: (shareId: number) => void;
 }) => {
@@ -852,11 +934,15 @@ const ShareDashboardDialog = ({
     ? "Todos podem editar"
     : visibility === "workspace_view"
       ? "Todos podem ver"
+      : visibility === "public_view"
+        ? "Público (sem login)"
       : "Restrito";
   const visibilityDescription = visibility === "workspace_edit"
     ? "Todas as pessoas do ambiente podem abrir e editar."
     : visibility === "workspace_view"
       ? "Todas as pessoas do ambiente podem abrir e visualizar."
+      : visibility === "public_view"
+        ? "Qualquer pessoa com o link pode abrir sem autenticação."
       : "Somente pessoas convidadas podem abrir este dashboard.";
 
   return (
@@ -1001,19 +1087,20 @@ const ShareDashboardDialog = ({
                 </div>
               </div>
               <Select
-                value={visibility || "private"}
-                onValueChange={(value) => onVisibilityChange(value as "private" | "workspace_view" | "workspace_edit")}
-                disabled={loading || updatingVisibility}
-              >
+              value={visibility || "private"}
+              onValueChange={(value) => onVisibilityChange(value as "private" | "workspace_view" | "workspace_edit" | "public_view")}
+              disabled={loading || updatingVisibility}
+            >
                 <SelectTrigger className="h-9 w-[210px] bg-background">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="private">Restrito</SelectItem>
-                  <SelectItem value="workspace_view">Todos podem ver</SelectItem>
-                  <SelectItem value="workspace_edit">Todos podem editar</SelectItem>
-                </SelectContent>
-              </Select>
+                <SelectItem value="private">Restrito</SelectItem>
+                <SelectItem value="workspace_view">Todos podem ver</SelectItem>
+                <SelectItem value="workspace_edit">Todos podem editar</SelectItem>
+                <SelectItem value="public_view">Público (sem login)</SelectItem>
+              </SelectContent>
+            </Select>
             </div>
           </div>
 
