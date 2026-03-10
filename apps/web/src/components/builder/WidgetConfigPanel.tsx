@@ -176,7 +176,11 @@ const parseTemporalDimensionValue = (value: string): { granularity: "month" | "w
 const extractKpiFormulaRefs = (formula: string): string[] => {
   const matches = formula.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || [];
   const fnNames = new Set(["COUNT", "DISTINCT", "SUM", "AVG", "MAX", "MIN"]);
-  return [...new Set(matches.filter((token) => !fnNames.has(token.toUpperCase())))];
+  const refs: string[] = [];
+  for (const token of matches) {
+    if (!fnNames.has(String(token).toUpperCase())) refs.push(String(token));
+  }
+  return [...new Set(refs)];
 };
 
 const isValidFormulaIdentifier = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
@@ -1066,6 +1070,20 @@ export const WidgetConfigPanel = ({
                     ))}
                   </SelectContent>
                 </Select>
+                {(draft.config.widget_type === "bar" || draft.config.widget_type === "column" || draft.config.widget_type === "donut") && (
+                  <Input
+                    className="w-[170px] h-8 text-xs"
+                    placeholder="Alias da metrica"
+                    value={metric.alias || ""}
+                    onChange={(e) =>
+                      update({
+                        config: {
+                          ...draft.config,
+                          metrics: [{ ...metric, alias: e.target.value || undefined }],
+                        },
+                      })}
+                  />
+                )}
                 {draft.config.widget_type === "donut" && (
                   <Select
                     value={draft.config.donut_metric_display || "value"}
@@ -1409,8 +1427,8 @@ export const WidgetConfigPanel = ({
                         <SelectItem value="max">MÁXIMO</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Select
-                      value={item.column || "__none__"}
+                  <Select
+                    value={item.column || "__none__"}
                       onValueChange={(value) => {
                         const nextColumn = value === "__none__" ? undefined : value;
                         const nextMetrics = [...draft.config.metrics];
@@ -1426,6 +1444,16 @@ export const WidgetConfigPanel = ({
                         ))}
                       </SelectContent>
                     </Select>
+                    <Input
+                      className="w-[170px] h-8 text-xs"
+                      placeholder="Alias da metrica"
+                      value={item.alias || ""}
+                      onChange={(e) => {
+                        const nextMetrics = [...draft.config.metrics];
+                        nextMetrics[index] = { ...item, alias: e.target.value || undefined, line_y_axis: item.line_y_axis || (index === 0 ? "left" : "right") };
+                        update({ config: { ...draft.config, metrics: nextMetrics } });
+                      }}
+                    />
                   <Button
                     type="button"
                     variant="ghost"

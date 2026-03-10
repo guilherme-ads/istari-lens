@@ -39,6 +39,7 @@ export interface Dataset {
     name: string;
     type: "numeric" | "temporal" | "text" | "boolean";
     source?: string;
+    description?: string;
   }>;
   dashboardIds: string[];
   createdAt: string;

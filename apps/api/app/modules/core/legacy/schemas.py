@@ -180,19 +180,24 @@ class DashboardWidgetResponse(BaseModel):
         from_attributes = True
 
 
+class DashboardNativeFilterConfig(FilterConfig):
+    visible: bool = False
+
+
 class DashboardResponse(BaseModel):
     id: int
     dataset_id: int
     created_by_id: Optional[int] = None
     is_owner: bool = False
     access_level: Literal["owner", "edit", "view"] = "view"
-    access_source: Literal["owner", "direct", "workspace"] = "direct"
-    visibility: Literal["private", "workspace_view", "workspace_edit"] = "private"
+    access_source: Literal["owner", "direct", "workspace", "public"] = "direct"
+    visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"] = "private"
+    public_share_key: Optional[str] = None
     name: str
     description: Optional[str]
     is_active: bool
     layout_config: List[dict] = Field(default_factory=list)
-    native_filters: List[FilterConfig] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     widgets: List[DashboardWidgetResponse]
     created_at: datetime
     updated_at: datetime
@@ -206,16 +211,16 @@ class DashboardCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
     layout_config: List[dict] = Field(default_factory=list)
-    native_filters: List[FilterConfig] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
     is_active: bool = True
-    visibility: Literal["private", "workspace_view", "workspace_edit"] = "private"
+    visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"] = "private"
 
 
 class DashboardUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     layout_config: Optional[List[dict]] = None
-    native_filters: Optional[List[FilterConfig]] = None
+    native_filters: Optional[List[DashboardNativeFilterConfig]] = None
     is_active: Optional[bool] = None
 
 
@@ -282,7 +287,7 @@ class DashboardWidgetBatchDataResponse(BaseModel):
 
 
 class DashboardDebugQueriesRequest(BaseModel):
-    native_filters_override: Optional[List[FilterConfig]] = None
+    native_filters_override: Optional[List[DashboardNativeFilterConfig]] = None
     global_filters: List[FilterConfig] = Field(default_factory=list)
     mode: Literal["widget", "dashboard"] = "widget"
 
@@ -327,8 +332,9 @@ class DashboardCatalogItemResponse(BaseModel):
     created_by_id: Optional[int] = None
     is_owner: bool = False
     access_level: Literal["owner", "edit", "view"] = "view"
-    access_source: Literal["owner", "direct", "workspace"] = "direct"
-    visibility: Literal["private", "workspace_view", "workspace_edit"] = "private"
+    access_source: Literal["owner", "direct", "workspace", "public"] = "direct"
+    visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"] = "private"
+    public_share_key: Optional[str] = None
     created_by_name: Optional[str] = None
     created_by_email: Optional[str] = None
     widget_count: int
@@ -363,12 +369,13 @@ class DashboardShareUpsertRequest(BaseModel):
 
 
 class DashboardVisibilityUpdateRequest(BaseModel):
-    visibility: Literal["private", "workspace_view", "workspace_edit"]
+    visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"]
 
 
 class DashboardSharingResponse(BaseModel):
     dashboard_id: int
-    visibility: Literal["private", "workspace_view", "workspace_edit"]
+    visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"]
+    public_share_key: Optional[str] = None
     shares: List[DashboardEmailShareResponse] = Field(default_factory=list)
 
 
@@ -376,6 +383,122 @@ class DashboardShareableUserResponse(BaseModel):
     id: int
     email: str
     full_name: Optional[str] = None
+
+
+class DashboardWidgetSnapshotPayload(BaseModel):
+    id: Optional[int] = None
+    widget_type: WidgetType
+    title: Optional[str] = None
+    position: int = 0
+    config: WidgetConfig
+    config_version: int = 1
+    visualization_config: Optional[dict] = None
+
+
+class DashboardSaveRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    visibility: Optional[Literal["private", "workspace_view", "workspace_edit", "public_view"]] = None
+    layout_config: List[dict] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
+    widgets: List[DashboardWidgetSnapshotPayload] = Field(default_factory=list)
+
+
+class DashboardVersionSummaryResponse(BaseModel):
+    id: int
+    dashboard_id: int
+    version_number: int
+    created_by_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DashboardExportResponse(BaseModel):
+    format: Literal["istari.dashboard.v1"] = "istari.dashboard.v1"
+    exported_at: datetime
+    dashboard: dict[str, Any]
+
+
+class DashboardImportRequest(BaseModel):
+    dataset_id: Optional[int] = None
+    dashboard: dict[str, Any]
+
+
+class DashboardImportConflictResponse(BaseModel):
+    scope: Literal["widget", "native_filter", "metadata"]
+    code: str
+    message: str
+    widget_index: Optional[int] = None
+    widget_title: Optional[str] = None
+    field: Optional[str] = None
+
+
+class DashboardImportPreviewResponse(BaseModel):
+    source_dataset_id: Optional[int] = None
+    target_dataset_id: int
+    same_dataset: bool
+    compatibility: Literal["compatible", "partial", "incompatible"]
+    total_widgets: int
+    valid_widgets: int
+    invalid_widgets: int
+    conflicts: List[DashboardImportConflictResponse] = Field(default_factory=list)
+
+
+class DashboardAIGenerateRequest(BaseModel):
+    dataset_id: int
+    prompt: str = Field(default="")
+    title: Optional[str] = None
+
+
+class DashboardAIGenerateWidgetResponse(BaseModel):
+    id: str
+    title: str
+    position: int
+    config_version: int = 1
+    config: dict[str, Any]
+
+
+class DashboardAIGenerateSectionResponse(BaseModel):
+    id: str
+    title: str
+    show_title: bool = True
+    columns: Literal[1, 2, 3, 4] = 2
+    widgets: List[DashboardAIGenerateWidgetResponse] = Field(default_factory=list)
+
+
+class DashboardAIGenerateResponse(BaseModel):
+    title: str
+    explanation: str
+    planning_steps: List[str] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
+    sections: List[DashboardAIGenerateSectionResponse] = Field(default_factory=list)
+
+
+class DashboardPublicResponse(BaseModel):
+    id: int
+    dataset_id: int
+    visibility: Literal["public_view"]
+    public_share_key: Optional[str] = None
+    name: str
+    description: Optional[str]
+    is_active: bool
+    layout_config: List[dict] = Field(default_factory=list)
+    native_filters: List[DashboardNativeFilterConfig] = Field(default_factory=list)
+    widgets: List[DashboardWidgetResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class DashboardEditLockResponse(BaseModel):
+    dashboard_id: int
+    is_locked: bool
+    is_locked_by_current_user: bool = False
+    locked_by_user_id: Optional[int] = None
+    locked_by_email: Optional[str] = None
+    expires_at: Optional[datetime] = None
 
 
 # ==================== QUERY SPEC ====================

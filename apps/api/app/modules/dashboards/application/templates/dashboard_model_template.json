@@ -1,0 +1,326 @@
+{
+  "format": "istari.dashboard.ai.template.v1",
+  "description": "Modelo de referencia para IA gerar dashboards compatíveis com o Lens.",
+  "rules": {
+    "use_only_dataset_columns": true,
+    "supported_section_columns": [1, 2, 3, 4],
+    "supported_widget_width": [1, 2, 3, 4],
+    "supported_widget_height": [0.5, 1, 2],
+    "widget_width_must_fit_section_columns": true,
+    "supported_widget_types": ["kpi", "line", "bar", "column", "donut", "table", "text", "dre"],
+    "metric_ops": ["count", "sum", "avg", "min", "max", "distinct_count"],
+    "time_granularity": ["day", "week", "month", "hour", "timestamp"],
+    "filter_ops": ["eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "is_null", "not_null", "between"],
+    "order_direction": ["asc", "desc"],
+    "visual_padding": ["compact", "normal", "comfortable"],
+    "visual_palette": ["default", "warm", "cool", "mono", "vivid"]
+  },
+  "response_shape": {
+    "explanation": "string",
+    "sections": [
+      {
+        "title": "string",
+        "columns": 2,
+        "widgets": [
+          {
+            "type": "kpi",
+            "title": "string",
+            "width": 1,
+            "height": 1
+          }
+        ]
+      }
+    ]
+  },
+  "dashboard_snapshot_example": {
+    "name": "Dashboard Modelo Completo",
+    "description": "Exemplo com todas as possibilidades de widget/config.",
+    "layout_config": [
+      {
+        "id": "sec-1",
+        "title": "Visao Geral",
+        "showTitle": true,
+        "columns": 4,
+        "widgets": [
+          { "id": "w-1", "width": 1, "height": 1 },
+          { "id": "w-2", "width": 1, "height": 1 },
+          { "id": "w-3", "width": 1, "height": 1 },
+          { "id": "w-4", "width": 1, "height": 1 }
+        ]
+      },
+      {
+        "id": "sec-2",
+        "title": "Analise Temporal",
+        "showTitle": true,
+        "columns": 4,
+        "widgets": [
+          { "id": "w-5", "width": 4, "height": 2 }
+        ]
+      },
+      {
+        "id": "sec-3",
+        "title": "Composicao e Ranking",
+        "showTitle": true,
+        "columns": 2,
+        "widgets": [
+          { "id": "w-6", "width": 2, "height": 2 },
+          { "id": "w-7", "width": 2, "height": 2 }
+        ]
+      },
+      {
+        "id": "sec-4",
+        "title": "DRE",
+        "showTitle": true,
+        "columns": 4,
+        "widgets": [
+          { "id": "w-8", "width": 4, "height": 2 }
+        ]
+      },
+      {
+        "id": "sec-5",
+        "title": "Detalhamento",
+        "showTitle": true,
+        "columns": 4,
+        "widgets": [
+          { "id": "w-9", "width": 4, "height": 2 }
+        ]
+      }
+    ],
+    "native_filters": [
+      { "column": "status", "op": "in", "value": ["active", "paused"] }
+    ],
+    "widgets": [
+      {
+        "id": "w-1",
+        "widget_type": "kpi",
+        "title": "Receita Total",
+        "config_version": 1,
+        "config": {
+          "widget_type": "kpi",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "default",
+          "size": { "width": 1, "height": 1 },
+          "kpi_show_as": "currency_brl",
+          "kpi_decimals": 2,
+          "kpi_type": "atomic",
+          "metrics": [{ "op": "sum", "column": "revenue" }],
+          "dimensions": [],
+          "filters": [],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-2",
+        "widget_type": "kpi",
+        "title": "Ticket Medio Derivado",
+        "config_version": 1,
+        "config": {
+          "widget_type": "kpi",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "default",
+          "size": { "width": 1, "height": 1 },
+          "kpi_show_as": "number_2",
+          "kpi_decimals": 2,
+          "kpi_type": "derived",
+          "formula": "(receita / pedidos)",
+          "dependencies": ["receita", "pedidos"],
+          "kpi_dependencies": [
+            { "source_type": "column", "column": "revenue", "alias": "receita" },
+            { "source_type": "column", "column": "orders", "alias": "pedidos" }
+          ],
+          "metrics": [],
+          "dimensions": [],
+          "filters": [],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-3",
+        "widget_type": "kpi",
+        "title": "Media Diaria de Receita",
+        "config_version": 1,
+        "config": {
+          "widget_type": "kpi",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "default",
+          "size": { "width": 1, "height": 1 },
+          "kpi_show_as": "number_2",
+          "kpi_type": "atomic",
+          "composite_metric": {
+            "type": "agg_over_time_bucket",
+            "inner_agg": "sum",
+            "outer_agg": "avg",
+            "value_column": "revenue",
+            "time_column": "created_at",
+            "granularity": "day"
+          },
+          "metrics": [],
+          "dimensions": [],
+          "filters": [],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-4",
+        "widget_type": "text",
+        "title": "Nota",
+        "config_version": 1,
+        "config": {
+          "widget_type": "text",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "compact",
+          "visual_palette": "mono",
+          "size": { "width": 1, "height": 1 },
+          "text_style": { "content": "Resumo executivo do periodo.", "font_size": 16, "align": "left" },
+          "metrics": [],
+          "dimensions": [],
+          "filters": [],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-5",
+        "widget_type": "line",
+        "title": "Evolucao Mensal",
+        "config_version": 1,
+        "config": {
+          "widget_type": "line",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "cool",
+          "size": { "width": 4, "height": 2 },
+          "metrics": [
+            { "op": "sum", "column": "revenue", "alias": "Receita", "line_y_axis": "left" },
+            { "op": "count", "column": "order_id", "alias": "Pedidos", "line_y_axis": "right" }
+          ],
+          "dimensions": [],
+          "time": { "column": "created_at", "granularity": "month" },
+          "line_data_labels_enabled": false,
+          "line_show_grid": true,
+          "line_data_labels_percent": 60,
+          "line_label_window": 3,
+          "line_label_min_gap": 2,
+          "line_label_mode": "both",
+          "filters": [{ "column": "status", "op": "eq", "value": "active" }],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-6",
+        "widget_type": "bar",
+        "title": "Top Categorias",
+        "config_version": 1,
+        "config": {
+          "widget_type": "bar",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "warm",
+          "size": { "width": 2, "height": 2 },
+          "metrics": [{ "op": "sum", "column": "revenue", "alias": "Receita" }],
+          "dimensions": ["category"],
+          "bar_data_labels_enabled": true,
+          "top_n": 10,
+          "filters": [],
+          "order_by": [{ "metric_ref": "Receita", "direction": "desc" }]
+        }
+      },
+      {
+        "id": "w-7",
+        "widget_type": "donut",
+        "title": "Composicao por Segmento",
+        "config_version": 1,
+        "config": {
+          "widget_type": "donut",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "vivid",
+          "size": { "width": 2, "height": 2 },
+          "metrics": [{ "op": "sum", "column": "revenue" }],
+          "dimensions": ["segment"],
+          "donut_show_legend": true,
+          "donut_data_labels_enabled": false,
+          "donut_data_labels_min_percent": 6,
+          "donut_metric_display": "value",
+          "top_n": 8,
+          "filters": [],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-8",
+        "widget_type": "dre",
+        "title": "Demonstrativo de Resultado",
+        "config_version": 1,
+        "config": {
+          "widget_type": "dre",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "normal",
+          "visual_palette": "default",
+          "size": { "width": 4, "height": 2 },
+          "metrics": [],
+          "dimensions": [],
+          "dre_rows": [
+            {
+              "title": "Receita Bruta",
+              "row_type": "result",
+              "impact": "add",
+              "metrics": [{ "op": "sum", "column": "gross_revenue" }]
+            },
+            {
+              "title": "Impostos",
+              "row_type": "deduction",
+              "impact": "subtract",
+              "metrics": [{ "op": "sum", "column": "taxes" }]
+            },
+            {
+              "title": "Margem de Contribuicao",
+              "row_type": "result",
+              "impact": "add",
+              "metrics": [{ "op": "sum", "column": "contribution_margin" }]
+            }
+          ],
+          "dre_percent_base_row_index": 0,
+          "filters": [],
+          "order_by": []
+        }
+      },
+      {
+        "id": "w-9",
+        "widget_type": "table",
+        "title": "Detalhamento de Registros",
+        "config_version": 1,
+        "config": {
+          "widget_type": "table",
+          "view_name": "__dataset_base",
+          "show_title": true,
+          "visual_padding": "comfortable",
+          "visual_palette": "default",
+          "size": { "width": 4, "height": 2 },
+          "metrics": [],
+          "dimensions": [],
+          "columns": ["created_at", "category", "segment", "revenue", "status"],
+          "table_column_formats": {
+            "created_at": "date",
+            "revenue": "currency_brl"
+          },
+          "table_page_size": 25,
+          "filters": [{ "column": "created_at", "op": "between", "value": ["2025-01-01", "2025-12-31"] }],
+          "order_by": [{ "column": "created_at", "direction": "desc" }],
+          "limit": 100,
+          "offset": 0
+        }
+      }
+    ]
+  }
+}
