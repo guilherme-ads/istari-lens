@@ -314,7 +314,8 @@ const EmptyWidgetState = ({ text }: { text: string }) => (
   <div className="text-xs text-muted-foreground text-center">{text}</div>
 );
 
-const parseTemporalDimensionToken = (value: string): { column: string; granularity: "month" | "week" | "weekday" | "hour" } | null => {
+const parseTemporalDimensionToken = (value: string): { column: string; granularity: "day" | "month" | "week" | "weekday" | "hour" } | null => {
+  if (value.startsWith("__time_day__:")) return { column: value.slice("__time_day__:".length), granularity: "day" };
   if (value.startsWith("__time_month__:")) return { column: value.slice("__time_month__:".length), granularity: "month" };
   if (value.startsWith("__time_week__:")) return { column: value.slice("__time_week__:".length), granularity: "week" };
   if (value.startsWith("__time_weekday__:")) return { column: value.slice("__time_weekday__:".length), granularity: "weekday" };
@@ -322,11 +323,74 @@ const parseTemporalDimensionToken = (value: string): { column: string; granulari
   return null;
 };
 
+const buildTemporalDimensionToken = (column: string, granularity: "day" | "week" | "month" | "hour"): string => (
+  `__time_${granularity}__:${column}`
+);
+
+const toYmd = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const shiftDays = (date: Date, days: number): Date => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const resolveRelativeBetweenValue = (rawValue: unknown): [string, string] | null => {
+  if (!rawValue || typeof rawValue !== "object") return null;
+  const relativeRaw = (rawValue as { relative?: unknown }).relative;
+  if (typeof relativeRaw !== "string") return null;
+  const preset = relativeRaw as
+    | "today"
+    | "yesterday"
+    | "last_7_days"
+    | "last_30_days"
+    | "this_year"
+    | "this_month"
+    | "last_month";
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  if (preset === "today") return [toYmd(end), toYmd(end)];
+  if (preset === "yesterday") {
+    const day = shiftDays(end, -1);
+    return [toYmd(day), toYmd(day)];
+  }
+  if (preset === "last_7_days") {
+    const start = shiftDays(end, -6);
+    return [toYmd(start), toYmd(end)];
+  }
+  if (preset === "last_30_days") {
+    const start = shiftDays(end, -29);
+    return [toYmd(start), toYmd(end)];
+  }
+  if (preset === "this_year") {
+    const start = new Date(end.getFullYear(), 0, 1);
+    return [toYmd(start), toYmd(end)];
+  }
+  if (preset === "this_month") {
+    const start = new Date(end.getFullYear(), end.getMonth(), 1);
+    return [toYmd(start), toYmd(end)];
+  }
+  if (preset === "last_month") {
+    const start = new Date(end.getFullYear(), end.getMonth() - 1, 1);
+    const lastDayPrevMonth = new Date(end.getFullYear(), end.getMonth(), 0);
+    return [toYmd(start), toYmd(lastDayPrevMonth)];
+  }
+  return null;
+};
+
 const normalizePreviewFilterValue = (op: string, rawValue: unknown): unknown[] | undefined | null => {
   if (op === "is_null" || op === "not_null") return undefined;
   if (op === "between") {
-    if (!Array.isArray(rawValue) || rawValue.length !== 2) return null;
-    return [rawValue[0], rawValue[1]];
+    if (Array.isArray(rawValue) && rawValue.length === 2) return [rawValue[0], rawValue[1]];
+    const relativeRange = resolveRelativeBetweenValue(rawValue);
+    if (relativeRange) return [relativeRange[0], relativeRange[1]];
+    return null;
   }
   if (op === "in" || op === "not_in") {
     if (Array.isArray(rawValue)) return rawValue;
@@ -404,7 +468,10 @@ const buildDraftPreviewSpec = ({
     if (parsedTemporalDimension) {
       const normalizedColumn = parsedTemporalDimension.column.trim();
       if (!normalizedColumn) return null;
-      dimensions = [normalizedColumn];
+      // Keep temporal token in preview spec so backend applies derived granularity (month/week/etc),
+      // matching persisted widget execution behavior.
+      dimensions = [rawDimension];
+      // Fallback alias in case backend returns base column instead of temporal token.
       dimensionAliasMap[rawDimension] = normalizedColumn;
     } else {
       dimensions = [rawDimension];
@@ -412,8 +479,13 @@ const buildDraftPreviewSpec = ({
   } else if (isLine) {
     lineTimeColumn = widget.config.time?.column;
     if (!lineTimeColumn) return null;
+    const lineGranularity = widget.config.time?.granularity || "day";
+    const lineTimeDimension = lineGranularity === "timestamp"
+      ? lineTimeColumn
+      : buildTemporalDimensionToken(lineTimeColumn, lineGranularity);
     const legendDimension = (widget.config.dimensions || []).slice(0, 1);
-    dimensions = [lineTimeColumn, ...legendDimension];
+    dimensions = [lineTimeDimension, ...legendDimension];
+    lineTimeColumn = lineTimeDimension;
   } else if (isTable) {
     dimensions = (widget.config.columns || [])
       .map((column) => column.trim())
@@ -421,7 +493,10 @@ const buildDraftPreviewSpec = ({
     if (dimensions.length === 0) return null;
   }
 
-  const mergedFilters = [...(nativeFilters || []), ...(widget.config.filters || [])];
+  const mergedFilters = [
+    ...(nativeFilters || []).filter((filter) => filter.visible !== false),
+    ...(widget.config.filters || []),
+  ];
   const filters: ApiQuerySpec["filters"] = [];
   for (const filter of mergedFilters) {
     if (!filter.column) continue;

@@ -252,14 +252,18 @@ const generateDashboardFallback = (params: { prompt: string; columns: SemanticCo
       id: makeSectionId(),
       title: "Visao Geral",
       showTitle: true,
-      columns: 2,
+      columns: 4,
       widgets: [],
     });
     explanationParts.push("Nao identifiquei combinacoes seguras para autogerar widgets");
   }
 
+  const normalizedSections: DashboardSection[] = sections.map((section, index) => (
+    index === 0 ? { ...section, columns: 4 as const } : section
+  ));
+
   return {
-    sections,
+    sections: normalizedSections,
     explanation: explanationParts.join(". "),
     planningSteps: explanationParts,
   };
@@ -269,7 +273,7 @@ const createManualSections = (): DashboardSection[] => [{
   id: makeSectionId(),
   title: "Visao Geral",
   showTitle: true,
-  columns: 2,
+  columns: 4,
   widgets: [],
 }];
 
@@ -743,11 +747,11 @@ const DashboardSetup = ({
       return;
     }
 
-    const mappedSections: DashboardSection[] = aiResult.sections.map((section) => ({
+    const mappedSections: DashboardSection[] = aiResult.sections.map((section, index) => ({
       id: section.id,
       title: section.title,
       showTitle: section.show_title,
-      columns: section.columns,
+      columns: index === 0 ? 4 : section.columns,
       widgets: section.widgets.map((widget) => ({
         id: widget.id,
         title: widget.title,

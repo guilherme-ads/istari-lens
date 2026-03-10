@@ -10,6 +10,7 @@ from app.errors import EngineError
 from app.schemas import FilterSpec, QuerySpec
 
 _TEMPORAL_DIMENSION_PREFIXES: dict[str, str] = {
+    "__time_day__": "day",
     "__time_month__": "month",
     "__time_week__": "week",
     "__time_weekday__": "weekday",
@@ -147,9 +148,9 @@ def _dimension_sql(dimension: str) -> tuple[str, str]:
     col_ident = _quote_ident(column)
 
     if granularity == "month":
-        expr = f"TO_CHAR(DATE_TRUNC('month', {col_ident}), 'YYYY-MM')"
+        expr = f"DATE_TRUNC('month', {col_ident})"
     elif granularity == "week":
-        expr = f"('S' || LPAD(EXTRACT(WEEK FROM {col_ident})::int::text, 2, '0'))"
+        expr = f"DATE_TRUNC('week', {col_ident})"
     elif granularity == "weekday":
         expr = (
             f"CASE EXTRACT(ISODOW FROM {col_ident})::int "
@@ -173,7 +174,7 @@ def _dimension_order_sql(dimension: str, direction: str) -> str | None:
     if granularity == "weekday":
         return f"MIN(EXTRACT(ISODOW FROM {col_ident})) {direction}"
     if granularity == "week":
-        return f"MIN(EXTRACT(WEEK FROM {col_ident})) {direction}"
+        return f"MIN(DATE_TRUNC('week', {col_ident})) {direction}"
     if granularity == "month":
         return f"MIN(DATE_TRUNC('month', {col_ident})) {direction}"
     if granularity == "hour":

@@ -11,7 +11,7 @@ WidgetType = Literal["kpi", "line", "bar", "column", "donut", "table", "text", "
 MetricOp = Literal["count", "sum", "avg", "min", "max", "distinct_count"]
 KpiType = Literal["atomic", "derived"]
 TimeGranularity = Literal["day", "week", "month", "hour", "timestamp"]
-TemporalDimensionGranularity = Literal["month", "week", "weekday", "hour"]
+TemporalDimensionGranularity = Literal["day", "month", "week", "weekday", "hour"]
 DreRowType = Literal["result", "deduction", "detail"]
 DreRowImpact = Literal["add", "subtract"]
 OrderDirection = Literal["asc", "desc"]
@@ -32,6 +32,7 @@ FilterOp = Literal[
 ]
 
 TEMPORAL_DIMENSION_PREFIXES: dict[str, TemporalDimensionGranularity] = {
+    "__time_day__": "day",
     "__time_month__": "month",
     "__time_week__": "week",
     "__time_weekday__": "weekday",

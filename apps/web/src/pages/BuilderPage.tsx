@@ -339,18 +339,25 @@ const BuilderPage = () => {
     value: "",
     visible,
   }), []);
-  const buildInitialGlobalNativeFilter = useCallback((): DraftNativeFilter => {
-    const temporalColumn = datasetColumns.find((column) => normalizeSemanticColumnType(column.type) === "temporal");
-    if (!temporalColumn) return buildBlankNativeFilter(true);
-    return {
-      id: `nf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      column: temporalColumn.name,
-      op: "relative",
-      value: "",
-      relativePreset: "last_30_days",
-      visible: true,
-    };
-  }, [buildBlankNativeFilter, datasetColumns]);
+  const buildInitialGlobalNativeFilter = useCallback((): DraftNativeFilter => (
+    buildBlankNativeFilter(true)
+  ), [buildBlankNativeFilter]);
+  const addNativeFilterRow = useCallback((afterIndex: number) => {
+    setNativeFilters((prev) => {
+      const next = [...prev];
+      const safeIndex = Math.max(0, Math.min(afterIndex, next.length - 1));
+      next.splice(safeIndex + 1, 0, buildBlankNativeFilter(true));
+      return next;
+    });
+  }, [buildBlankNativeFilter]);
+  const removeNativeFilterRow = useCallback((index: number) => {
+    setNativeFilters((prev) => {
+      if (prev.length <= 1) {
+        return [buildBlankNativeFilter(true)];
+      }
+      return prev.filter((_, itemIndex) => itemIndex !== index);
+    });
+  }, [buildBlankNativeFilter]);
   const columnTypeByName = useMemo(
     () => Object.fromEntries(datasetColumns.map((column) => [column.name, normalizeSemanticColumnType(column.type)])),
     [datasetColumns],
@@ -412,7 +419,7 @@ const BuilderPage = () => {
   const [targetSectionId, setTargetSectionId] = useState<string | null>(null);
   const [editingWidget, setEditingWidget] = useState<DashboardWidget | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-  const [editingWidgetSectionColumns, setEditingWidgetSectionColumns] = useState<1 | 2 | 3 | 4>(2);
+  const [editingWidgetSectionColumns, setEditingWidgetSectionColumns] = useState<1 | 2 | 3 | 4>(4);
   const [previewMode, setPreviewMode] = useState(false);
   const [devModeOpen, setDevModeOpen] = useState(false);
   const [devModeSqlView, setDevModeSqlView] = useState<"widget" | "dashboard">("widget");
@@ -586,11 +593,15 @@ const BuilderPage = () => {
       configVersion: 1,
       config: defaultConfig,
     };
+    const targetSection = sections.find((section) => section.id === targetSectionId);
 
     const nextSections = sections.map((section) =>
       section.id === targetSectionId ? { ...section, widgets: [...section.widgets, mappedWidget] } : section,
     );
     setSections(nextSections);
+    setEditingWidget(mappedWidget);
+    setEditingWidgetSectionColumns(targetSection?.columns || 4);
+    setConfigOpen(true);
     toast({ title: "Widget adicionado (rascunho)" });
   }, [dataset, datasetColumns, datasetSourceLabel, makeTempWidgetId, sections, targetSectionId, toast, view]);
 
@@ -617,7 +628,7 @@ const BuilderPage = () => {
   const handleEditWidget = useCallback((widget: DashboardWidget) => {
     setEditingWidget(widget);
     const hostSection = sections.find((section) => section.widgets.some((item) => item.id === widget.id));
-    setEditingWidgetSectionColumns(hostSection?.columns || 2);
+    setEditingWidgetSectionColumns(hostSection?.columns || 4);
     setConfigOpen(true);
   }, [sections]);
 
@@ -1351,8 +1362,8 @@ const BuilderPage = () => {
                     ? [String(filter.value[0] || ""), String(filter.value[1] || "")]
                     : ["", ""];
                   const rowLayoutClass = isTemporal
-                    ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto_auto] gap-2 items-center"
-                    : "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(220px,1fr)_auto_auto] gap-2 items-center";
+                    ? "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(200px,1fr)_auto_auto_auto] gap-2 items-center"
+                    : "grid grid-cols-1 md:grid-cols-[minmax(180px,1fr)_120px_minmax(220px,1fr)_auto_auto_auto] gap-2 items-center";
                   return (
                     <div key={filter.id} className={rowLayoutClass}>
                       <Select
@@ -1570,6 +1581,16 @@ const BuilderPage = () => {
                         size="icon"
                         variant="ghost"
                         className="h-8 w-8"
+                        onClick={() => addNativeFilterRow(filterIndex)}
+                        title={`Adicionar filtro após linha ${filterIndex + 1}`}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
+
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8"
                         onClick={() =>
                           setNativeFilters((prev) => prev.map((item) => (item.id === filter.id ? { ...item, visible: !item.visible } : item)))
                         }
@@ -1578,32 +1599,20 @@ const BuilderPage = () => {
                         {filter.visible ? <Eye className="h-3.5 w-3.5 text-foreground" /> : <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />}
                       </Button>
 
-                      {filterIndex > 0 ? (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => setNativeFilters((prev) => prev.filter((item) => item.id !== filter.id))}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      ) : (
-                        <div className="h-8 w-8" />
-                      )}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => removeNativeFilterRow(filterIndex)}
+                        title={`Remover filtro ${filterIndex + 1}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   );
                 })}
                 <div className="flex justify-between items-center pt-1">
                   <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-8 text-xs"
-                      onClick={() => setNativeFilters((prev) => [...prev, buildBlankNativeFilter(true)])}
-                    >
-                      <Plus className="h-3.5 w-3.5 mr-1.5" /> Adicionar filtro nativo
-                    </Button>
                     <Button
                       type="button"
                       size="sm"
