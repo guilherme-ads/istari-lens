@@ -37,6 +37,24 @@ def _kpi_spec(*, metrics: list[dict], filters: list[dict] | None = None, time: d
     )
 
 
+def _kpi_composite_spec(*, filters: list[dict] | None = None) -> QuerySpec:
+    return QuerySpec.model_validate(
+        {
+            "resource_id": "public.vw_sales",
+            "widget_type": "kpi",
+            "metrics": [],
+            "filters": filters or [],
+            "composite_metric": {
+                "inner_agg": "count",
+                "outer_agg": "avg",
+                "value_column": "id",
+                "time_column": "created_at",
+                "granularity": "day",
+            },
+        }
+    )
+
+
 def test_line_fuses_with_different_order_and_reorders_per_widget(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"count": 0}
 
@@ -112,6 +130,35 @@ def test_kpi_with_time_present_and_absent_does_not_fuse(monkeypatch: pytest.Monk
     response = asyncio.run(pipeline.execute_batch(specs=[("a", with_time), ("b", without_time)], datasource_url="postgresql://fake"))
     assert response.executed_count == 2
     assert calls["count"] == 2
+
+
+def test_kpi_atomic_and_composite_do_not_fuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"count": 0}
+
+    async def fake_execute(self, *, sql: str, params: list[object], timeout_seconds: int):
+        _ = self
+        _ = timeout_seconds
+        calls["count"] += 1
+        assert params == ["SP"]
+        if "kpi_bucketed" in sql:
+            return ["m0"], [{"m0": 12.5}]
+        assert '"m1"' not in sql
+        return ["m0"], [{"m0": 7}]
+
+    monkeypatch.setattr(PostgresAdapter, "execute", fake_execute)
+    pipeline = QueryPipeline(Settings(environment="test"))
+
+    atomic = _kpi_spec(metrics=[{"field": "id", "agg": "count"}], filters=[{"field": "region", "op": "eq", "value": "SP"}])
+    composite = _kpi_composite_spec(filters=[{"field": "region", "op": "eq", "value": "SP"}])
+
+    response = asyncio.run(pipeline.execute_batch(specs=[("a", atomic), ("b", composite)], datasource_url="postgresql://fake"))
+
+    assert response.executed_count == 2
+    assert calls["count"] == 2
+    assert response.results[0].result.columns == ["m0"]
+    assert response.results[0].result.rows == [{"m0": 7}]
+    assert response.results[1].result.columns == ["m0"]
+    assert response.results[1].result.rows == [{"m0": 12.5}]
 
 
 def test_line_supports_multiple_metrics_per_widget(monkeypatch: pytest.MonkeyPatch) -> None:

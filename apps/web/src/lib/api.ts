@@ -378,7 +378,7 @@ export type ApiQuerySpec = {
   datasetId: number;
   metrics: Array<{ field: string; agg: string }>;
   dimensions: string[];
-  filters: Array<{ field: string; op: string; value?: unknown[] }>;
+  filters: Array<{ field: string; op: string; value?: unknown }>;
   sort: Array<{ field: string; dir: "asc" | "desc" }>;
   limit: number;
   offset: number;
@@ -985,7 +985,7 @@ export const api = {
       layout_config: Record<string, unknown>[];
       native_filters: ApiDashboardNativeFilter[];
       widgets: Array<{
-        id?: number;
+        id?: number | string;
         widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
         title?: string;
         position?: number;

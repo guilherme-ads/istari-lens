@@ -386,7 +386,7 @@ class DashboardShareableUserResponse(BaseModel):
 
 
 class DashboardWidgetSnapshotPayload(BaseModel):
-    id: Optional[int] = None
+    id: Optional[int | str] = None
     widget_type: WidgetType
     title: Optional[str] = None
     position: int = 0
