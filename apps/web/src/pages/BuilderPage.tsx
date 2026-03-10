@@ -1772,6 +1772,7 @@ const BuilderPage = () => {
             onToggleWidgetTitle={handleToggleWidgetTitle}
             onAddSection={handleAddSection}
             readOnly={previewMode}
+            builderMode={!previewMode}
             refreshingWidgetIds={refreshingWidgetIds}
           />
         )}

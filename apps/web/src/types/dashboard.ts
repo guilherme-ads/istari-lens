@@ -89,6 +89,7 @@ export interface WidgetConfig {
   line_data_labels_enabled?: boolean;
   line_show_grid?: boolean;
   bar_data_labels_enabled?: boolean;
+  bar_show_grid?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;
@@ -149,7 +150,7 @@ export const createSection = (): DashboardSection => ({
   id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   title: "",
   showTitle: true,
-  columns: 2,
+  columns: 4,
   widgets: [],
 });
 
@@ -168,7 +169,7 @@ export const createDefaultWidgetConfig = (params: {
     return {
       widget_type: "kpi",
       view_name: viewName,
-      show_title: true,
+      show_title: false,
       visual_padding: "normal",
       visual_palette: "default",
       kpi_show_as: "number_2",
@@ -177,7 +178,7 @@ export const createDefaultWidgetConfig = (params: {
       formula: undefined,
       dependencies: [],
       kpi_dependencies: [],
-      size: { width: 1, height: 1 },
+      size: { width: 1, height: 0.5 },
       composite_metric: undefined,
       metrics: [{ op: "count", column: numeric?.name || fallback?.name }],
       dimensions: [],
@@ -194,7 +195,7 @@ export const createDefaultWidgetConfig = (params: {
       visual_padding: "normal",
       visual_palette: "default",
       line_data_labels_enabled: false,
-      line_show_grid: true,
+      line_show_grid: false,
       line_data_labels_percent: 60,
       line_label_window: 3,
       line_label_min_gap: 2,
@@ -218,7 +219,8 @@ export const createDefaultWidgetConfig = (params: {
       show_title: true,
       visual_padding: "normal",
       visual_palette: "default",
-      bar_data_labels_enabled: type === "bar" || type === "column" ? true : undefined,
+      bar_data_labels_enabled: type === "bar" || type === "column" ? false : undefined,
+      bar_show_grid: type === "bar" || type === "column" ? false : undefined,
       donut_show_legend: type === "donut" ? true : undefined,
       donut_data_labels_enabled: type === "donut" ? false : undefined,
       donut_data_labels_min_percent: type === "donut" ? 6 : undefined,

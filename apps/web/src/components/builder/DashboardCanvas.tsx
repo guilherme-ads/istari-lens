@@ -26,6 +26,7 @@ interface DashboardCanvasProps {
   onToggleWidgetTitle: (widget: DashboardWidget) => void;
   onAddSection: (afterIndex?: number) => void;
   readOnly?: boolean;
+  builderMode?: boolean;
   refreshingWidgetIds?: Set<string>;
 }
 
@@ -100,6 +101,7 @@ type WidgetCardProps = {
   nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
   sectionColumns: 1 | 2 | 3 | 4;
   widget: DashboardWidget;
+  builderMode?: boolean;
   canDrag?: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
@@ -120,6 +122,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
   nativeFilters,
   sectionColumns,
   widget,
+  builderMode = false,
   canDrag = false,
   onDragStart,
   onDragEnd,
@@ -258,6 +261,7 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
         dashboardId={dashboardId}
         datasetId={datasetId}
         nativeFilters={nativeFilters}
+        builderMode={builderMode}
         heightMultiplier={(widget.config.size?.height || 1) as 0.5 | 1 | 2}
         hideTableExport={!readOnly}
         forcedLoading={isRefreshing}
@@ -288,6 +292,7 @@ const SectionBlock = ({
   onDuplicateWidget,
   onToggleWidgetTitle,
   readOnly = false,
+  builderMode = false,
   refreshingWidgetIds = new Set(),
 }: {
   dashboardId?: string;
@@ -310,6 +315,7 @@ const SectionBlock = ({
   onDuplicateWidget: (w: DashboardWidget) => void;
   onToggleWidgetTitle: (w: DashboardWidget) => void;
   readOnly?: boolean;
+  builderMode?: boolean;
   refreshingWidgetIds?: Set<string>;
 }) => {
   const [editingTitle, setEditingTitle] = useState(false);
@@ -477,6 +483,7 @@ const SectionBlock = ({
               onDuplicate={() => onDuplicateWidget(w)}
               onToggleTitle={() => onToggleWidgetTitle(w)}
               readOnly={readOnly}
+              builderMode={builderMode}
               isRefreshing={refreshingWidgetIds.has(w.id)}
             />
           ))}
@@ -511,6 +518,7 @@ export const DashboardCanvas = ({
   onToggleWidgetTitle,
   onAddSection,
   readOnly = false,
+  builderMode = false,
   refreshingWidgetIds = new Set(),
 }: DashboardCanvasProps) => {
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
@@ -595,6 +603,7 @@ export const DashboardCanvas = ({
               onDuplicateWidget={onDuplicateWidget}
               onToggleWidgetTitle={onToggleWidgetTitle}
               readOnly={readOnly}
+              builderMode={builderMode}
               refreshingWidgetIds={refreshingWidgetIds}
             />
             {!readOnly && (

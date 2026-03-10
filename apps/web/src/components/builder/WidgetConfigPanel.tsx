@@ -682,7 +682,7 @@ export const WidgetConfigPanel = ({
             line_y_axis: item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right",
           })),
           dimensions: normalizedDraft.config.dimensions.slice(0, 1),
-          line_show_grid: normalizedDraft.config.line_show_grid !== false,
+          line_show_grid: !!normalizedDraft.config.line_show_grid,
           line_data_labels_percent: Math.max(25, Math.min(100, normalizedDraft.config.line_data_labels_percent || 60)),
           line_label_window: 3,
           line_label_min_gap: 2,
@@ -2050,18 +2050,33 @@ export const WidgetConfigPanel = ({
                   )}
 
                   {(draft.config.widget_type === "bar" || draft.config.widget_type === "column") && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Mostrar rótulos de dados</span>
-                      <Switch
-                        checked={draft.config.bar_data_labels_enabled !== false}
-                        onCheckedChange={(checked) =>
-                          update({
-                            config: {
-                              ...draft.config,
-                              bar_data_labels_enabled: checked,
-                            },
-                          })}
-                      />
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mostrar linhas de grade</span>
+                        <Switch
+                          checked={!!draft.config.bar_show_grid}
+                          onCheckedChange={(checked) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                bar_show_grid: checked,
+                              },
+                            })}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mostrar rótulos de dados</span>
+                        <Switch
+                          checked={draft.config.bar_data_labels_enabled !== false}
+                          onCheckedChange={(checked) =>
+                            update({
+                              config: {
+                                ...draft.config,
+                                bar_data_labels_enabled: checked,
+                              },
+                            })}
+                        />
+                      </div>
                     </div>
                   )}
 

@@ -301,6 +301,7 @@ type RendererProps = {
   datasetId?: number;
   nativeFilters?: Array<{ column: string; op: string; value?: unknown; visible?: boolean }>;
   disableFetch?: boolean;
+  builderMode?: boolean;
   heightMultiplier?: 0.5 | 1 | 2;
   preloadedData?: ApiDashboardWidgetDataResponse;
   preloadedLoading?: boolean;
@@ -340,6 +341,7 @@ type DraftPreviewPlan = {
   spec: ApiQuerySpec;
   lineTimeColumn?: string;
   dimensionAliasMap?: Record<string, string>;
+  dreRowMetricKeys?: Record<string, string[]>;
 };
 
 const buildDraftPreviewSpec = ({
@@ -355,10 +357,12 @@ const buildDraftPreviewSpec = ({
   const isKpi = widgetType === "kpi";
   const isLine = widgetType === "line";
   const isCategorical = widgetType === "bar" || widgetType === "column" || widgetType === "donut";
-  if (!isKpi && !isCategorical && !isLine) return null;
+  const isTable = widgetType === "table";
+  const isDre = widgetType === "dre";
+  if (!isKpi && !isCategorical && !isLine && !isTable && !isDre) return null;
   if (isKpi && (widget.config.kpi_type === "derived" || !!widget.config.composite_metric)) return null;
 
-  const metrics = (widget.config.metrics || [])
+  let metrics = (widget.config.metrics || [])
     .filter((metric) => !!metric.op)
     .map((metric) => ({
       field: metric.column || "*",
@@ -366,6 +370,29 @@ const buildDraftPreviewSpec = ({
     }));
   if ((isKpi || isCategorical) && metrics.length !== 1) return null;
   if (isLine && (metrics.length < 1 || metrics.length > 2)) return null;
+  const dreRowMetricKeys: Record<string, string[]> = {};
+  if (isDre) {
+    const dreRows = widget.config.dre_rows || [];
+    if (dreRows.length === 0) return null;
+    metrics = [];
+    for (let rowIndex = 0; rowIndex < dreRows.length; rowIndex += 1) {
+      const row = dreRows[rowIndex];
+      const rowMetrics = (row.metrics || [])
+        .filter((metric) => !!metric.op && (metric.op === "count" || !!metric.column))
+        .map((metric) => ({
+          field: metric.column || "*",
+          agg: metric.op,
+        }));
+      if (rowMetrics.length === 0) return null;
+      const targetKey = `m${rowIndex}`;
+      dreRowMetricKeys[targetKey] = [];
+      rowMetrics.forEach((metric) => {
+        const sourceKey = `m${metrics.length}`;
+        metrics.push(metric);
+        dreRowMetricKeys[targetKey].push(sourceKey);
+      });
+    }
+  }
 
   const dimensionAliasMap: Record<string, string> = {};
   let dimensions: string[] = [];
@@ -387,6 +414,11 @@ const buildDraftPreviewSpec = ({
     if (!lineTimeColumn) return null;
     const legendDimension = (widget.config.dimensions || []).slice(0, 1);
     dimensions = [lineTimeColumn, ...legendDimension];
+  } else if (isTable) {
+    dimensions = (widget.config.columns || [])
+      .map((column) => column.trim())
+      .filter((column) => !!column);
+    if (dimensions.length === 0) return null;
   }
 
   const mergedFilters = [...(nativeFilters || []), ...(widget.config.filters || [])];
@@ -407,7 +439,7 @@ const buildDraftPreviewSpec = ({
   if (isLine && lineTimeColumn) {
     sort = [{ field: lineTimeColumn, dir: "asc" }];
   } else {
-    const sortField = firstOrder?.metric_ref || firstOrder?.column;
+    const sortField = isTable ? firstOrder?.column : firstOrder?.metric_ref || firstOrder?.column;
     sort = sortField
       ? [{ field: sortField, dir: firstOrder?.direction === "asc" ? "asc" : "desc" }]
       : [];
@@ -417,6 +449,10 @@ const buildDraftPreviewSpec = ({
     ? (widget.config.limit || 500)
     : isKpi
     ? 1
+    : isDre
+    ? 1
+    : isTable
+    ? (widget.config.limit || widget.config.table_page_size || 25)
     : (widget.config.top_n || widget.config.limit || 200);
   const limit = Math.max(1, Math.min(5000, Number(rawLimit) || 200));
   const offset = Math.max(0, Number(widget.config.offset) || 0);
@@ -433,6 +469,7 @@ const buildDraftPreviewSpec = ({
     },
     lineTimeColumn,
     dimensionAliasMap: Object.keys(dimensionAliasMap).length > 0 ? dimensionAliasMap : undefined,
+    dreRowMetricKeys: Object.keys(dreRowMetricKeys).length > 0 ? dreRowMetricKeys : undefined,
   };
 };
 
@@ -710,6 +747,7 @@ export const WidgetRenderer = ({
   datasetId,
   nativeFilters = [],
   disableFetch = false,
+  builderMode = false,
   heightMultiplier = 1,
   preloadedData,
   preloadedLoading = false,
@@ -721,11 +759,6 @@ export const WidgetRenderer = ({
   const numericDashboardId = Number(dashboardId);
   const numericWidgetId = Number(widget.id);
   const hasPersistedWidgetId = Number.isFinite(numericWidgetId) && numericWidgetId > 0;
-  const shouldFetchPersisted = !disableFetch
-    && Number.isFinite(numericDashboardId)
-    && numericDashboardId > 0
-    && !isTextWidget
-    && hasPersistedWidgetId;
   const persistedGlobalFilters = useMemo(
     () =>
       (nativeFilters || [])
@@ -733,14 +766,22 @@ export const WidgetRenderer = ({
         .map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
     [nativeFilters],
   );
+  // In builder mode, try draft preview first; fall back to persisted fetch if spec can't be built
   const draftPreviewPlan = useMemo(
     () => {
-      if (disableFetch || hasPersistedWidgetId || !datasetId || isTextWidget) return null;
+      if (disableFetch || (!builderMode && hasPersistedWidgetId) || !datasetId || isTextWidget) return null;
       return buildDraftPreviewSpec({ widget, datasetId, nativeFilters });
     },
-    [datasetId, disableFetch, hasPersistedWidgetId, isTextWidget, nativeFilters, widget],
+    [builderMode, datasetId, disableFetch, hasPersistedWidgetId, isTextWidget, nativeFilters, widget],
   );
-  const shouldFetchDraftPreview = !disableFetch && !hasPersistedWidgetId && !!draftPreviewPlan?.spec;
+  const shouldFetchDraftPreview = !disableFetch && (builderMode || !hasPersistedWidgetId) && !!draftPreviewPlan?.spec;
+  // Use persisted fetch when: not in builder mode (normal), OR in builder mode as fallback when draft spec can't be built
+  const shouldFetchPersisted = !disableFetch
+    && !isTextWidget
+    && hasPersistedWidgetId
+    && Number.isFinite(numericDashboardId)
+    && numericDashboardId > 0
+    && (!builderMode || !draftPreviewPlan?.spec);
 
   const widgetQuery = useQuery({
     queryKey: ["widget-data", dashboardId, widget.id, JSON.stringify(persistedGlobalFilters)],
@@ -776,6 +817,9 @@ export const WidgetRenderer = ({
       Object.entries(draftPreviewPlan.dimensionAliasMap || {}).forEach(([target, source]) => {
         if (Object.prototype.hasOwnProperty.call(row, target)) return;
         row[target] = row[source];
+      });
+      Object.entries(draftPreviewPlan.dreRowMetricKeys || {}).forEach(([target, sourceKeys]) => {
+        row[target] = sourceKeys.reduce((acc, sourceKey) => acc + toFiniteNumber(row[sourceKey]), 0);
       });
       return row;
     });
@@ -991,19 +1035,21 @@ export const WidgetRenderer = ({
   if (disableFetch && preloadedError) {
     return <EmptyWidgetState text={preloadedError} />;
   }
+  // Draft preview path (builder mode for all widgets, or non-persisted widgets in any mode)
+  // "Configure" message only for new (non-persisted) widgets with incomplete config
   if (!disableFetch && !hasPersistedWidgetId && !shouldFetchDraftPreview) {
-    return <EmptyWidgetState text="Pré-visualização indisponível para este widget sem salvar." />;
+    return <EmptyWidgetState text="Configure o widget para visualizar o preview." />;
   }
-  if (!disableFetch && !hasPersistedWidgetId && draftWidgetQuery.isLoading) {
+  if (shouldFetchDraftPreview && draftWidgetQuery.isLoading) {
     return <EmptyWidgetState text="Carregando dados..." />;
   }
-  if (!disableFetch && !hasPersistedWidgetId && draftWidgetQuery.isError) {
+  if (shouldFetchDraftPreview && draftWidgetQuery.isError) {
     return <EmptyWidgetState text={(draftWidgetQuery.error as Error).message || "Falha ao carregar dados"} />;
   }
-  if (!disableFetch && hasPersistedWidgetId && widgetQuery.isLoading) {
+  if (shouldFetchPersisted && widgetQuery.isLoading) {
     return <EmptyWidgetState text="Carregando dados..." />;
   }
-  if (!disableFetch && hasPersistedWidgetId && widgetQuery.isError) {
+  if (shouldFetchPersisted && widgetQuery.isError) {
     return <EmptyWidgetState text={(widgetQuery.error as Error).message || "Falha ao carregar dados"} />;
   }
   if (rows.length === 0) {
@@ -1119,7 +1165,7 @@ export const WidgetRenderer = ({
 
   if (type === "line") {
     const showLineLabels = !!widget.config.line_data_labels_enabled;
-    const showLineGrid = widget.config.line_show_grid !== false;
+    const showLineGrid = !!widget.config.line_show_grid;
     const lineSeriesKeys = lineSeriesDefs.length > 0 ? lineSeriesDefs.map((series) => series.key) : ["m0"];
     return (
       <div className="relative h-full w-full">
@@ -1211,6 +1257,7 @@ export const WidgetRenderer = ({
 
   if (type === "bar") {
     const showBarLabels = widget.config.bar_data_labels_enabled !== false;
+    const showBarGrid = !!widget.config.bar_show_grid;
     const fixedBarHeight = 22;
     const barGap = 8;
     const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
@@ -1221,7 +1268,7 @@ export const WidgetRenderer = ({
         <div style={{ height: `${barChartHeight}px` }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartRows} margin={{ top: 8, right: 64, bottom: 8, left: 8 }} layout="vertical" barCategoryGap={barGap}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />
+              {showBarGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />}
               <XAxis
                 type="number"
                 tick={{ fontSize: 10 }}
@@ -1271,10 +1318,11 @@ export const WidgetRenderer = ({
 
   if (type === "column") {
     const showColumnLabels = widget.config.bar_data_labels_enabled !== false;
+    const showColumnGrid = !!widget.config.bar_show_grid;
     return (
       <ResponsiveContainer width="100%" height={chartHeight}>
         <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />
+          {showColumnGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />}
           <XAxis
             dataKey={dimKey}
             tick={{ fontSize: 10 }}
