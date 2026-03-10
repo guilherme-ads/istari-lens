@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ThemeProvider } from "./components/ui/theme-provider";
 import AppLayout from "./components/shared/AppLayout";
-import { getStoredUser, hasAuthSession } from "./lib/auth";
+import { clearAuthSession, getStoredUser, hasAuthSession, isAuthTokenFresh } from "./lib/auth";
 import { api } from "./lib/api";
 import AccountPage from "./pages/AccountPage";
 import AdminPage from "./pages/AdminPage";
@@ -47,17 +47,23 @@ const App = () => {
 
   useEffect(() => {
     let cancelled = false;
+    const alreadyHasSession = hasAuthSession();
+    const hasStaleSession = alreadyHasSession && !isAuthTokenFresh();
 
-    if (hasAuthSession()) {
-      setAuthReady(true);
-      return () => {
-        cancelled = true;
-      };
-    }
+    // If a session exists, render immediately — don't block the UI.
+    // restoreSession still runs to silently refresh an expired access token.
+    if (alreadyHasSession) setAuthReady(true);
 
     (async () => {
-      await api.restoreSession();
-      if (!cancelled) setAuthReady(true);
+      const restored = await api.restoreSession();
+      if (!restored && hasStaleSession) {
+        clearAuthSession();
+        if (!cancelled && window.location.pathname !== "/login") {
+          window.location.assign("/login");
+          return;
+        }
+      }
+      if (!cancelled && !alreadyHasSession) setAuthReady(true);
     })();
 
     return () => {

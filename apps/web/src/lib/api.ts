@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken, setAuthSession, updateAuthToken, updateStoredUser } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, isAuthTokenFresh, setAuthSession, updateAuthToken, updateStoredUser } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -599,7 +599,8 @@ export const api = {
     }, false, true),
 
   restoreSession: async () => {
-    if (getAuthToken()) return true;
+    const hasToken = !!getAuthToken();
+    if (isAuthTokenFresh()) return true;
     try {
       const response = await request<AuthLoginResponse>(
         "/auth/refresh",
@@ -611,6 +612,9 @@ export const api = {
       setAuthSession(response.access_token, response.user, response.remember_me);
       return true;
     } catch {
+      if (hasToken) {
+        clearAuthSession();
+      }
       return false;
     }
   },

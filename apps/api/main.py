@@ -444,7 +444,12 @@ def _resolve_cors_origins() -> list[str]:
     if settings.cors_origins:
         return settings.cors_origins
     if settings.environment in {"development", "test"}:
-        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        return [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
     return []
 
 
