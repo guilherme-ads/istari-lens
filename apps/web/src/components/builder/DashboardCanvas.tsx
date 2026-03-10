@@ -15,6 +15,8 @@ import { WidgetRenderer } from "./WidgetRenderer";
 
 interface DashboardCanvasProps {
   dashboardId?: string;
+  datasetId?: number;
+  nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
   sections: DashboardSection[];
   onSectionsChange: (sections: DashboardSection[]) => void;
   onAddWidget: (sectionId: string) => void;
@@ -94,6 +96,8 @@ const getMaxWidthAtIndex = (widgets: DashboardWidget[], index: number, sectionCo
 
 type WidgetCardProps = {
   dashboardId?: string;
+  datasetId?: number;
+  nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
   sectionColumns: 1 | 2 | 3 | 4;
   widget: DashboardWidget;
   canDrag?: boolean;
@@ -112,6 +116,8 @@ type WidgetCardProps = {
 
 const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
   dashboardId,
+  datasetId,
+  nativeFilters,
   sectionColumns,
   widget,
   canDrag = false,
@@ -250,6 +256,8 @@ const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
       <WidgetRenderer
         widget={widget}
         dashboardId={dashboardId}
+        datasetId={datasetId}
+        nativeFilters={nativeFilters}
         heightMultiplier={(widget.config.size?.height || 1) as 0.5 | 1 | 2}
         hideTableExport={!readOnly}
         forcedLoading={isRefreshing}
@@ -261,6 +269,8 @@ WidgetCard.displayName = "WidgetCard";
 
 const SectionBlock = ({
   dashboardId,
+  datasetId,
+  nativeFilters,
   section,
   index,
   total,
@@ -281,6 +291,8 @@ const SectionBlock = ({
   refreshingWidgetIds = new Set(),
 }: {
   dashboardId?: string;
+  datasetId?: number;
+  nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
   section: DashboardSection;
   index: number;
   total: number;
@@ -430,6 +442,8 @@ const SectionBlock = ({
             <WidgetCard
               key={w.id}
               dashboardId={dashboardId}
+              datasetId={datasetId}
+              nativeFilters={nativeFilters}
               sectionColumns={section.columns}
               widget={w}
               canDrag={!readOnly}
@@ -486,6 +500,8 @@ const SectionBlock = ({
 
 export const DashboardCanvas = ({
   dashboardId,
+  datasetId,
+  nativeFilters,
   sections,
   onSectionsChange,
   onAddWidget,
@@ -560,6 +576,8 @@ export const DashboardCanvas = ({
           <div key={section.id} className="space-y-4">
             <SectionBlock
               dashboardId={dashboardId}
+              datasetId={datasetId}
+              nativeFilters={nativeFilters}
               section={section}
               index={i}
               total={sections.length}

@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken, setAuthSession, updateAuthToken, updateStoredUser } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, isAuthTokenFresh, setAuthSession, updateAuthToken, updateStoredUser } from "@/lib/auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -378,7 +378,7 @@ export type ApiQuerySpec = {
   datasetId: number;
   metrics: Array<{ field: string; agg: string }>;
   dimensions: string[];
-  filters: Array<{ field: string; op: string; value?: unknown[] }>;
+  filters: Array<{ field: string; op: string; value?: unknown }>;
   sort: Array<{ field: string; dir: "asc" | "desc" }>;
   limit: number;
   offset: number;
@@ -692,7 +692,8 @@ export const api = {
     }, false, true),
 
   restoreSession: async () => {
-    if (getAuthToken()) return true;
+    const hasToken = !!getAuthToken();
+    if (isAuthTokenFresh()) return true;
     try {
       const response = await request<AuthLoginResponse>(
         "/auth/refresh",
@@ -704,6 +705,9 @@ export const api = {
       setAuthSession(response.access_token, response.user, response.remember_me);
       return true;
     } catch {
+      if (hasToken) {
+        clearAuthSession();
+      }
       return false;
     }
   },
@@ -985,7 +989,7 @@ export const api = {
       layout_config: Record<string, unknown>[];
       native_filters: ApiDashboardNativeFilter[];
       widgets: Array<{
-        id?: number;
+        id?: number | string;
         widget_type: "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
         title?: string;
         position?: number;

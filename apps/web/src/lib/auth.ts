@@ -63,6 +63,26 @@ const getActiveSession = (): { token: string; user: StoredUser } | null => {
 export const getAuthToken = (): string | null => getActiveSession()?.token ?? null;
 export const hasAuthSession = (): boolean => !!getActiveSession();
 
+const decodeBase64Url = (input: string): string => {
+  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4;
+  const padded = padding === 0 ? normalized : `${normalized}${"=".repeat(4 - padding)}`;
+  return atob(padded);
+};
+
+export const isAuthTokenFresh = (): boolean => {
+  const token = getAuthToken();
+  if (!token) return false;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return false;
+    const payload = JSON.parse(decodeBase64Url(parts[1]));
+    return typeof payload.exp === "number" && payload.exp * 1000 > Date.now();
+  } catch {
+    return false;
+  }
+};
+
 export const setAuthSession = (token: string, user: StoredUser, rememberMe = true): void => {
   clearAuthSession();
   if (typeof window === "undefined") return;

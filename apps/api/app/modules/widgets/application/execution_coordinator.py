@@ -750,20 +750,19 @@ def _filter_key(filter_config: FilterConfig) -> str:
 
 
 def _is_supported_consolidation_filter(filter_config: FilterConfig) -> bool:
-    return filter_config.op in {
-        "eq",
-        "neq",
-        "gt",
-        "lt",
-        "gte",
-        "lte",
-        "in",
-        "not_in",
-        "contains",
-        "is_null",
-        "not_null",
-        "between",
-    } and bool(filter_config.column)
+    if not filter_config.column:
+        return False
+    op = filter_config.op
+    value = filter_config.value
+    if op in {"is_null", "not_null"}:
+        return True
+    if op == "between":
+        return isinstance(value, list) and len(value) == 2
+    if op in {"in", "not_in"}:
+        return isinstance(value, list) and len(value) > 0
+    if op in {"eq", "neq", "gt", "lt", "gte", "lte", "contains"}:
+        return not isinstance(value, (dict, list))
+    return False
 
 
 def _coerce_numeric(value: Any) -> float | None:

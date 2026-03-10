@@ -40,9 +40,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str, *, is_persistent
         "path": settings.refresh_cookie_path,
     }
     if is_persistent:
-        max_age = int(timedelta(days=settings.refresh_token_expire_days).total_seconds())
-        cookie_kwargs["max_age"] = max_age
-        cookie_kwargs["expires"] = max_age
+        cookie_kwargs["max_age"] = int(timedelta(days=settings.refresh_token_expire_days).total_seconds())
 
     response.set_cookie(**cookie_kwargs)
 
