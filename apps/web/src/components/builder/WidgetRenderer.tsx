@@ -9,7 +9,7 @@ import {
 } from "recharts";
 import { ArrowUpDown, Download, ChevronLeft, ChevronRight } from "lucide-react";
 import type { DashboardWidget } from "@/types/dashboard";
-import { api, type ApiDashboardWidgetDataResponse } from "@/lib/api";
+import { api, type ApiDashboardWidgetDataResponse, type ApiQuerySpec } from "@/lib/api";
 
 const tooltipStyle = {
   borderRadius: 8,
@@ -280,6 +280,8 @@ const clamp = (value: number, min: number, max: number): number => Math.max(min,
 type RendererProps = {
   widget: DashboardWidget;
   dashboardId?: string;
+  datasetId?: number;
+  nativeFilters?: Array<{ column: string; op: string; value?: unknown; visible?: boolean }>;
   disableFetch?: boolean;
   heightMultiplier?: 0.5 | 1 | 2;
   preloadedData?: ApiDashboardWidgetDataResponse;
@@ -292,6 +294,129 @@ type RendererProps = {
 const EmptyWidgetState = ({ text }: { text: string }) => (
   <div className="text-xs text-muted-foreground text-center">{text}</div>
 );
+
+const parseTemporalDimensionToken = (value: string): { column: string; granularity: "month" | "week" | "weekday" | "hour" } | null => {
+  if (value.startsWith("__time_month__:")) return { column: value.slice("__time_month__:".length), granularity: "month" };
+  if (value.startsWith("__time_week__:")) return { column: value.slice("__time_week__:".length), granularity: "week" };
+  if (value.startsWith("__time_weekday__:")) return { column: value.slice("__time_weekday__:".length), granularity: "weekday" };
+  if (value.startsWith("__time_hour__:")) return { column: value.slice("__time_hour__:".length), granularity: "hour" };
+  return null;
+};
+
+const normalizePreviewFilterValue = (op: string, rawValue: unknown): unknown[] | undefined | null => {
+  if (op === "is_null" || op === "not_null") return undefined;
+  if (op === "between") {
+    if (!Array.isArray(rawValue) || rawValue.length !== 2) return null;
+    return [rawValue[0], rawValue[1]];
+  }
+  if (op === "in" || op === "not_in") {
+    if (Array.isArray(rawValue)) return rawValue;
+    if (rawValue === undefined || rawValue === null || rawValue === "") return null;
+    return [rawValue];
+  }
+  if (rawValue === undefined || rawValue === null || rawValue === "") return null;
+  return [rawValue];
+};
+
+type DraftPreviewPlan = {
+  spec: ApiQuerySpec;
+  lineTimeColumn?: string;
+  dimensionAliasMap?: Record<string, string>;
+};
+
+const buildDraftPreviewSpec = ({
+  widget,
+  datasetId,
+  nativeFilters,
+}: {
+  widget: DashboardWidget;
+  datasetId: number;
+  nativeFilters: Array<{ column: string; op: string; value?: unknown; visible?: boolean }>;
+}): DraftPreviewPlan | null => {
+  const widgetType = widget.config.widget_type;
+  const isKpi = widgetType === "kpi";
+  const isLine = widgetType === "line";
+  const isCategorical = widgetType === "bar" || widgetType === "column" || widgetType === "donut";
+  if (!isKpi && !isCategorical && !isLine) return null;
+  if (isKpi && (widget.config.kpi_type === "derived" || !!widget.config.composite_metric)) return null;
+
+  const metrics = (widget.config.metrics || [])
+    .filter((metric) => !!metric.op)
+    .map((metric) => ({
+      field: metric.column || "*",
+      agg: metric.op,
+    }));
+  if ((isKpi || isCategorical) && metrics.length !== 1) return null;
+  if (isLine && (metrics.length < 1 || metrics.length > 2)) return null;
+
+  const dimensionAliasMap: Record<string, string> = {};
+  let dimensions: string[] = [];
+  let lineTimeColumn: string | undefined;
+  if (isCategorical) {
+    const rawDimension = (widget.config.dimensions || [])[0];
+    if (!rawDimension) return null;
+    const parsedTemporalDimension = parseTemporalDimensionToken(rawDimension);
+    if (parsedTemporalDimension) {
+      const normalizedColumn = parsedTemporalDimension.column.trim();
+      if (!normalizedColumn) return null;
+      dimensions = [normalizedColumn];
+      dimensionAliasMap[rawDimension] = normalizedColumn;
+    } else {
+      dimensions = [rawDimension];
+    }
+  } else if (isLine) {
+    lineTimeColumn = widget.config.time?.column;
+    if (!lineTimeColumn) return null;
+    const legendDimension = (widget.config.dimensions || []).slice(0, 1);
+    dimensions = [lineTimeColumn, ...legendDimension];
+  }
+
+  const mergedFilters = [...(nativeFilters || []), ...(widget.config.filters || [])];
+  const filters: ApiQuerySpec["filters"] = [];
+  for (const filter of mergedFilters) {
+    if (!filter.column) continue;
+    const normalizedValue = normalizePreviewFilterValue(filter.op, filter.value);
+    if (normalizedValue === null) return null;
+    filters.push({
+      field: filter.column,
+      op: filter.op,
+      value: normalizedValue,
+    });
+  }
+
+  let sort: ApiQuerySpec["sort"] = [];
+  const firstOrder = widget.config.order_by?.[0];
+  if (isLine && lineTimeColumn) {
+    sort = [{ field: lineTimeColumn, dir: "asc" }];
+  } else {
+    const sortField = firstOrder?.metric_ref || firstOrder?.column;
+    sort = sortField
+      ? [{ field: sortField, dir: firstOrder?.direction === "asc" ? "asc" : "desc" }]
+      : [];
+  }
+
+  const rawLimit = isLine
+    ? (widget.config.limit || 500)
+    : isKpi
+    ? 1
+    : (widget.config.top_n || widget.config.limit || 200);
+  const limit = Math.max(1, Math.min(5000, Number(rawLimit) || 200));
+  const offset = Math.max(0, Number(widget.config.offset) || 0);
+
+  return {
+    spec: {
+      datasetId,
+      metrics,
+      dimensions,
+      filters,
+      sort,
+      limit,
+      offset,
+    },
+    lineTimeColumn,
+    dimensionAliasMap: Object.keys(dimensionAliasMap).length > 0 ? dimensionAliasMap : undefined,
+  };
+};
 
 const WidgetLoadingSkeleton = ({ type, chartHeight }: { type: DashboardWidget["config"]["widget_type"]; chartHeight: number }) => {
   if (type === "kpi") {
@@ -564,6 +689,8 @@ const MiniTable = ({
 export const WidgetRenderer = ({
   widget,
   dashboardId,
+  datasetId,
+  nativeFilters = [],
   disableFetch = false,
   heightMultiplier = 1,
   preloadedData,
@@ -576,21 +703,69 @@ export const WidgetRenderer = ({
   const numericDashboardId = Number(dashboardId);
   const numericWidgetId = Number(widget.id);
   const hasPersistedWidgetId = Number.isFinite(numericWidgetId) && numericWidgetId > 0;
-  const shouldFetch = !disableFetch
+  const shouldFetchPersisted = !disableFetch
     && Number.isFinite(numericDashboardId)
     && numericDashboardId > 0
     && !isTextWidget
     && hasPersistedWidgetId;
+  const persistedGlobalFilters = useMemo(
+    () =>
+      (nativeFilters || [])
+        .filter((filter) => !!filter.column && !!filter.op && filter.visible !== false)
+        .map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
+    [nativeFilters],
+  );
+  const draftPreviewPlan = useMemo(
+    () => {
+      if (disableFetch || hasPersistedWidgetId || !datasetId || isTextWidget) return null;
+      return buildDraftPreviewSpec({ widget, datasetId, nativeFilters });
+    },
+    [datasetId, disableFetch, hasPersistedWidgetId, isTextWidget, nativeFilters, widget],
+  );
+  const shouldFetchDraftPreview = !disableFetch && !hasPersistedWidgetId && !!draftPreviewPlan?.spec;
 
   const widgetQuery = useQuery({
-    queryKey: ["widget-data", dashboardId, widget.id],
-    queryFn: () => api.getDashboardWidgetData(numericDashboardId, numericWidgetId),
-    enabled: shouldFetch,
+    queryKey: ["widget-data", dashboardId, widget.id, JSON.stringify(persistedGlobalFilters)],
+    queryFn: async () => {
+      if (persistedGlobalFilters.length === 0) {
+        return api.getDashboardWidgetData(numericDashboardId, numericWidgetId);
+      }
+      const response = await api.getDashboardWidgetsData(
+        numericDashboardId,
+        [numericWidgetId],
+        persistedGlobalFilters,
+      );
+      const item = response.results.find((result) => result.widget_id === numericWidgetId);
+      if (!item) throw new Error("Widget data not found");
+      return item;
+    },
+    enabled: shouldFetchPersisted,
   });
+  const draftWidgetQuery = useQuery({
+    queryKey: ["widget-draft-data", datasetId, widget.id, JSON.stringify(draftPreviewPlan?.spec || {})],
+    queryFn: () => api.previewQuery(draftPreviewPlan?.spec as ApiQuerySpec),
+    enabled: shouldFetchDraftPreview,
+  });
+  const normalizedDraftRows = useMemo(() => {
+    const baseRows = draftWidgetQuery.data?.rows || [];
+    if (!draftPreviewPlan) return baseRows;
+    return baseRows.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const row = { ...item } as Record<string, unknown>;
+      if (draftPreviewPlan.lineTimeColumn && !Object.prototype.hasOwnProperty.call(row, "time_bucket")) {
+        row.time_bucket = row[draftPreviewPlan.lineTimeColumn];
+      }
+      Object.entries(draftPreviewPlan.dimensionAliasMap || {}).forEach(([target, source]) => {
+        if (Object.prototype.hasOwnProperty.call(row, target)) return;
+        row[target] = row[source];
+      });
+      return row;
+    });
+  }, [draftPreviewPlan, draftWidgetQuery.data]);
 
   const rows = useMemo(
-    () => preloadedData?.rows || widgetQuery.data?.rows || [],
-    [preloadedData, widgetQuery.data],
+    () => preloadedData?.rows || widgetQuery.data?.rows || normalizedDraftRows || [],
+    [normalizedDraftRows, preloadedData, widgetQuery.data],
   );
   const metricLabel = useMemo(() => getMetricLabel(widget), [widget]);
   const chartHeight = heightMultiplier === 0.5 ? 110 : heightMultiplier === 2 ? 380 : 220;
@@ -795,13 +970,19 @@ export const WidgetRenderer = ({
   if (disableFetch && preloadedError) {
     return <EmptyWidgetState text={preloadedError} />;
   }
-  if (!disableFetch && !hasPersistedWidgetId) {
-    return <EmptyWidgetState text="Salve o dashboard para carregar dados do widget." />;
+  if (!disableFetch && !hasPersistedWidgetId && !shouldFetchDraftPreview) {
+    return <EmptyWidgetState text="Pré-visualização indisponível para este widget sem salvar." />;
   }
-  if (!disableFetch && widgetQuery.isLoading) {
+  if (!disableFetch && !hasPersistedWidgetId && draftWidgetQuery.isLoading) {
     return <EmptyWidgetState text="Carregando dados..." />;
   }
-  if (!disableFetch && widgetQuery.isError) {
+  if (!disableFetch && !hasPersistedWidgetId && draftWidgetQuery.isError) {
+    return <EmptyWidgetState text={(draftWidgetQuery.error as Error).message || "Falha ao carregar dados"} />;
+  }
+  if (!disableFetch && hasPersistedWidgetId && widgetQuery.isLoading) {
+    return <EmptyWidgetState text="Carregando dados..." />;
+  }
+  if (!disableFetch && hasPersistedWidgetId && widgetQuery.isError) {
     return <EmptyWidgetState text={(widgetQuery.error as Error).message || "Falha ao carregar dados"} />;
   }
   if (rows.length === 0) {

@@ -426,6 +426,223 @@ def test_kpis_are_batched_by_engine_pipeline(client: TestClient) -> None:
     assert _FakeEngineClient.execute_count == 2
 
 
+def test_kpis_with_variable_filters_are_consolidated_into_single_query(client: TestClient) -> None:
+    kpi_total = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Total",
+            "position": 0,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_sp = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "SP",
+            "position": 1,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [{"column": "estacao", "op": "eq", "value": "SP"}],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_energy_sp = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Energia SP",
+            "position": 2,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "sum", "column": "kwh"}],
+                "dimensions": [],
+                "filters": [{"column": "estacao", "op": "eq", "value": "SP"}],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_ratio = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Proporcao SP",
+            "position": 3,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "kpi_type": "derived",
+                "formula": "(SP / Total) * 100",
+                "dependencies": ["SP", "Total"],
+                "kpi_dependencies": [
+                    {"source_type": "widget", "widget_id": kpi_sp, "alias": "SP"},
+                    {"source_type": "widget", "widget_id": kpi_total, "alias": "Total"},
+                ],
+                "metrics": [],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+
+    response = client.post(
+        "/dashboards/1/widgets/data",
+        json={"widget_ids": [kpi_total, kpi_sp, kpi_energy_sp, kpi_ratio], "global_filters": []},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    by_widget_id = {item["widget_id"]: item for item in payload["results"]}
+    assert by_widget_id[kpi_total]["rows"][0]["m0"] == 5
+    assert by_widget_id[kpi_sp]["rows"][0]["m0"] == 3
+    assert by_widget_id[kpi_energy_sp]["rows"][0]["m0"] == 60
+    assert by_widget_id[kpi_ratio]["rows"][0]["m0"] == 60
+    assert _FakeEngineClient.execute_count == 1
+
+
+def test_kpis_with_relative_between_filters_fall_back_to_regular_batch(client: TestClient) -> None:
+    kpi_last_7 = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Ultimos 7 dias",
+            "position": 0,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [{"column": "data", "op": "between", "value": {"relative": "last_7_days"}}],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+    kpi_last_30 = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Ultimos 30 dias",
+            "position": 1,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [{"column": "data", "op": "between", "value": {"relative": "last_30_days"}}],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+
+    response = client.post(
+        "/dashboards/1/widgets/data",
+        json={"widget_ids": [kpi_last_7, kpi_last_30], "global_filters": []},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    by_widget_id = {item["widget_id"]: item for item in payload["results"]}
+    assert by_widget_id[kpi_last_7]["rows"][0]["m0"] == 42
+    assert by_widget_id[kpi_last_30]["rows"][0]["m0"] == 42
+    assert _FakeEngineClient.execute_count == 2
+
+
+def test_save_dashboard_keeps_distinct_layout_ids_for_temp_widgets(client: TestClient) -> None:
+    original_widget = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Original",
+            "position": 0,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+
+    response = client.post(
+        "/dashboards/1/save",
+        json={
+            "name": "Main",
+            "layout_config": [
+                {
+                    "id": "sec-1",
+                    "title": "Geral",
+                    "columns": 2,
+                    "widgets": [
+                        {"widget_id": original_widget},
+                        {"widget_id": "tmp-copy-1"},
+                    ],
+                }
+            ],
+            "native_filters": [],
+            "widgets": [
+                {
+                    "id": original_widget,
+                    "widget_type": "kpi",
+                    "title": "Original",
+                    "position": 0,
+                    "config_version": 1,
+                    "config": {
+                        "widget_type": "kpi",
+                        "view_name": "public.vw_recargas",
+                        "metrics": [{"op": "count", "column": "id_recarga"}],
+                        "dimensions": [],
+                        "filters": [],
+                        "order_by": [],
+                    },
+                },
+                {
+                    "id": "tmp-copy-1",
+                    "widget_type": "kpi",
+                    "title": "Original (copia)",
+                    "position": 1,
+                    "config_version": 1,
+                    "config": {
+                        "widget_type": "kpi",
+                        "view_name": "public.vw_recargas",
+                        "metrics": [{"op": "count", "column": "id_recarga"}],
+                        "dimensions": [],
+                        "filters": [],
+                        "order_by": [],
+                    },
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["widgets"]) == 2
+    section_widgets = payload["layout_config"][0]["widgets"]
+    layout_widget_ids = [item["widget_id"] for item in section_widgets]
+    assert len(layout_widget_ids) == 2
+    assert len(set(layout_widget_ids)) == 2
+
+
 def test_debug_queries_dashboard_mode_returns_single_execution_units(client: TestClient) -> None:
     kpi_1 = client.post(
         "/dashboards/1/widgets",

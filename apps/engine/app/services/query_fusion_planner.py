@@ -130,6 +130,8 @@ class QueryFusionPlanner:
 
         for idx in member_indexes[1:]:
             current = specs_by_index[idx]
+            if not self._is_supported_fusion_shape(current):
+                return False, "unsupported_widget_shape"
             if current.widget_type != baseline.widget_type:
                 return False, "widget_type_mismatch"
             if current.resource_id != baseline.resource_id:
@@ -151,9 +153,15 @@ class QueryFusionPlanner:
 
     def _is_supported_fusion_shape(self, spec: QuerySpec) -> bool:
         if spec.widget_type == "kpi":
-            return bool(not spec.dimensions and spec.composite_metric is None and not spec.dre_rows)
+            return bool(
+                not spec.dimensions
+                and spec.composite_metric is None
+                and spec.derived_metric is None
+                and not spec.dre_rows
+                and len(spec.metrics) > 0
+            )
         if spec.widget_type == "line":
-            return bool(spec.time and not spec.composite_metric and not spec.dre_rows)
+            return bool(spec.time and not spec.composite_metric and not spec.dre_rows and len(spec.metrics) > 0)
         return False
 
     def _time_signature(self, spec: QuerySpec) -> str | None:

@@ -355,5 +355,10 @@ export const sectionsToLayoutConfig = (sections: DashboardSection[]): Record<str
     title: section.title,
     show_title: section.showTitle !== false,
     columns: section.columns,
-    widgets: section.widgets.map((widget) => ({ widget_id: Number(widget.id) })),
+    widgets: section.widgets.map((widget) => {
+      const numericId = Number(widget.id);
+      return {
+        widget_id: Number.isFinite(numericId) ? numericId : widget.id,
+      };
+    }),
   }));

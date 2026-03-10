@@ -463,7 +463,7 @@ const BuilderPage = () => {
       section.widgets.map((widget, widgetIndex) => {
         const numericId = Number(widget.id);
         return {
-          id: Number.isFinite(numericId) ? numericId : undefined,
+          id: Number.isFinite(numericId) ? numericId : widget.id,
           widget_type: widget.config.widget_type,
           title: widget.title || `${widget.config.widget_type.toUpperCase()} - ${datasetSourceLabel}`,
           position: (sectionIndex * 1000) + widgetIndex,
@@ -1670,6 +1670,8 @@ const BuilderPage = () => {
         ) : (
           <DashboardCanvas
             dashboardId={targetDashboardId}
+            datasetId={dataset ? Number(dataset.id) : undefined}
+            nativeFilters={preparedNativeFilters}
             sections={sections}
             onSectionsChange={handleSectionsChange}
             onAddWidget={handleAddWidget}

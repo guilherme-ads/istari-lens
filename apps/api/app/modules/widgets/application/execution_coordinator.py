@@ -560,6 +560,137 @@ def _is_dashboard_derived_kpi(config: WidgetConfig) -> bool:
     return config.widget_type == "kpi" and config.kpi_type == "derived" and len(config.kpi_dependencies) > 0
 
 
+def _is_kpi_consolidation_candidate(config: WidgetConfig) -> bool:
+    if config.widget_type != "kpi":
+        return False
+    if config.kpi_type != "atomic":
+        return False
+    if config.composite_metric is not None:
+        return False
+    if config.time is not None:
+        return False
+    if config.dimensions:
+        return False
+    if len(config.metrics) != 1:
+        return False
+    metric = config.metrics[0]
+    return metric.op in {"count", "sum"}
+
+
+def _filter_key(filter_config: FilterConfig) -> str:
+    return json.dumps(filter_config.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _is_supported_consolidation_filter(filter_config: FilterConfig) -> bool:
+    if not filter_config.column:
+        return False
+    op = filter_config.op
+    value = filter_config.value
+    if op in {"is_null", "not_null"}:
+        return True
+    if op == "between":
+        return isinstance(value, list) and len(value) == 2
+    if op in {"in", "not_in"}:
+        return isinstance(value, list) and len(value) > 0
+    if op in {"eq", "neq", "gt", "lt", "gte", "lte", "contains"}:
+        return not isinstance(value, (dict, list))
+    return False
+
+
+def _coerce_numeric(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _values_equal(left: Any, right: Any) -> bool:
+    left_num = _coerce_numeric(left)
+    right_num = _coerce_numeric(right)
+    if left_num is not None and right_num is not None:
+        return left_num == right_num
+    return str(left) == str(right)
+
+
+def _compare_order(left: Any, right: Any) -> int:
+    left_num = _coerce_numeric(left)
+    right_num = _coerce_numeric(right)
+    if left_num is not None and right_num is not None:
+        if left_num < right_num:
+            return -1
+        if left_num > right_num:
+            return 1
+        return 0
+    left_str = "" if left is None else str(left)
+    right_str = "" if right is None else str(right)
+    if left_str < right_str:
+        return -1
+    if left_str > right_str:
+        return 1
+    return 0
+
+
+def _row_matches_filter(row: dict[str, Any], filter_config: FilterConfig) -> bool:
+    value = row.get(filter_config.column)
+    op = filter_config.op
+    target = filter_config.value
+    if op == "is_null":
+        return value is None
+    if op == "not_null":
+        return value is not None
+    if op == "between":
+        if not isinstance(target, list) or len(target) != 2:
+            return False
+        return _compare_order(value, target[0]) >= 0 and _compare_order(value, target[1]) <= 0
+    if op in {"in", "not_in"}:
+        if isinstance(target, list):
+            match = any(_values_equal(value, item) for item in target)
+        else:
+            match = _values_equal(value, target)
+        return match if op == "in" else not match
+    if op == "contains":
+        if value is None:
+            return False
+        return str(target or "") in str(value)
+    if op == "eq":
+        return _values_equal(value, target)
+    if op == "neq":
+        return not _values_equal(value, target)
+    if op == "gt":
+        return _compare_order(value, target) > 0
+    if op == "lt":
+        return _compare_order(value, target) < 0
+    if op == "gte":
+        return _compare_order(value, target) >= 0
+    if op == "lte":
+        return _compare_order(value, target) <= 0
+    return False
+
+
+def _aggregate_consolidated_metric(
+    *,
+    rows: list[Any],
+    grouped_dimensions: list[str],
+    filters: list[FilterConfig],
+    metric_alias: str,
+) -> float:
+    total = 0.0
+    for raw_row in rows:
+        if not isinstance(raw_row, dict):
+            continue
+        projected = {dimension: raw_row.get(dimension) for dimension in grouped_dimensions}
+        if not all(_row_matches_filter(projected, filter_config) for filter_config in filters):
+            continue
+        raw_metric = raw_row.get(metric_alias)
+        metric_value = _coerce_numeric(raw_metric)
+        if metric_value is None:
+            continue
+        total += metric_value
+    return total
+
+
 def _engine_payload_to_execution_result(
     *,
     widget_id: int,
