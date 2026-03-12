@@ -258,7 +258,7 @@ const AdminPage = () => {
   if (isError) {
     return (
       <div className="bg-background">
-        <main className="container py-6">
+        <main className="app-container py-6">
           <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar administração" description={errorMessage} />
         </main>
       </div>
@@ -267,7 +267,7 @@ const AdminPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-8">
+      <main className="app-container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}

@@ -25,7 +25,6 @@ vi.mock("./pages/DatasetDetailPage", () => ({ default: () => <div>dataset-detail
 vi.mock("./pages/DashboardViewPage", () => ({ default: () => <div>dashboard-view-page</div> }));
 vi.mock("./pages/BuilderPage", () => ({ default: () => <div>builder-page</div> }));
 vi.mock("./pages/ApiConfigPage", () => ({ default: () => <div>api-config-page</div> }));
-vi.mock("./pages/SharedAnalysisPage", () => ({ default: () => <div>shared-analysis-page</div> }));
 vi.mock("./pages/NotFound", () => ({ default: () => <div>not-found-page</div> }));
 vi.mock("./pages/AdminUsersPage", () => ({ default: () => <div>admin-users-page</div> }));
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ChevronLeft, Pencil, Share2, Database, Plus, Trash2, CalendarIcon, Monitor, FileDown, X, SlidersHorizontal, Link2, Globe, Lock, UserRound } from "lucide-react";
+import { ChevronLeft, Pencil, Share2, Database, Plus, Trash2, CalendarIcon, Monitor, X, SlidersHorizontal, Link2, Globe, Lock, UserRound } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 
 import { Button } from "@/components/ui/button";
@@ -21,14 +21,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { WidgetRenderer } from "@/components/builder/WidgetRenderer";
-import type { DashboardSection } from "@/types/dashboard";
+import { gridRowsToWidgetHeight, type DashboardSection, type SectionColumns, type WidgetWidth } from "@/types/dashboard";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api } from "@/lib/api";
 import { mapDashboard } from "@/lib/mappers";
-import { exportDashboardToPdf } from "@/lib/dashboard-pdf";
 import EmptyState from "@/components/shared/EmptyState";
 import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
-import SkeletonCard from "@/components/shared/SkeletonCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -153,19 +151,16 @@ const appliedFilterLabel = (filter: AppliedGlobalFilter) => {
   return `${filter.column} ${operatorLabel[filter.op]} ${valueLabel}`;
 };
 
-const getWidgetWidthClass = (sectionColumns: 1 | 2 | 3 | 4, width: 1 | 2 | 3 | 4) => {
-  const clampedWidth = Math.min(width, sectionColumns) as 1 | 2 | 3 | 4;
+const getWidgetWidthClass = (sectionColumns: SectionColumns, width: WidgetWidth) => {
+  const clampedWidth = Math.min(width, sectionColumns) as WidgetWidth;
   if (sectionColumns === 1) return "col-span-1";
   if (sectionColumns === 2) return clampedWidth >= 2 ? "md:col-span-2" : "md:col-span-1";
-  if (sectionColumns === 3) {
-    if (clampedWidth >= 3) return "md:col-span-2 lg:col-span-3";
-    if (clampedWidth === 2) return "md:col-span-2 lg:col-span-2";
-    return "md:col-span-1 lg:col-span-1";
-  }
-  if (clampedWidth >= 4) return "md:col-span-2 lg:col-span-4";
-  if (clampedWidth === 3) return "md:col-span-2 lg:col-span-3";
-  if (clampedWidth === 2) return "md:col-span-2 lg:col-span-2";
-  return "md:col-span-1 lg:col-span-1";
+  if (clampedWidth >= 6) return "md:col-span-2 xl:col-span-6";
+  if (clampedWidth === 5) return "md:col-span-2 xl:col-span-5";
+  if (clampedWidth === 4) return "md:col-span-2 xl:col-span-4";
+  if (clampedWidth === 3) return "md:col-span-2 xl:col-span-3";
+  if (clampedWidth === 2) return "md:col-span-2 xl:col-span-2";
+  return "md:col-span-1 xl:col-span-1";
 };
 
 const getWidgetPaddingClass = (padding?: "compact" | "normal" | "comfortable"): string => {
@@ -179,6 +174,19 @@ const getWidgetMinHeightClass = (height?: 0.5 | 1 | 2): string => {
   if (height === 2) return "min-h-[320px]";
   return "min-h-[180px]";
 };
+
+const getWidgetHeightClass = (height?: 0.5 | 1 | 2): string => {
+  if (height === 0.5) return "h-[100px]";
+  if (height === 2) return "h-[320px]";
+  return "h-[180px]";
+};
+
+const VIEW_GRID_ROW_HEIGHT = 36;
+const VIEW_GRID_MARGIN_Y = 16;
+
+const gridRowsToWidgetCardHeightPx = (rows: number): number => (
+  (Math.max(1, rows) * VIEW_GRID_ROW_HEIGHT) + ((Math.max(1, rows) - 1) * VIEW_GRID_MARGIN_Y)
+);
 
 const DashboardViewPage = () => {
   const navigate = useNavigate();
@@ -268,6 +276,27 @@ const DashboardViewPage = () => {
   const sections = dashboard?.sections || [];
   const widgetCount = sections.reduce((total, section) => total + section.widgets.length, 0);
   const widgets = useMemo(() => sections.flatMap((section) => section.widgets), [sections]);
+  const enforcedHiddenFilters = useMemo<AppliedGlobalFilter[]>(() => {
+    const hidden = (dashboard?.nativeFilters || [])
+      .filter((filter) => filter.visible === false && !!filter.column && !!filter.op)
+      .map((filter) => ({
+        column: filter.column,
+        op: filter.op as FilterOp,
+        value: (filter.value as AppliedGlobalFilter["value"]) ?? "",
+      }));
+    const deduped = new Map<string, AppliedGlobalFilter>();
+    hidden.forEach((filter) => {
+      deduped.set(appliedFilterSignature(filter), filter);
+    });
+    return Array.from(deduped.values());
+  }, [dashboard?.nativeFilters, dashboard?.updatedAt]);
+  const effectiveAppliedFilters = useMemo<AppliedGlobalFilter[]>(() => {
+    const deduped = new Map<string, AppliedGlobalFilter>();
+    [...enforcedHiddenFilters, ...appliedFilters].forEach((filter) => {
+      deduped.set(appliedFilterSignature(filter), filter);
+    });
+    return Array.from(deduped.values());
+  }, [enforcedHiddenFilters, appliedFilters]);
 
   const preparedGlobalFilters = useMemo<AppliedGlobalFilter[]>(() => {
     const temporalColumnNames = new Set(
@@ -411,20 +440,20 @@ const DashboardViewPage = () => {
       "dashboard-widget-data",
       dashboardId,
       widgets.map((widget) => widget.id).join(","),
-      JSON.stringify(appliedFilters),
+      JSON.stringify(effectiveAppliedFilters),
     ],
     queryFn: () => {
       if (!shouldUsePublicApi) {
         return api.getDashboardWidgetsData(
           Number(dashboardId),
           widgets.map((widget) => Number(widget.id)),
-          appliedFilters,
+          effectiveAppliedFilters,
         );
       }
       return api.getPublicDashboardWidgetsData(
         String(dashboardId),
         widgets.map((widget) => Number(widget.id)),
-        appliedFilters,
+        effectiveAppliedFilters,
       );
     },
     enabled: canLoadWidgetData && !!dashboardId && widgets.length > 0,
@@ -502,24 +531,6 @@ const DashboardViewPage = () => {
       toast({ title: "Erro ao compartilhar", description: message, variant: "destructive" });
     },
   });
-  const handleExportPdf = () => {
-    const exportableFilters = appliedFilters.map((filter) => {
-      if (typeof filter.value === "object" && filter.value !== null && !Array.isArray(filter.value)) {
-        return {
-          ...filter,
-          value: String((filter.value as { relative?: string }).relative || ""),
-        };
-      }
-      return filter as { column: string; op: string; value: string | string[] };
-    });
-    exportDashboardToPdf({
-      dashboardTitle: dashboard.title,
-      datasetLabel: dataset?.name,
-      sections: dashboard.sections,
-      dataByWidgetId: widgetDataById,
-      appliedFilters: exportableFilters,
-    });
-  };
   const removeAppliedFilter = (filter: AppliedGlobalFilter) => {
     const signature = appliedFilterSignature(filter);
     setAppliedFilters((prev) => prev.filter((item) => appliedFilterSignature(item) !== signature));
@@ -572,7 +583,7 @@ const DashboardViewPage = () => {
   if (!hasToken && !isPublicMode) {
     return (
       <div className="bg-background min-h-screen flex flex-col">
-        <main className="container py-8 flex-1 flex items-center justify-center">
+        <main className="app-container py-8 flex-1 flex items-center justify-center">
           <EmptyState
             icon={<Database className="h-5 w-5" />}
             title="Sessão necessária"
@@ -591,7 +602,7 @@ const DashboardViewPage = () => {
   if (isError || publicDashboardQuery.isError) {
     return (
       <div className="bg-background min-h-screen">
-        <main className="container py-6">
+        <main className="app-container py-6">
           <EmptyState
             icon={<Database className="h-5 w-5" />}
             title="Erro ao carregar dashboard"
@@ -605,15 +616,27 @@ const DashboardViewPage = () => {
   if (showLoadingSkeleton) {
     return (
       <div className="bg-background min-h-screen">
-        <main className="container py-6 space-y-6">
+        <main className="app-container py-6 space-y-6">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
             <Skeleton className="h-4 w-72 max-w-full" />
             <Skeleton className="h-8 w-96 max-w-full" />
             <Skeleton className="h-4 w-64 max-w-full" />
           </motion.div>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 }} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 }} className="grid gap-4 md:grid-cols-2">
             {Array.from({ length: 6 }).map((_, index) => (
-              <SkeletonCard key={`dashboard-widget-skeleton-${index}`} variant="widget" />
+              <div key={`dashboard-widget-skeleton-${index}`} className="glass-card overflow-hidden">
+                <div className="border-b border-border/50 px-4 py-2.5">
+                  <Skeleton className="h-5 w-36" />
+                </div>
+                <div className="p-3">
+                  <div className="h-[180px] w-full rounded-lg border border-border/40 bg-muted/20 p-4">
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-3">
+                      <Skeleton className="h-3 w-28" />
+                      <Skeleton className="h-10 w-40" />
+                    </div>
+                  </div>
+                </div>
+              </div>
             ))}
           </motion.div>
         </main>
@@ -639,7 +662,7 @@ const DashboardViewPage = () => {
   return (
     <div className="bg-background min-h-screen flex flex-col flex-1">
       {!isPresentationMode && !isPublicMode && <div className="sticky top-12 z-40 border-b border-border bg-card/90 backdrop-blur-sm print:hidden">
-        <div className="container flex items-center justify-between h-12 gap-4">
+        <div className="app-container flex items-center justify-between h-12 gap-4">
           <div className="flex items-center gap-2 min-w-0">
             <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => navigate(resolvedDatasetId ? `/datasets/${resolvedDatasetId}` : "/datasets")}>
               <ChevronLeft className="h-4 w-4" />
@@ -719,20 +742,11 @@ const DashboardViewPage = () => {
               </TooltipTrigger>
               <TooltipContent className="text-xs">Abrir modo apresentação</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExportPdf}>
-                  <FileDown className="h-3 w-3 sm:mr-1" />
-                  <span className="hidden sm:inline">Exportar PDF</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent className="text-xs">Exportar dashboard em PDF</TooltipContent>
-            </Tooltip>
           </div>
         </div>
       </div>}
 
-      <div className="flex-1 container py-6">
+      <div className="flex-1 app-container py-6">
         <div className="mb-6 py-1">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="min-w-0 lg:w-[28%]">
@@ -1307,9 +1321,34 @@ const ViewSection = ({
   const gridCols = {
     1: "grid-cols-1",
     2: "grid-cols-1 md:grid-cols-2",
-    3: "grid-cols-1 md:grid-cols-2 lg:grid-cols-3",
-    4: "grid-cols-1 md:grid-cols-2 lg:grid-cols-4",
+    3: "grid-cols-1 md:grid-cols-2 xl:grid-cols-3",
+    4: "grid-cols-1 md:grid-cols-2 xl:grid-cols-4",
+    5: "grid-cols-1 md:grid-cols-2 xl:grid-cols-5",
+    6: "grid-cols-1 md:grid-cols-2 xl:grid-cols-6",
   }[section.columns];
+
+  const layoutByWidgetId = useMemo(() => {
+    const mapped: Record<string, { w: number; h: number; x: number; y: number }> = {};
+    (section.layout || []).forEach((item) => {
+      mapped[item.i] = { w: item.w, h: item.h, x: item.x, y: item.y };
+    });
+    return mapped;
+  }, [section.layout]);
+
+  const orderedWidgets = useMemo(
+    () => [...section.widgets].sort((a, b) => {
+      const aLayout = layoutByWidgetId[a.id];
+      const bLayout = layoutByWidgetId[b.id];
+      const aY = aLayout?.y ?? 0;
+      const bY = bLayout?.y ?? 0;
+      if (aY !== bY) return aY - bY;
+      const aX = aLayout?.x ?? 0;
+      const bX = bLayout?.x ?? 0;
+      if (aX !== bX) return aX - bX;
+      return (a.position || 0) - (b.position || 0);
+    }),
+    [layoutByWidgetId, section.widgets],
+  );
 
   return (
     <motion.div
@@ -1320,36 +1359,66 @@ const ViewSection = ({
     >
       {section.showTitle !== false && section.title && <h3 className="text-heading text-foreground mb-3">{section.title}</h3>}
       <div className={`grid ${gridCols} gap-4`}>
-        {section.widgets.map((widget) => (
-          <div
-            key={widget.id}
-            data-pdf-widget-id={widget.id}
-            data-pdf-widget-type={widget.config.widget_type}
-            className={`glass-card interactive-card self-start flex flex-col overflow-hidden ${getWidgetWidthClass(section.columns, widget.config.size?.width || 1)}`}
-          >
-            {widget.config.show_title !== false && (
-              <div className="px-4 py-2.5 border-b border-border/50">
-                <h4 className="text-body font-semibold text-foreground truncate">{widget.title || "Sem título"}</h4>
+        {orderedWidgets.map((widget) => {
+          const props = widget.props || widget.config;
+          const layout = layoutByWidgetId[widget.id];
+          const width = (layout?.w ?? props.size?.width ?? 1) as WidgetWidth;
+          const height = layout ? gridRowsToWidgetHeight(layout.h) : (props.size?.height || 1);
+          const isKpiWidget = props.widget_type === "kpi";
+          const hasExplicitHeightFromLayout = typeof layout?.h === "number";
+          const widgetCardHeightPx = hasExplicitHeightFromLayout ? gridRowsToWidgetCardHeightPx(layout.h) : null;
+          const widgetForRender = {
+            ...widget,
+            props: {
+              ...props,
+              size: {
+                width,
+                height,
+              },
+            },
+          };
+          widgetForRender.config = widgetForRender.props;
+
+          return (
+            <div
+              key={widget.id}
+              data-pdf-widget-id={widget.id}
+              data-pdf-widget-type={widgetForRender.props.widget_type}
+              className={`glass-card interactive-card self-start flex flex-col overflow-hidden ${getWidgetWidthClass(section.columns, width)}`}
+              style={widgetCardHeightPx ? { height: `${widgetCardHeightPx}px` } : undefined}
+            >
+              {widgetForRender.props.show_title !== false && (
+                <div className="px-4 py-2.5 border-b border-border/50">
+                  <h4 className="text-body font-semibold text-foreground truncate">{widget.title || "Sem titulo"}</h4>
+                </div>
+              )}
+              <div className={cn(
+                getWidgetPaddingClass(widgetForRender.props.visual_padding),
+                "min-h-0 flex-1",
+                !hasExplicitHeightFromLayout && (isKpiWidget ? getWidgetHeightClass(height) : getWidgetMinHeightClass(height)),
+              )}
+              >
+                <div className="h-full w-full">
+                  <WidgetRenderer
+                    widget={widgetForRender}
+                    dashboardId={dashboardId}
+                    disableFetch
+                    heightMultiplier={height as 0.5 | 1 | 2}
+                    layoutRows={layout?.h}
+                    preloadedData={dataByWidgetId[widget.id]}
+                    preloadedLoading={loading}
+                    preloadedError={errorMessage}
+                  />
+                </div>
               </div>
-            )}
-            <div className={`${getWidgetPaddingClass(widget.config.visual_padding)} flex items-stretch ${getWidgetMinHeightClass(widget.config.size?.height)}`}>
-              <WidgetRenderer
-                widget={widget}
-                dashboardId={dashboardId}
-                disableFetch
-                heightMultiplier={(widget.config.size?.height || 1) as 0.5 | 1 | 2}
-                preloadedData={dataByWidgetId[widget.id]}
-                preloadedLoading={loading}
-                preloadedError={errorMessage}
-              />
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </motion.div>
   );
 };
-
 export default DashboardViewPage;
+
 
 

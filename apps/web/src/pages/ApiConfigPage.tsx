@@ -93,7 +93,7 @@ const ApiConfigPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container space-y-8 py-6">
+      <main className="app-container space-y-8 py-6">
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="flex items-center gap-2 text-display text-foreground"><KeyRound className="h-5 w-5 text-accent" />Configuração de APIs</h1>

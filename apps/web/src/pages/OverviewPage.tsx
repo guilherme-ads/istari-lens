@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import EmptyState from "@/components/shared/EmptyState";
 import { useCoreData } from "@/hooks/use-core-data";
@@ -160,7 +161,7 @@ const OverviewPage = () => {
   if (isError) {
     return (
       <div className="bg-background">
-        <main className="container py-6">
+        <main className="app-container py-6">
           <EmptyState icon={<Database className="h-5 w-5" />} title="Erro ao carregar visao geral" description={errorMessage} />
         </main>
       </div>
@@ -169,7 +170,7 @@ const OverviewPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-8">
+      <main className="app-container py-6 space-y-8">
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-1.5">
           <h1 className="text-display text-foreground">
             {greeting}, {firstName}
@@ -180,30 +181,42 @@ const OverviewPage = () => {
         </motion.div>
 
         <section className="grid gap-4 md:grid-cols-3">
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-5">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card py-5 px-5">
             <div className="flex items-center justify-between">
               <p className="text-heading">Dashboards</p>
               <LayoutDashboard className="h-4 w-4 text-accent" />
             </div>
-            <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{dashboards.length}</p>
+            {isLoading ? (
+              <Skeleton className="mt-2 h-9 w-16" />
+            ) : (
+              <p className="mt-2 text-kpi-lg text-foreground">{dashboards.length}</p>
+            )}
             <p className="mt-1 text-caption">{totalWidgets} widgets criados</p>
           </motion.div>
 
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="glass-card p-5">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="glass-card py-5 px-5">
             <div className="flex items-center justify-between">
               <p className="text-heading">Datasets</p>
               <FolderOpen className="h-4 w-4 text-accent" />
             </div>
-            <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{datasets.length}</p>
+            {isLoading ? (
+              <Skeleton className="mt-2 h-9 w-16" />
+            ) : (
+              <p className="mt-2 text-kpi-lg text-foreground">{datasets.length}</p>
+            )}
             <p className="mt-1 text-caption">{datasetsWithDashboards} com dashboards</p>
           </motion.div>
 
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card p-5">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card py-5 px-5">
             <div className="flex items-center justify-between">
               <p className="text-heading">Fontes conectadas</p>
               <Link2 className="h-4 w-4 text-accent" />
             </div>
-            <p className="mt-2 text-3xl font-extrabold tracking-tight text-foreground">{activeDatasources.length}</p>
+            {isLoading ? (
+              <Skeleton className="mt-2 h-9 w-16" />
+            ) : (
+              <p className="mt-2 text-kpi-lg text-foreground">{activeDatasources.length}</p>
+            )}
             <p className="mt-1 text-caption">
               {activeSpreadsheetCount} {activeSpreadsheetCount === 1 ? "planilha" : "planilhas"} · {activeDatabaseCount} {activeDatabaseCount === 1 ? "banco" : "bancos"}
             </p>
@@ -233,8 +246,8 @@ const OverviewPage = () => {
           </motion.section>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass-card p-5">
+        <div className="grid gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass-card p-5 2xl:col-span-2">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-heading">Datasets recentes</h2>
               <Button variant="ghost" size="sm" className="h-7 text-xs text-accent" onClick={() => navigate("/datasets")}>
@@ -242,7 +255,18 @@ const OverviewPage = () => {
               </Button>
             </div>
             {isLoading ? (
-              <p className="text-caption">Carregando datasets...</p>
+              <div className="space-y-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-start gap-3 rounded-lg p-3">
+                    <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+                    <div className="flex-1 space-y-1.5">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
+                    <Skeleton className="h-3 w-12" />
+                  </div>
+                ))}
+              </div>
             ) : recentDatasets.length === 0 ? (
               <p className="text-caption">Nenhum dataset encontrado.</p>
             ) : (
@@ -294,7 +318,18 @@ const OverviewPage = () => {
               </Button>
             </div>
             {isLoading ? (
-              <p className="text-caption">Carregando dashboards...</p>
+              <div className="space-y-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-start gap-3 rounded-lg p-3">
+                    <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+                    <div className="flex-1 space-y-1.5">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
+                    <Skeleton className="h-3 w-12" />
+                  </div>
+                ))}
+              </div>
             ) : recentDashboards.length === 0 ? (
               <p className="text-caption">Nenhum dashboard encontrado.</p>
             ) : (

@@ -17,8 +17,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { FilterRuleRow } from "@/components/builder/FilterRuleRow";
 import { cn } from "@/lib/utils";
-import type { DashboardWidget, WidgetFilter } from "@/types/dashboard";
+import type { DashboardWidget, SectionColumns, WidgetFilter, WidgetWidth } from "@/types/dashboard";
 import type { View } from "@/types";
 
 interface WidgetConfigPanelProps {
@@ -28,7 +29,7 @@ interface WidgetConfigPanelProps {
   datasetId?: number;
   categoricalValueHints?: Record<string, { values: string[]; truncated: boolean }>;
   categoricalDropdownThreshold?: number;
-  sectionColumns?: 1 | 2 | 3 | 4;
+  sectionColumns?: SectionColumns;
   open: boolean;
   onClose: () => void;
   onSave: (widget: DashboardWidget) => Promise<void> | void;
@@ -1369,7 +1370,7 @@ export const WidgetConfigPanel = ({
                   >
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="number_2">Decimal (2 casas)</SelectItem>
+                      <SelectItem value="number_2">Decimal</SelectItem>
                       <SelectItem value="integer">Inteiro</SelectItem>
                     </SelectContent>
                   </Select>
@@ -2196,7 +2197,7 @@ export const WidgetConfigPanel = ({
                         {filterJoin}
                       </button>
                     )}
-                    <div className="flex items-center gap-2">
+                    <FilterRuleRow variant="widget">
                     <Select
                       value={filterItem.column || "__none__"}
                       onValueChange={(value) => {
@@ -2211,7 +2212,7 @@ export const WidgetConfigPanel = ({
                         });
                       }}
                     >
-                      <SelectTrigger className="flex-1 h-8 text-xs"><SelectValue placeholder="Sem filtro" /></SelectTrigger>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sem filtro" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none__">Sem filtro</SelectItem>
                         {columns.map((column) => (
@@ -2237,7 +2238,7 @@ export const WidgetConfigPanel = ({
                                       : filterItem.value,
                             })}
                         >
-                          <SelectTrigger className="w-[90px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-8 w-full text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="eq">=</SelectItem>
                             <SelectItem value="neq">!=</SelectItem>
@@ -2263,14 +2264,14 @@ export const WidgetConfigPanel = ({
                           </SelectContent>
                         </Select>
                         {filterItem.op === "is_null" || filterItem.op === "not_null" ? (
-                          <div className="w-[150px] h-8" />
+                          <div className="h-8 w-full" />
                         ) : isTemporalFilterColumn && isRelativeTemporalFilter ? (
                           <Select
                             value={String((filterItem.value as Record<string, unknown>)?.relative || "last_7_days")}
                             onValueChange={(value) =>
                               applyFilterAt(index, { ...filterItem, op: "between", value: { relative: value } })}
                           >
-                            <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="h-8 w-full text-xs"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {relativeDateOptions.map((option) => (
                                 <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
@@ -2284,7 +2285,7 @@ export const WidgetConfigPanel = ({
                                 type="button"
                                 variant="outline"
                                 className={cn(
-                                  "w-[280px] h-8 justify-start text-left text-xs font-normal",
+                                  "h-8 w-full justify-start text-left text-xs font-normal",
                                   (!Array.isArray(filterItem.value) || !filterItem.value[0] || !filterItem.value[1]) && "text-muted-foreground",
                                 )}
                               >
@@ -2317,7 +2318,7 @@ export const WidgetConfigPanel = ({
                                 type="button"
                                 variant="outline"
                                 className={cn(
-                                  "w-[170px] h-8 justify-start text-left text-xs font-normal",
+                                  "h-8 w-full justify-start text-left text-xs font-normal",
                                   !filterItem.value && "text-muted-foreground",
                                 )}
                               >
@@ -2340,9 +2341,9 @@ export const WidgetConfigPanel = ({
                             </PopoverContent>
                           </Popover>
                         ) : filterItem.op === "between" ? (
-                          <div className="flex items-center gap-1">
+                          <div className="flex w-full items-center gap-1">
                             <Input
-                              className="w-[110px] h-8 text-xs"
+                              className="h-8 flex-1 text-xs"
                               value={String((Array.isArray(filterItem.value) ? filterItem.value[0] : "") || "")}
                               onChange={(e) =>
                                 applyFilterAt(index, {
@@ -2354,7 +2355,7 @@ export const WidgetConfigPanel = ({
                                 })}
                             />
                             <Input
-                              className="w-[110px] h-8 text-xs"
+                              className="h-8 flex-1 text-xs"
                               value={String((Array.isArray(filterItem.value) ? filterItem.value[1] : "") || "")}
                               onChange={(e) =>
                                 applyFilterAt(index, {
@@ -2375,7 +2376,7 @@ export const WidgetConfigPanel = ({
                                 value: value === "__none__" ? "" : value,
                               })}
                           >
-                            <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue placeholder="Valor" /></SelectTrigger>
+                            <SelectTrigger className="h-8 w-full text-xs"><SelectValue placeholder="Valor" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="__none__">Sem valor</SelectItem>
                               {(columnHint?.values || []).map((value) => (
@@ -2385,7 +2386,7 @@ export const WidgetConfigPanel = ({
                           </Select>
                         ) : (
                           <Input
-                            className="w-[140px] h-8 text-xs"
+                            className="h-8 w-full text-xs"
                             value={Array.isArray(filterItem.value) ? String((filterItem.value as unknown[]).join(",")) : String(filterItem.value || "")}
                             onChange={(e) =>
                               applyFilterAt(index, {
@@ -2418,7 +2419,7 @@ export const WidgetConfigPanel = ({
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
-                  </div>
+                  </FilterRuleRow>
                   </div>
                 );
               })}
@@ -2568,10 +2569,11 @@ export const WidgetConfigPanel = ({
                         label="Largura (blocos)"
                         value={String(size.width)}
                         options={[
-                          { value: "1", label: "1x", icon: Square },
-                          ...(maxWidth >= 2 ? [{ value: "2", label: "2x", icon: RectangleVertical } as const] : []),
-                          ...(maxWidth >= 3 ? [{ value: "3", label: "3x", icon: RectangleHorizontal } as const] : []),
-                          ...(maxWidth >= 4 ? [{ value: "4", label: "4x", icon: RectangleHorizontal } as const] : []),
+                          { value: "1", label: "1/6", icon: Square },
+                          ...(maxWidth >= 2 ? [{ value: "2", label: "2/6", icon: RectangleVertical } as const] : []),
+                          ...(maxWidth >= 3 ? [{ value: "3", label: "3/6", icon: RectangleHorizontal } as const] : []),
+                          ...(maxWidth >= 4 ? [{ value: "4", label: "4/6", icon: RectangleHorizontal } as const] : []),
+                          ...(maxWidth >= 6 ? [{ value: "6", label: "6/6", icon: RectangleHorizontal } as const] : []),
                         ]}
                         onChange={(value) =>
                           update({
@@ -2579,7 +2581,7 @@ export const WidgetConfigPanel = ({
                               ...draft.config,
                               size: {
                                 ...size,
-                                width: Math.min(maxWidth, Number(value)) as 1 | 2 | 3 | 4,
+                                width: Math.min(maxWidth, Number(value)) as WidgetWidth,
                               },
                             },
                           })}

@@ -1,4 +1,15 @@
-import type { Dashboard, DashboardSection, DashboardWidget, WidgetConfig } from "@/types/dashboard";
+import {
+  SECTION_GRID_COLS,
+  gridRowsToWidgetHeight,
+  normalizeLayoutItem,
+  snapToCanonicalWidgetWidth,
+  widgetHeightToGridRows,
+  type Dashboard,
+  type DashboardLayoutItem,
+  type DashboardSection,
+  type DashboardWidget,
+  type WidgetConfig,
+} from "@/types/dashboard";
 import type { Datasource, Dataset, View } from "@/types";
 import type { ApiDashboard, ApiDashboardWidget, ApiDataset, ApiDatasource, ApiView } from "@/lib/api";
 import { normalizeText } from "@/lib/text";
@@ -110,8 +121,8 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
         }
       : undefined,
     size: {
-      width: [1, 2, 3, 4].includes(asNumber((raw.size as Record<string, unknown> | undefined)?.width, 1))
-        ? (asNumber((raw.size as Record<string, unknown> | undefined)?.width, 1) as 1 | 2 | 3 | 4)
+      width: [1, 2, 3, 4, 5, 6].includes(asNumber((raw.size as Record<string, unknown> | undefined)?.width, 1))
+        ? (asNumber((raw.size as Record<string, unknown> | undefined)?.width, 1) as 1 | 2 | 3 | 4 | 5 | 6)
         : 1,
       height: (
         asNumber((raw.size as Record<string, unknown> | undefined)?.height, 1) === 0.5
@@ -214,11 +225,88 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
   return parsed;
 };
 
+const clampSectionColumns = (value: number): DashboardSection["columns"] => (
+  value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6
+    ? value as DashboardSection["columns"]
+    : SECTION_GRID_COLS
+);
+
+const parseLayoutItemFromRef = (raw: unknown, widgetId: string): DashboardLayoutItem | null => {
+  if (!isObject(raw)) return null;
+  if (typeof raw.x !== "number" || typeof raw.y !== "number" || typeof raw.w !== "number" || typeof raw.h !== "number") {
+    return null;
+  }
+  return normalizeLayoutItem({
+    i: widgetId,
+    x: raw.x,
+    y: raw.y,
+    w: raw.w,
+    h: raw.h,
+  });
+};
+
+const defaultWidgetLayout = (widget: DashboardWidget): DashboardLayoutItem => ({
+  i: widget.id,
+  x: 0,
+  y: 0,
+  w: snapToCanonicalWidgetWidth(widget.props.size?.width || widget.config.size?.width || 2),
+  h: widgetHeightToGridRows(widget.props.size?.height || widget.config.size?.height || 1),
+});
+
+const buildSectionLayout = (
+  widgets: DashboardWidget[],
+  existingItems: DashboardLayoutItem[],
+): DashboardLayoutItem[] => {
+  const byId = new Map(existingItems.map((item) => [item.i, normalizeLayoutItem(item)]));
+  const normalizedExisting = Array.from(byId.values());
+  const bottom = normalizedExisting.reduce((maxY, item) => Math.max(maxY, item.y + item.h), 0);
+  let cursorX = 0;
+  let cursorY = bottom;
+  let currentRowHeight = 1;
+
+  const nextLayout: DashboardLayoutItem[] = [];
+  widgets.forEach((widget) => {
+    const existing = byId.get(widget.id);
+    if (existing) {
+      nextLayout.push({ ...existing, i: widget.id });
+      return;
+    }
+
+    const fallback = defaultWidgetLayout(widget);
+    if (cursorX + fallback.w > SECTION_GRID_COLS) {
+      cursorX = 0;
+      cursorY += currentRowHeight;
+      currentRowHeight = 1;
+    }
+
+    nextLayout.push({
+      i: widget.id,
+      x: cursorX,
+      y: cursorY,
+      w: fallback.w,
+      h: fallback.h,
+    });
+
+    cursorX += fallback.w;
+    currentRowHeight = Math.max(currentRowHeight, fallback.h);
+    if (cursorX >= SECTION_GRID_COLS) {
+      cursorX = 0;
+      cursorY += currentRowHeight;
+      currentRowHeight = 1;
+    }
+  });
+
+  return nextLayout.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+};
+
 const mapWidget = (item: ApiDashboardWidget): DashboardWidget | null => {
   const config = parseWidgetConfig(item.query_config);
   if (!config) return null;
   return {
     id: String(item.id),
+    type: config.widget_type,
+    sectionId: "",
+    props: config,
     title: item.title || "",
     position: item.position,
     configVersion: item.config_version || 1,
@@ -228,30 +316,67 @@ const mapWidget = (item: ApiDashboardWidget): DashboardWidget | null => {
 
 const parseSection = (raw: unknown, widgetsById: Map<string, DashboardWidget>): DashboardSection | null => {
   if (!isObject(raw)) return null;
-  const columnsRaw = asNumber(raw.columns, 2);
-  const columns = columnsRaw === 1 || columnsRaw === 2 || columnsRaw === 3 || columnsRaw === 4 ? columnsRaw : 2;
+  const sectionId = asString(raw.id, `sec-${Date.now()}`);
+  const columnsRaw = asNumber(raw.columns, SECTION_GRID_COLS);
+  const columns = clampSectionColumns(columnsRaw);
   const refs = Array.isArray(raw.widgets) ? raw.widgets : [];
   const widgets: DashboardWidget[] = [];
+  const sectionLayout: DashboardLayoutItem[] = [];
 
   refs.forEach((ref) => {
+    let widgetId = "";
     if (typeof ref === "number" || typeof ref === "string") {
-      const widget = widgetsById.get(String(ref));
-      if (widget) widgets.push(widget);
-      return;
+      widgetId = String(ref);
     }
+    if (isObject(ref) && !widgetId) {
+      widgetId = String(ref.widget_id || ref.id || "");
+    }
+
+    if (!widgetId) return;
+    const widget = widgetsById.get(widgetId);
+    if (!widget) return;
+
+    const nextWidget: DashboardWidget = {
+      ...widget,
+      sectionId,
+      type: widget.props.widget_type,
+      props: widget.props,
+      config: widget.props,
+    };
+    widgets.push(nextWidget);
+
     if (isObject(ref)) {
-      const refId = String(ref.widget_id || ref.id || "");
-      const widget = widgetsById.get(refId);
-      if (widget) widgets.push(widget);
+      const layoutItem = parseLayoutItemFromRef(ref, widgetId);
+      if (layoutItem) sectionLayout.push(layoutItem);
     }
   });
 
+  const layout = buildSectionLayout(widgets, sectionLayout);
+  const layoutById = new Map(layout.map((item) => [item.i, item]));
+  const widgetsWithLayoutSizing = widgets.map((widget) => {
+    const item = layoutById.get(widget.id);
+    if (!item) return widget;
+    const nextProps: WidgetConfig = {
+      ...widget.props,
+      size: {
+        width: item.w as 1 | 2 | 3 | 4 | 5 | 6,
+        height: gridRowsToWidgetHeight(item.h),
+      },
+    };
+    return {
+      ...widget,
+      props: nextProps,
+      config: nextProps,
+    };
+  });
+
   return {
-    id: asString(raw.id, `sec-${Date.now()}`),
+    id: sectionId,
     title: asString(raw.title),
     showTitle: typeof raw.show_title === "boolean" ? raw.show_title : true,
     columns,
-    widgets,
+    layout,
+    widgets: widgetsWithLayoutSizing,
   };
 };
 
@@ -312,11 +437,19 @@ export const mapDashboard = (item: ApiDashboard): Dashboard => {
   const unplacedWidgets = widgets.filter((widget) => !placedIds.has(widget.id));
 
   if (unplacedWidgets.length > 0) {
+    const withSection = unplacedWidgets.map((widget) => ({
+      ...widget,
+      sectionId: `sec-unplaced-${item.id}`,
+      type: widget.props.widget_type,
+      props: widget.props,
+      config: widget.props,
+    }));
     parsedSections.push({
       id: `sec-unplaced-${item.id}`,
       title: "Geral",
-      columns: 2,
-      widgets: unplacedWidgets,
+      columns: SECTION_GRID_COLS,
+      layout: buildSectionLayout(withSection, []),
+      widgets: withSection,
     });
   }
 
@@ -325,8 +458,21 @@ export const mapDashboard = (item: ApiDashboard): Dashboard => {
     : [{
         id: `sec-${item.id}`,
         title: "Geral",
-        columns: 2 as const,
-        widgets,
+        columns: SECTION_GRID_COLS,
+        layout: buildSectionLayout(widgets.map((widget) => ({
+          ...widget,
+          sectionId: `sec-${item.id}`,
+          type: widget.props.widget_type,
+          props: widget.props,
+          config: widget.props,
+        })), []),
+        widgets: widgets.map((widget) => ({
+          ...widget,
+          sectionId: `sec-${item.id}`,
+          type: widget.props.widget_type,
+          props: widget.props,
+          config: widget.props,
+        })),
       }];
 
   return {
@@ -355,11 +501,47 @@ export const sectionsToLayoutConfig = (sections: DashboardSection[]): Record<str
     id: section.id,
     title: section.title,
     show_title: section.showTitle !== false,
-    columns: section.columns,
-    widgets: section.widgets.map((widget) => {
-      const numericId = Number(widget.id);
-      return {
-        widget_id: Number.isFinite(numericId) ? numericId : widget.id,
-      };
-    }),
+    columns: SECTION_GRID_COLS,
+    widgets: buildSectionLayout(section.widgets, section.layout || [])
+      .map((layoutItem) => {
+        const numericId = Number(layoutItem.i);
+        return {
+          widget_id: Number.isFinite(numericId) ? numericId : layoutItem.i,
+          i: layoutItem.i,
+          x: layoutItem.x,
+          y: layoutItem.y,
+          w: layoutItem.w,
+          h: layoutItem.h,
+        };
+      })
+      .filter((entry) => section.widgets.some((widget) => widget.id === String(entry.widget_id))),
   }));
+
+export const syncSectionWidgetsWithLayout = (section: DashboardSection): DashboardSection => {
+  const layout = buildSectionLayout(section.widgets, section.layout || []);
+  const layoutById = new Map(layout.map((item) => [item.i, item]));
+  const widgets = section.widgets.map((widget) => {
+    const item = layoutById.get(widget.id);
+    if (!item) return widget;
+    const nextProps: WidgetConfig = {
+      ...widget.props,
+      size: {
+        width: item.w as 1 | 2 | 3 | 4 | 5 | 6,
+        height: gridRowsToWidgetHeight(item.h),
+      },
+    };
+    return {
+      ...widget,
+      sectionId: section.id,
+      type: nextProps.widget_type,
+      props: nextProps,
+      config: nextProps,
+    };
+  });
+  return {
+    ...section,
+    columns: SECTION_GRID_COLS,
+    layout,
+    widgets,
+  };
+};

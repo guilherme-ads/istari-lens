@@ -359,21 +359,6 @@ export type ApiQueryPreviewBatchResponse = {
   >;
 };
 
-export type ApiSharedAnalysisResponse = {
-  analysis: {
-    id: number;
-    datasource_id: number;
-    dataset_id: number;
-    name: string;
-    description?: string | null;
-    query_config: Record<string, unknown>;
-    visualization_config?: Record<string, unknown> | null;
-    created_at: string;
-    updated_at: string;
-  };
-  data: ApiQueryPreviewResponse;
-};
-
 export type ApiQuerySpec = {
   datasetId: number;
   metrics: Array<{ field: string; agg: string }>;
@@ -441,7 +426,7 @@ export type ApiWidgetConfig = {
     granularity: "day" | "week" | "month" | "hour" | "timestamp";
   };
   size?: {
-    width: 1 | 2 | 3 | 4;
+    width: 1 | 2 | 3 | 4 | 5 | 6;
     height: 0.5 | 1 | 2;
   };
   text_style?: {
@@ -615,7 +600,7 @@ export type ApiAIGeneratedSection = {
   id: string;
   title: string;
   show_title: boolean;
-  columns: 1 | 2 | 3 | 4;
+  columns: 1 | 2 | 3 | 4 | 5 | 6;
   widgets: ApiAIGeneratedWidget[];
 };
 
@@ -1058,9 +1043,6 @@ export const api = {
 
   previewQueryBatch: (payload: ApiQueryPreviewBatchRequest) =>
     request<ApiQueryPreviewBatchResponse>("/query/preview/batch", { method: "POST", body: JSON.stringify(payload) }),
-
-  getSharedAnalysis: (token: string) =>
-    request<ApiSharedAnalysisResponse>(`/analyses/shared/${token}`, undefined, false),
 
   getApiIntegration: () =>
     request<ApiLLMIntegrationStatus>("/api-config/integration"),

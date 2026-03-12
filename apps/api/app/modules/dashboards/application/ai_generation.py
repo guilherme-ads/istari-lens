@@ -21,6 +21,7 @@ from app.modules.widgets.domain.config import (
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 DATASET_WIDGET_VIEW_NAME = "__dataset_base"
+MAX_DASHBOARD_COLUMNS = 6
 AI_DASHBOARD_MODEL_PATH = Path(__file__).resolve().parent / "templates" / "dashboard_model_template.json"
 AI_DASHBOARD_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "dashboard_generation_system_prompt.txt"
 LEGACY_JSON_OUTPUT_INSTRUCTION = (
@@ -55,8 +56,8 @@ def _load_dashboard_model_template() -> dict[str, Any]:
     fallback = {
         "format": "istari.dashboard.ai.template.v1",
         "allowed_widget_types": ["kpi", "line", "bar", "column", "donut", "table", "text", "dre"],
-        "section": {"columns": [1, 2, 3, 4]},
-        "widget_size": {"width": [1, 2, 3, 4], "height": [0.5, 1, 2]},
+        "section": {"columns": [1, 2, 3, 4, 5, 6]},
+        "widget_size": {"width": [1, 2, 3, 4, 5, 6], "height": [0.5, 1, 2]},
     }
     try:
         return json.loads(AI_DASHBOARD_MODEL_PATH.read_text(encoding="utf-8"))
@@ -106,7 +107,7 @@ def _setup_default_widget_config(
         "show_title": True,
         "visual_padding": "normal",
         "visual_palette": "default",
-        "size": {"width": max(1, min(4, int(width))), "height": height if height in {0.5, 1, 2} else 1},
+        "size": {"width": max(1, min(MAX_DASHBOARD_COLUMNS, int(width))), "height": height if height in {0.5, 1, 2} else 1},
         "metrics": [],
         "dimensions": [],
         "filters": [],
@@ -178,7 +179,7 @@ def _coerce_width(raw_value: Any, default: int) -> int:
         value = int(raw_value)
     except Exception:
         value = default
-    return max(1, min(4, value))
+    return max(1, min(MAX_DASHBOARD_COLUMNS, value))
 
 
 def _coerce_height(raw_value: Any, default: float) -> float:
@@ -208,7 +209,7 @@ def _coerce_section_columns(raw_value: Any, default: int = 2) -> int:
         value = int(raw_value)
     else:
         value = default
-    return value if 1 <= value <= 4 else default
+    return value if 1 <= value <= MAX_DASHBOARD_COLUMNS else default
 
 
 def _dashboard_plan_response_schema() -> dict[str, Any]:
@@ -262,7 +263,7 @@ def _dashboard_plan_response_schema() -> dict[str, Any]:
                         "additionalProperties": False,
                         "properties": {
                             "title": {"type": "string"},
-                            "columns": {"type": "integer", "minimum": 1, "maximum": 4},
+                            "columns": {"type": "integer", "minimum": 1, "maximum": MAX_DASHBOARD_COLUMNS},
                             "widgets": {
                                 "type": "array",
                                 "items": {
@@ -271,7 +272,7 @@ def _dashboard_plan_response_schema() -> dict[str, Any]:
                                     "properties": {
                                         "type": {"type": "string", "enum": widget_types},
                                         "title": {"type": "string"},
-                                        "width": {"type": "integer", "minimum": 1, "maximum": 4},
+                                        "width": {"type": "integer", "minimum": 1, "maximum": MAX_DASHBOARD_COLUMNS},
                                         "height": {"type": "number", "enum": [0.5, 1, 2]},
                                         "config": {"type": "object"},
                                     },
@@ -794,7 +795,7 @@ async def generate_dashboard_with_ai_service(
             widget_type = str(raw_widget.get("type") or config_widget_type or "table").lower()
             if widget_type not in {"kpi", "line", "bar", "column", "donut", "table", "text", "dre"}:
                 widget_type = "table"
-            default_width = min(section_columns, 4 if widget_type in {"line", "table"} else 1)
+            default_width = min(section_columns, MAX_DASHBOARD_COLUMNS if widget_type in {"line", "table"} else 1)
             default_height = 2 if widget_type in {"line", "table"} else 1
             requested_width = _coerce_width(raw_widget.get("width"), default_width)
             width = min(section_columns, requested_width)
@@ -860,7 +861,7 @@ async def generate_dashboard_with_ai_service(
                     widget_type="table",
                     columns=columns,
                     title=widget_title,
-                    width=min(section_columns, 4),
+                    width=min(section_columns, MAX_DASHBOARD_COLUMNS),
                     height=2,
                 )
                 parsed_final_config = WidgetConfig.model_validate(config)

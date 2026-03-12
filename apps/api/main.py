@@ -14,7 +14,6 @@ from app.api.v1.routes import (
     datasets,
     queries,
     analyses,
-    shares,
     datasources,
     dashboards,
     view_schema,
@@ -493,7 +492,6 @@ app.include_router(api_config.router)
 app.include_router(imports.router)
 app.include_router(catalog.router)
 app.include_router(analyses.router)
-app.include_router(shares.router)
 
 @app.get("/")
 async def root():

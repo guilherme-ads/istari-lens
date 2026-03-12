@@ -465,7 +465,7 @@ class DashboardAIGenerateSectionResponse(BaseModel):
     id: str
     title: str
     show_title: bool = True
-    columns: Literal[1, 2, 3, 4] = 2
+    columns: Literal[1, 2, 3, 4, 5, 6] = 2
     widgets: List[DashboardAIGenerateWidgetResponse] = Field(default_factory=list)
 
 
@@ -654,24 +654,6 @@ class AnalysisUpdateRequest(BaseModel):
     description: Optional[str] = None
     query_config: Optional[QuerySpec] = None
     visualization_config: Optional[VisualizationConfig] = None
-
-
-# ==================== SHARES ====================
-
-class ShareCreateRequest(BaseModel):
-    pass
-
-class ShareResponse(BaseModel):
-    token: str
-    analysis_id: int
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-class SharedAnalysisResponse(BaseModel):
-    analysis: AnalysisResponse
-    data: QueryPreviewResponse
 
 
 # ==================== API CONFIG / LLM ====================

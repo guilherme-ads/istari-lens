@@ -66,7 +66,7 @@ const DatasetsPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-8">
+      <main className="app-container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}

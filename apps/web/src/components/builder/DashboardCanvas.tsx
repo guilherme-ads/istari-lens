@@ -1,17 +1,58 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import GridLayout, { useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Plus, Settings2, GripVertical, MoreHorizontal, Trash2, Columns2, Columns3,
-  LayoutGrid, Pencil, ChevronUp, ChevronDown, Eye, EyeOff, Copy, Square,
+  Plus,
+  Settings2,
+  MoreHorizontal,
+  Trash2,
+  Pencil,
+  ChevronUp,
+  ChevronDown,
+  Hash,
+  BarChart3,
+  LineChart,
+  PieChart,
+  Table2,
+  Columns3,
+  Copy,
+  Eye,
+  EyeOff,
 } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { DashboardSection, DashboardWidget } from "@/types/dashboard";
+import { cn } from "@/lib/utils";
+import type { VisualizationType } from "@/types";
+import {
+  SECTION_GRID_COLS,
+  gridRowsToWidgetHeight,
+  widgetHeightToGridRows,
+  normalizeLayoutItem,
+  snapToCanonicalWidgetWidth,
+  type DashboardLayoutItem,
+  type DashboardSection,
+  type DashboardWidget,
+  type WidgetType,
+} from "@/types/dashboard";
+import { getWidgetCatalogByType, getWidgetCatalogByVisualization, WIDGET_CATALOG } from "@/components/builder/widget-catalog";
 import { WidgetRenderer } from "./WidgetRenderer";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
+
+const DND_MIME = "application/x-istari-builder-dnd";
+const GRID_GUIDES = Array.from({ length: SECTION_GRID_COLS });
+const NEW_WIDGET_DRAG_STATE_EVENT = "builder:new-widget-drag-state";
+const GRID_ROW_HEIGHT = 36;
+const GRID_MARGIN_X = 16;
+const GRID_MARGIN_Y = 16;
 
 interface DashboardCanvasProps {
   dashboardId?: string;
@@ -19,42 +60,69 @@ interface DashboardCanvasProps {
   nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
   sections: DashboardSection[];
   onSectionsChange: (sections: DashboardSection[]) => void;
-  onAddWidget: (sectionId: string) => void;
+  onAddWidget: (
+    sectionId: string,
+    type: VisualizationType,
+    placement?: Pick<DashboardLayoutItem, "x" | "y" | "w" | "h">,
+    preferredWidgetType?: WidgetType,
+  ) => void;
   onEditWidget: (widget: DashboardWidget) => void;
   onDeleteWidget: (widget: DashboardWidget) => void;
   onDuplicateWidget: (widget: DashboardWidget) => void;
   onToggleWidgetTitle: (widget: DashboardWidget) => void;
   onAddSection: (afterIndex?: number) => void;
+  onCommitSectionLayout?: (sectionId: string, layout: DashboardLayoutItem[]) => void;
   readOnly?: boolean;
   builderMode?: boolean;
   refreshingWidgetIds?: Set<string>;
 }
 
-const columnOptions = [
-  { value: 1 as const, label: "1 Coluna", icon: Square },
-  { value: 2 as const, label: "2 Colunas", icon: Columns2 },
-  { value: 3 as const, label: "3 Colunas", icon: Columns3 },
-  { value: 4 as const, label: "4 Colunas", icon: LayoutGrid },
-];
+type NewWidgetDragPayload = { kind: "new-widget"; widgetType: VisualizationType; preferredWidgetType?: WidgetType };
 
-const getWidgetWidth = (widget: DashboardWidget, sectionColumns: 1 | 2 | 3 | 4): 1 | 2 | 3 | 4 => {
-  const raw = widget.config.size?.width || 1;
-  return Math.min(sectionColumns, Math.max(1, raw)) as 1 | 2 | 3 | 4;
+const widgetTypeIconByWidget: Record<WidgetType, typeof Hash> = {
+  kpi: Hash,
+  bar: BarChart3,
+  line: LineChart,
+  donut: PieChart,
+  table: Table2,
+  column: BarChart3,
+  text: Table2,
+  dre: Columns3,
 };
 
-const getWidgetWidthClass = (sectionColumns: 1 | 2 | 3 | 4, width: 1 | 2 | 3 | 4) => {
-  const clampedWidth = Math.min(width, sectionColumns) as 1 | 2 | 3 | 4;
-  if (sectionColumns === 1) return "col-span-1";
-  if (sectionColumns === 2) return clampedWidth >= 2 ? "md:col-span-2" : "md:col-span-1";
-  if (sectionColumns === 3) {
-    if (clampedWidth >= 3) return "md:col-span-2 lg:col-span-3";
-    if (clampedWidth === 2) return "md:col-span-2 lg:col-span-2";
-    return "md:col-span-1 lg:col-span-1";
+const parseNewWidgetDragPayload = (dataTransfer?: DataTransfer | null): NewWidgetDragPayload | null => {
+  const raw = dataTransfer?.getData(DND_MIME);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { kind?: string; widgetType?: VisualizationType; preferredWidgetType?: WidgetType };
+    if (parsed.kind !== "new-widget" || !parsed.widgetType) return null;
+    return {
+      kind: "new-widget",
+      widgetType: parsed.widgetType,
+      preferredWidgetType: parsed.preferredWidgetType,
+    };
+  } catch {
+    return null;
   }
-  if (clampedWidth >= 4) return "md:col-span-2 lg:col-span-4";
-  if (clampedWidth === 3) return "md:col-span-2 lg:col-span-3";
-  if (clampedWidth === 2) return "md:col-span-2 lg:col-span-2";
-  return "md:col-span-1 lg:col-span-1";
+};
+
+type GridPointerEventLike = Event | {
+  clientX?: number;
+  clientY?: number;
+  changedTouches?: TouchList | null;
+};
+
+const getClientPointFromGridEvent = (event: GridPointerEventLike): { x: number; y: number } | null => {
+  const pointerEvent = event as { clientX?: number; clientY?: number };
+  if (typeof pointerEvent.clientX === "number" && typeof pointerEvent.clientY === "number") {
+    return { x: pointerEvent.clientX, y: pointerEvent.clientY };
+  }
+  const touchLike = event as { changedTouches?: TouchList | null };
+  const changedTouches = touchLike.changedTouches;
+  if (changedTouches && changedTouches.length > 0) {
+    return { x: changedTouches[0].clientX, y: changedTouches[0].clientY };
+  }
+  return null;
 };
 
 const getWidgetPaddingClass = (padding?: "compact" | "normal" | "comfortable"): string => {
@@ -69,207 +137,303 @@ const getWidgetMinHeightClass = (height?: 0.5 | 1 | 2): string => {
   return "min-h-[180px]";
 };
 
-const getLastRowRemaining = (widgets: DashboardWidget[], sectionColumns: 1 | 2 | 3 | 4): number => {
-  if (widgets.length === 0) return sectionColumns;
-  let used = 0;
-  for (let i = 0; i < widgets.length; i += 1) {
-    const w = getWidgetWidth(widgets[i], sectionColumns);
-    if (used + w > sectionColumns) used = 0;
-    used += w;
-    if (used === sectionColumns) used = 0;
-  }
-  return used === 0 ? 0 : sectionColumns - used;
+const getGridColumnWidth = (gridWidth: number): number => (
+  Math.max(0, (gridWidth - (GRID_MARGIN_X * (SECTION_GRID_COLS - 1))) / SECTION_GRID_COLS)
+);
+
+const getDropXFromClientPoint = (
+  clientX: number,
+  gridRect: DOMRect,
+  gridWidth: number,
+  widgetWidth: number,
+): number => {
+  const columnWidth = getGridColumnWidth(gridWidth);
+  const step = columnWidth + GRID_MARGIN_X;
+  const relativeX = clientX - gridRect.left;
+  const rawX = Math.floor((relativeX + (GRID_MARGIN_X / 2)) / Math.max(1, step));
+  return Math.max(0, Math.min(SECTION_GRID_COLS - widgetWidth, rawX));
 };
 
-const getMaxWidthAtIndex = (widgets: DashboardWidget[], index: number, sectionColumns: 1 | 2 | 3 | 4): 1 | 2 | 3 | 4 => {
-  let used = 0;
-  for (let i = 0; i <= index; i += 1) {
-    const width = getWidgetWidth(widgets[i], sectionColumns);
-    if (used + width > sectionColumns) used = 0;
-    if (i === index) {
-      return Math.max(1, sectionColumns - used) as 1 | 2 | 3 | 4;
+const toDropPreviewStyle = (placement: Pick<DashboardLayoutItem, "x" | "y" | "w" | "h">, gridWidth: number) => {
+  const columnWidth = getGridColumnWidth(gridWidth);
+  return {
+    left: placement.x * (columnWidth + GRID_MARGIN_X),
+    top: placement.y * (GRID_ROW_HEIGHT + GRID_MARGIN_Y),
+    width: (placement.w * columnWidth) + ((placement.w - 1) * GRID_MARGIN_X),
+    height: (placement.h * GRID_ROW_HEIGHT) + ((placement.h - 1) * GRID_MARGIN_Y),
+  };
+};
+
+const toLayoutById = (section: DashboardSection): Record<string, DashboardLayoutItem> => {
+  const fromState = new Map((section.layout || []).map((item) => [item.i, normalizeLayoutItem(item)]));
+  const byId: Record<string, DashboardLayoutItem> = {};
+  section.widgets.forEach((widget, index) => {
+    const catalog = getWidgetCatalogByType(widget.props.widget_type);
+    const existing = fromState.get(widget.id);
+    if (existing) {
+      byId[widget.id] = normalizeLayoutItem({
+        ...existing,
+        i: widget.id,
+        w: Math.max(catalog.minW, Math.min(catalog.maxW, existing.w)),
+        h: Math.max(catalog.minH, existing.h),
+      });
+      return;
     }
-    used += width;
-    if (used === sectionColumns) used = 0;
+    const widthFromProps = widget.props.size?.width;
+    const heightFromProps = widget.props.size?.height ? widgetHeightToGridRows(widget.props.size.height) : undefined;
+    byId[widget.id] = {
+      i: widget.id,
+      x: 0,
+      y: index * catalog.defaultH,
+      w: Math.max(catalog.minW, Math.min(catalog.maxW, snapToCanonicalWidgetWidth(widthFromProps ?? catalog.defaultW))),
+      h: Math.max(catalog.minH, heightFromProps ?? catalog.minH),
+    };
+  });
+  return byId;
+};
+
+const normalizeRglLayout = (layout: Layout, section: DashboardSection): DashboardLayoutItem[] => {
+  const widgetById = new Map(section.widgets.map((widget) => [widget.id, widget]));
+  return layout
+    .filter((item) => widgetById.has(item.i))
+    .map((item: LayoutItem) => {
+      const widget = widgetById.get(item.i)!;
+      const catalog = getWidgetCatalogByType(widget.props.widget_type);
+      const snappedWidth = snapToCanonicalWidgetWidth(item.w);
+      const clampedWidth = Math.max(catalog.minW, Math.min(catalog.maxW, snappedWidth));
+      const clampedHeight = Math.max(catalog.minH, Math.floor(item.h));
+      return normalizeLayoutItem({
+        i: item.i,
+        x: Math.max(0, Math.min(SECTION_GRID_COLS - 1, Math.floor(item.x))),
+        y: 0,
+        w: clampedWidth,
+        h: clampedHeight,
+      });
+    });
+};
+
+const resolveSequentialLayout = (
+  layout: DashboardLayoutItem[],
+  section: DashboardSection,
+  activeItemId?: string,
+): DashboardLayoutItem[] => {
+  const baseSorted = [...layout].sort((a, b) => {
+    if (a.x !== b.x) return a.x - b.x;
+    return a.y - b.y;
+  });
+
+  let sorted = baseSorted;
+  if (activeItemId) {
+    const activeItem = baseSorted.find((item) => item.i === activeItemId);
+    if (activeItem) {
+      const others = baseSorted.filter((item) => item.i !== activeItemId);
+      const activePreferredX = Math.max(0, Math.min(SECTION_GRID_COLS - activeItem.w, activeItem.x));
+      const insertIndex = others.findIndex((item) => activePreferredX < (item.x + item.w));
+      if (insertIndex >= 0) {
+        sorted = [...others.slice(0, insertIndex), activeItem, ...others.slice(insertIndex)];
+      } else {
+        sorted = [...others, activeItem];
+      }
+    }
   }
-  return sectionColumns;
+
+  let cursor = 0;
+  const placed: DashboardLayoutItem[] = [];
+  for (const item of sorted) {
+    const preferredX = Math.max(0, Math.min(SECTION_GRID_COLS - item.w, item.x));
+    const nextX = Math.max(cursor, preferredX);
+    if (nextX + item.w > SECTION_GRID_COLS) {
+      const fallback = (section.layout || [])
+        .map((existing) => normalizeLayoutItem(existing))
+        .filter((existing) => section.widgets.some((widget) => widget.id === existing.i))
+        .map((existing) => ({ ...existing, y: 0 }))
+        .sort((a, b) => a.x - b.x);
+      return fallback;
+    }
+    placed.push(normalizeLayoutItem({
+      ...item,
+      x: nextX,
+      y: 0,
+    }));
+    cursor = nextX + item.w;
+  }
+
+  return placed.sort((a, b) => a.x - b.x);
 };
 
-type WidgetCardProps = {
-  dashboardId?: string;
-  datasetId?: number;
-  nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
-  sectionColumns: 1 | 2 | 3 | 4;
-  widget: DashboardWidget;
-  builderMode?: boolean;
-  canDrag?: boolean;
-  onDragStart?: () => void;
-  onDragEnd?: () => void;
-  onDragOver?: () => void;
-  onDrop?: () => void;
-  onResizeStart?: (event: ReactMouseEvent<HTMLDivElement>) => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onToggleTitle: () => void;
-  readOnly?: boolean;
-  isRefreshing?: boolean;
-};
-
-const WidgetCard = forwardRef<HTMLDivElement, WidgetCardProps>(({
+const WidgetCard = ({
   dashboardId,
   datasetId,
   nativeFilters,
-  sectionColumns,
   widget,
-  builderMode = false,
-  canDrag = false,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop,
-  onResizeStart,
-  onEdit,
-  onDelete,
-  onDuplicate,
-  onToggleTitle,
+  layoutItem,
   readOnly = false,
+  builderMode = false,
   isRefreshing = false,
-}, ref) => (
-  <motion.div
-    ref={ref}
-    layout
-    draggable={canDrag}
-    onDragStart={() => onDragStart?.()}
-    onDragEnd={() => onDragEnd?.()}
-    onDragOver={(event) => {
-      if (!canDrag) return;
-      event.preventDefault();
-      onDragOver?.();
-    }}
-    onDrop={(event) => {
-      if (!canDrag) return;
-      event.preventDefault();
-      onDrop?.();
-    }}
-    initial={{ opacity: 0, scale: 0.95 }}
-    animate={{ opacity: 1, scale: 1 }}
-    exit={{ opacity: 0, scale: 0.95 }}
-    className={`glass-card group relative self-start flex flex-col overflow-hidden transition-all ${
-      readOnly ? "" : "interactive-card cursor-pointer hover:ring-2 hover:ring-accent/30"
-    } ${getWidgetWidthClass(sectionColumns, widget.config.size?.width || 1)}`}
-    onClick={() => !readOnly && onEdit()}
-  >
-    {!readOnly && (
-      <div
-        className="absolute top-0 right-0 z-20 h-full w-2 cursor-e-resize bg-transparent hover:bg-accent/20"
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          onResizeStart?.(event);
-        }}
-      />
+  onEdit,
+  onDuplicate,
+  onDelete,
+}: {
+  dashboardId?: string;
+  datasetId?: number;
+  nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
+  widget: DashboardWidget;
+  layoutItem: DashboardLayoutItem;
+  readOnly?: boolean;
+  builderMode?: boolean;
+  isRefreshing?: boolean;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) => {
+  const heightHint = gridRowsToWidgetHeight(layoutItem.h);
+  const isNarrowWidget = layoutItem.w <= 2;
+  const actionGroupClass = "widget-content-interactive widget-actions flex items-center gap-1 pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100";
+  const displayWidget: DashboardWidget = {
+    ...widget,
+    props: {
+      ...widget.props,
+      size: {
+        width: layoutItem.w as 1 | 2 | 3 | 4 | 5 | 6,
+        height: heightHint,
+      },
+    },
+  };
+  displayWidget.config = displayWidget.props;
+  const forceMinHeight = readOnly;
+  const handleCardClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (readOnly) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest(".widget-resize-handle,button,input,textarea,select,a,[role='button']")) {
+      return;
+    }
+    onEdit();
+  };
+
+  return (
+    <div className={cn(
+      "glass-card widget-drag-surface group relative flex h-full min-h-0 flex-col overflow-hidden transition-all",
+      readOnly ? "" : "cursor-pointer hover:ring-2 hover:ring-accent/30 hover:shadow-card-hover",
     )}
-    {widget.config.show_title !== false && (
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50">
-        <div className="min-w-0 flex-1">
-          <h4 className="text-sm font-semibold text-foreground truncate">
-            {widget.title || "Sem título"}
-          </h4>
-        </div>
-        {!readOnly && (
-          <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
+      onClick={handleCardClick}
+    >
+      {!readOnly && displayWidget.props.show_title === false && (
+        <>
+          <div className={cn(actionGroupClass, "absolute right-2 top-2 z-20 rounded-md border border-border/70 bg-card/90 p-0.5")}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDuplicate();
+              }}
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit();
+              }}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </>
+      )}
+
+      {displayWidget.props.show_title !== false && (
+        <div className={cn("border-b border-border/50", isNarrowWidget ? "px-3 py-2" : "px-4 py-2.5")}>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className={cn("truncate font-semibold", isNarrowWidget ? "text-xs" : "text-sm")}>
+                {displayWidget.title || "Sem titulo"}
+              </p>
+              {!isNarrowWidget && displayWidget.props.widget_type !== "line" && (
+                <p className="truncate text-[11px] text-muted-foreground">{displayWidget.props.view_name}</p>
+              )}
+            </div>
+            {!readOnly && (
+              <div className={actionGroupClass}>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                  onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
+                  className="h-7 w-7 shrink-0"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDuplicate();
+                  }}
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent className="text-xs">Duplicar widget</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                  onClick={(e) => { e.stopPropagation(); onToggleTitle(); }}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent className="text-xs">Ocultar título</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                  className="h-7 w-7 shrink-0"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEdit();
+                  }}
                 >
                   <Settings2 className="h-3.5 w-3.5" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent className="text-xs">Configurar</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 destructive-icon-btn"
-                  onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete();
+                  }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent className="text-xs">Excluir widget</TooltipContent>
-            </Tooltip>
+              </div>
+            )}
           </div>
+        </div>
+      )}
+
+      <div
+        className={cn(
+          "widget-content-interactive min-h-0 flex-1",
+          getWidgetPaddingClass(displayWidget.props.visual_padding),
+          forceMinHeight && getWidgetMinHeightClass(heightHint),
         )}
+      >
+        <div className="h-full w-full">
+          <WidgetRenderer
+            widget={displayWidget}
+            dashboardId={dashboardId}
+            datasetId={datasetId}
+            nativeFilters={nativeFilters}
+            builderMode={builderMode}
+            heightMultiplier={heightHint}
+            layoutRows={layoutItem.h}
+            hideTableExport={!readOnly}
+            forcedLoading={isRefreshing}
+          />
+        </div>
       </div>
-    )}
-    {!readOnly && widget.config.show_title === false && (
-      <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); onDuplicate(); }}>
-          <Copy className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); onToggleTitle(); }}>
-          <EyeOff className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
-          <Settings2 className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0 destructive-icon-btn"
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    )}
-    <div className={`${getWidgetPaddingClass(widget.config.visual_padding)} flex items-stretch ${getWidgetMinHeightClass(widget.config.size?.height)}`}>
-      <WidgetRenderer
-        widget={widget}
-        dashboardId={dashboardId}
-        datasetId={datasetId}
-        nativeFilters={nativeFilters}
-        builderMode={builderMode}
-        heightMultiplier={(widget.config.size?.height || 1) as 0.5 | 1 | 2}
-        hideTableExport={!readOnly}
-        forcedLoading={isRefreshing}
-      />
     </div>
-  </motion.div>
-));
-WidgetCard.displayName = "WidgetCard";
+  );
+};
 
 const SectionBlock = ({
   dashboardId,
@@ -278,19 +442,15 @@ const SectionBlock = ({
   section,
   index,
   total,
-  draggedSectionId,
-  onStartSectionDrag,
-  onDropSection,
   onChange,
   onDelete,
   onMove,
   onAddWidget,
-  onReorderWidget,
-  onResizeWidget,
+  onLayoutChange,
+  onLayoutCommit,
   onEditWidget,
   onDeleteWidget,
   onDuplicateWidget,
-  onToggleWidgetTitle,
   readOnly = false,
   builderMode = false,
   refreshingWidgetIds = new Set(),
@@ -301,206 +461,432 @@ const SectionBlock = ({
   section: DashboardSection;
   index: number;
   total: number;
-  draggedSectionId: string | null;
-  onStartSectionDrag: (sectionId: string | null) => void;
-  onDropSection: (targetSectionId: string) => void;
-  onChange: (s: DashboardSection) => void;
+  onChange: (section: DashboardSection) => void;
   onDelete: () => void;
   onMove: (dir: "up" | "down") => void;
-  onAddWidget: () => void;
-  onReorderWidget: (draggedId: string, targetId: string) => void;
-  onResizeWidget: (widgetId: string, width: 1 | 2 | 3 | 4) => void;
-  onEditWidget: (w: DashboardWidget) => void;
-  onDeleteWidget: (w: DashboardWidget) => void;
-  onDuplicateWidget: (w: DashboardWidget) => void;
-  onToggleWidgetTitle: (w: DashboardWidget) => void;
+  onAddWidget: (
+    type: VisualizationType,
+    placement?: Pick<DashboardLayoutItem, "x" | "y" | "w" | "h">,
+    preferredWidgetType?: WidgetType,
+  ) => void;
+  onLayoutChange: (layout: Layout, activeItemId?: string) => void;
+  onLayoutCommit: (layout: Layout, activeItemId?: string) => void;
+  onEditWidget: (widget: DashboardWidget) => void;
+  onDeleteWidget: (widget: DashboardWidget) => void;
+  onDuplicateWidget: (widget: DashboardWidget) => void;
   readOnly?: boolean;
   builderMode?: boolean;
   refreshingWidgetIds?: Set<string>;
 }) => {
   const [editingTitle, setEditingTitle] = useState(false);
-  const [draggedWidgetId, setDraggedWidgetId] = useState<string | null>(null);
+  const [isExternalDragOver, setIsExternalDragOver] = useState(false);
+  const [isCatalogDragActive, setIsCatalogDragActive] = useState(false);
+  const [externalDropPreview, setExternalDropPreview] = useState<Pick<DashboardLayoutItem, "x" | "y" | "w" | "h"> | null>(null);
+  const isEditing = !readOnly;
+  const isSectionTitleVisible = section.showTitle !== false;
+  const { containerRef, width } = useContainerWidth({ initialWidth: 1280 });
   const gridRef = useRef<HTMLDivElement | null>(null);
-  const [gridWidth, setGridWidth] = useState(0);
-  const canAddWidget = getLastRowRemaining(section.widgets, section.columns) > 0;
+  const sectionLayoutById = useMemo(() => toLayoutById(section), [section]);
+  const sectionRglLayout = useMemo<Layout>(
+    () => section.widgets.map((widget) => {
+      const catalog = getWidgetCatalogByType(widget.props.widget_type);
+      const base = sectionLayoutById[widget.id];
+      return {
+        i: widget.id,
+        x: base?.x ?? 0,
+        y: base?.y ?? 0,
+        w: base?.w ?? catalog.defaultW,
+        h: Math.max(catalog.minH, base?.h ?? catalog.minH),
+        minW: catalog.minW,
+        minH: catalog.minH,
+        maxW: catalog.maxW,
+        maxH: Number.POSITIVE_INFINITY,
+      };
+    }),
+    [section.widgets, sectionLayoutById],
+  );
+  const sectionLayoutItems = useMemo<DashboardLayoutItem[]>(
+    () => section.widgets.map((widget) => {
+      const catalog = getWidgetCatalogByType(widget.props.widget_type);
+      const base = sectionLayoutById[widget.id];
+      return normalizeLayoutItem({
+        i: widget.id,
+        x: base?.x ?? 0,
+        y: base?.y ?? 0,
+        w: base?.w ?? catalog.defaultW,
+        h: Math.max(catalog.minH, base?.h ?? catalog.defaultH),
+      });
+    }),
+    [section.widgets, sectionLayoutById],
+  );
+  const occupiedColumns = useMemo(() => {
+    const set = new Set<number>();
+    sectionLayoutItems.forEach((item) => {
+      const start = Math.max(0, item.x);
+      const end = Math.min(SECTION_GRID_COLS, item.x + item.w);
+      for (let column = start; column < end; column += 1) {
+        set.add(column);
+      }
+    });
+    return set;
+  }, [sectionLayoutItems]);
 
   useEffect(() => {
-    if (!gridRef.current) return;
-    const node = gridRef.current;
-    const update = () => setGridWidth(node.clientWidth);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
-  const cellWidth = useMemo(() => {
-    if (!gridWidth) return 240;
-    const gapPx = 16;
-    return (gridWidth - ((section.columns - 1) * gapPx)) / section.columns;
-  }, [gridWidth, section.columns]);
-
-  const gridCols = {
-    1: "grid-cols-1",
-    2: "grid-cols-1 md:grid-cols-2",
-    3: "grid-cols-1 md:grid-cols-2 lg:grid-cols-3",
-    4: "grid-cols-1 md:grid-cols-2 lg:grid-cols-4",
-  }[section.columns];
+    if (readOnly) return undefined;
+    const handleCatalogDragState = (event: Event) => {
+      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+      const active = !!detail?.active;
+      setIsCatalogDragActive(active);
+      if (!active) {
+        setIsExternalDragOver(false);
+        setExternalDropPreview(null);
+      }
+    };
+    window.addEventListener(NEW_WIDGET_DRAG_STATE_EVENT, handleCatalogDragState as EventListener);
+    return () => {
+      window.removeEventListener(NEW_WIDGET_DRAG_STATE_EVENT, handleCatalogDragState as EventListener);
+    };
+  }, [readOnly]);
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      onDragOver={(event) => {
-        if (!readOnly && draggedSectionId && draggedSectionId !== section.id) event.preventDefault();
-      }}
-      onDrop={(event) => {
-        if (readOnly) return;
-        event.preventDefault();
-        onDropSection(section.id);
-      }}
-      className="group/section"
-    >
-      <div className="flex items-center gap-2 mb-3">
-        <button
-          type="button"
-          draggable={!readOnly}
-          onDragStart={() => !readOnly && onStartSectionDrag(section.id)}
-          onDragEnd={() => !readOnly && onStartSectionDrag(null)}
-          className="cursor-grab active:cursor-grabbing"
-        >
-          <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-        </button>
-        {!readOnly && editingTitle ? (
-          <Input
-            autoFocus
-            value={section.title}
-            onChange={(e) => onChange({ ...section, title: e.target.value })}
-            onBlur={() => setEditingTitle(false)}
-            onKeyDown={(e) => e.key === "Enter" && setEditingTitle(false)}
-            className="h-7 text-sm font-semibold max-w-[240px]"
-            placeholder="Nome da secao"
-          />
-        ) : (
-          <button
-            onClick={() => !readOnly && setEditingTitle(true)}
-            className={`text-sm font-semibold text-foreground transition-colors flex items-center gap-1 ${readOnly ? "" : "hover:text-accent"}`}
-          >
-            {section.title || "Secao sem título"}
-            {!readOnly && <Pencil className="h-3 w-3 opacity-0 group-hover/section:opacity-100 transition-opacity" />}
-          </button>
-        )}
-        {!readOnly && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => onChange({ ...section, showTitle: section.showTitle === false })}
-                className="rounded-md p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                {section.showTitle === false ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="text-xs">{section.showTitle === false ? "Mostrar título da secao" : "Ocultar título da secao"}</TooltipContent>
-          </Tooltip>
-        )}
-
-        <div className="flex-1" />
-
-        {!readOnly && <div className="flex items-center gap-0.5 opacity-0 group-hover/section:opacity-100 transition-opacity">
-          {columnOptions.map((opt) => (
-            <Tooltip key={opt.value}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => onChange({ ...section, columns: opt.value })}
-                  className={`rounded-md p-1.5 transition-colors ${
-                    section.columns === opt.value ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-secondary"
-                  }`}
-                >
-                  <opt.icon className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent className="text-xs">{opt.label}</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>}
-
-        {!readOnly && <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover/section:opacity-100 transition-opacity">
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {index > 0 && <DropdownMenuItem onClick={() => onMove("up")}><ChevronUp className="h-3.5 w-3.5 mr-2" /> Mover para cima</DropdownMenuItem>}
-            {index < total - 1 && <DropdownMenuItem onClick={() => onMove("down")}><ChevronDown className="h-3.5 w-3.5 mr-2" /> Mover para baixo</DropdownMenuItem>}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
-              <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir secao
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>}
-      </div>
-
-      <div ref={gridRef} className={`grid ${gridCols} gap-4`}>
-        <AnimatePresence mode="popLayout">
-          {section.widgets.map((w, widgetIndex) => (
-            <WidgetCard
-              key={w.id}
-              dashboardId={dashboardId}
-              datasetId={datasetId}
-              nativeFilters={nativeFilters}
-              sectionColumns={section.columns}
-              widget={w}
-              canDrag={!readOnly}
-              onDragStart={() => setDraggedWidgetId(w.id)}
-              onDragEnd={() => setDraggedWidgetId(null)}
-              onDragOver={() => undefined}
-              onDrop={() => {
-                if (!draggedWidgetId || draggedWidgetId === w.id) return;
-                onReorderWidget(draggedWidgetId, w.id);
-                setDraggedWidgetId(null);
-              }}
-              onResizeStart={(event) => {
-                if (readOnly) return;
-                const startX = event.clientX;
-                const startWidth = getWidgetWidth(w, section.columns);
-                const maxWidth = getMaxWidthAtIndex(section.widgets, widgetIndex, section.columns);
-                const onMove = (moveEvent: MouseEvent) => {
-                  const deltaCols = Math.round((moveEvent.clientX - startX) / Math.max(1, cellWidth));
-                  const nextWidth = Math.max(1, Math.min(maxWidth, (startWidth + deltaCols))) as 1 | 2 | 3 | 4;
-                  onResizeWidget(w.id, nextWidth);
-                };
-                const onUp = () => {
-                  window.removeEventListener("mousemove", onMove);
-                  window.removeEventListener("mouseup", onUp);
-                };
-                window.addEventListener("mousemove", onMove);
-                window.addEventListener("mouseup", onUp);
-              }}
-              onEdit={() => onEditWidget(w)}
-              onDelete={() => onDeleteWidget(w)}
-              onDuplicate={() => onDuplicateWidget(w)}
-              onToggleTitle={() => onToggleWidgetTitle(w)}
-              readOnly={readOnly}
-              builderMode={builderMode}
-              isRefreshing={refreshingWidgetIds.has(w.id)}
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="group/section">
+      {(isSectionTitleVisible || !readOnly) && (
+        <div className="mb-3 flex items-center gap-2">
+          {isSectionTitleVisible && !readOnly && editingTitle ? (
+            <Input
+              autoFocus
+              value={section.title}
+              onChange={(event) => onChange({ ...section, title: event.target.value })}
+              onBlur={() => setEditingTitle(false)}
+              onKeyDown={(event) => event.key === "Enter" && setEditingTitle(false)}
+              className="h-7 max-w-[300px] text-sm font-semibold"
+              placeholder="Nome da secao"
             />
-          ))}
-        </AnimatePresence>
+          ) : isSectionTitleVisible ? (
+            <button
+              type="button"
+              onClick={() => !readOnly && setEditingTitle(true)}
+              className="flex items-center gap-1 text-sm font-semibold"
+            >
+              {section.title || "Secao sem titulo"}
+              {!readOnly && <Pencil className="h-3 w-3 opacity-0 transition-opacity group-hover/section:opacity-100" />}
+            </button>
+          ) : (
+            !readOnly && <span className="text-xs font-medium text-muted-foreground">Titulo da secao oculto</span>
+          )}
 
-        {!readOnly && canAddWidget && (
-          <motion.button
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={onAddWidget}
-            className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border/60 text-muted-foreground hover:border-accent/40 hover:text-accent transition-all min-h-[180px] p-6"
-          >
-            <Plus className="h-6 w-6" />
-            <span className="text-xs font-medium">Adicionar Widget</span>
-          </motion.button>
+          <div className="flex-1" />
+
+          {!readOnly && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 transition-opacity group-hover/section:opacity-100">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onChange({ ...section, showTitle: section.showTitle === false })}>
+                  {section.showTitle === false
+                    ? <Eye className="mr-2 h-3.5 w-3.5" />
+                    : <EyeOff className="mr-2 h-3.5 w-3.5" />}
+                  {section.showTitle === false ? "Mostrar titulo" : "Ocultar titulo"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {index > 0 && (
+                  <DropdownMenuItem onClick={() => onMove("up")}>
+                    <ChevronUp className="mr-2 h-3.5 w-3.5" /> Mover para cima
+                  </DropdownMenuItem>
+                )}
+                {index < total - 1 && (
+                  <DropdownMenuItem onClick={() => onMove("down")}>
+                    <ChevronDown className="mr-2 h-3.5 w-3.5" /> Mover para baixo
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir secao
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      )}
+
+      <div
+        ref={containerRef}
+        className={cn(
+          "relative overflow-hidden rounded-xl transition-colors",
+          isEditing
+            ? cn(
+              "builder-section-shell builder-section-shell--edit border border-dashed p-1.5",
+              section.widgets.length === 0 ? "min-h-[220px]" : "min-h-0",
+            )
+            : "border border-transparent",
+          isExternalDragOver && isEditing && "border-accent/65 bg-accent/5 shadow-[0_0_0_1px_hsl(var(--accent)/0.35)]",
         )}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setIsExternalDragOver(false);
+            setExternalDropPreview(null);
+          }
+        }}
+      >
+        {isEditing && (
+          <div className="builder-grid-guides pointer-events-none absolute inset-1.5 z-0 grid grid-cols-6 gap-4">
+            {GRID_GUIDES.map((_, columnIndex) => (
+              <div key={`guide-${section.id}-${columnIndex}`} className="builder-grid-guides__column" />
+            ))}
+          </div>
+        )}
+
+        <GridLayout
+          innerRef={gridRef}
+          width={width}
+          className={cn(
+            "builder-section-grid relative z-10",
+            isEditing && "builder-section-grid--edit",
+            section.widgets.length === 0 && "min-h-[220px]",
+          )}
+          layout={sectionRglLayout}
+          gridConfig={{
+            cols: SECTION_GRID_COLS,
+            rowHeight: GRID_ROW_HEIGHT,
+            margin: [GRID_MARGIN_X, GRID_MARGIN_Y],
+            containerPadding: [0, 0],
+            maxRows: Number.POSITIVE_INFINITY,
+          }}
+          dragConfig={{
+            enabled: !readOnly,
+            bounded: true,
+            handle: ".widget-drag-surface",
+            cancel: "button,input,textarea,select,a,[role='button'],.widget-resize-handle,.widget-actions",
+            threshold: 4,
+          }}
+          resizeConfig={{
+            enabled: !readOnly,
+            handles: ["w", "e", "s"],
+            handleComponent: (axis, ref) => ((axis === "w" || axis === "e" || axis === "s")
+              ? (
+                <span
+                  ref={ref}
+                  className={cn(
+                    "widget-resize-handle",
+                    axis === "e" && "widget-resize-handle--right",
+                    axis === "w" && "widget-resize-handle--left",
+                    axis === "s" && "widget-resize-handle--bottom",
+                  )}
+                  aria-label={axis === "s" ? "Resize height" : "Resize width"}
+                />
+              )
+              : null),
+          }}
+          dropConfig={{
+            enabled: isEditing,
+            defaultItem: { w: 1, h: 1 },
+          }}
+          onDropDragOver={(event) => {
+            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+            if (!payload) return false;
+            setIsExternalDragOver(true);
+            const catalog = payload.preferredWidgetType
+              ? getWidgetCatalogByType(payload.preferredWidgetType)
+              : getWidgetCatalogByVisualization(payload.widgetType);
+            const clientPoint = getClientPointFromGridEvent(event);
+            const gridRect = gridRef.current?.getBoundingClientRect();
+            const dropX = clientPoint && gridRect
+              ? getDropXFromClientPoint(clientPoint.x, gridRect, width, catalog.minW)
+              : 0;
+            setExternalDropPreview({
+              x: dropX,
+              y: 0,
+              w: catalog.minW,
+              h: catalog.minH,
+            });
+            return { w: catalog.minW, h: catalog.minH };
+          }}
+          onDrop={(_layout, item, event) => {
+            const payload = parseNewWidgetDragPayload((event as DragEvent).dataTransfer);
+            setIsExternalDragOver(false);
+            setExternalDropPreview(null);
+            if (!payload) return;
+            const catalog = payload.preferredWidgetType
+              ? getWidgetCatalogByType(payload.preferredWidgetType)
+              : getWidgetCatalogByVisualization(payload.widgetType);
+            const clientPoint = getClientPointFromGridEvent(event);
+            const gridRect = gridRef.current?.getBoundingClientRect();
+            const pointerX = clientPoint && gridRect
+              ? getDropXFromClientPoint(clientPoint.x, gridRect, width, catalog.minW)
+              : null;
+            const dropXRaw = typeof item?.x === "number" ? item.x : (pointerX ?? externalDropPreview?.x ?? 0);
+            const dropX = Math.max(0, Math.min(SECTION_GRID_COLS - catalog.minW, Math.floor(dropXRaw)));
+            onAddWidget(payload.widgetType, {
+              x: dropX,
+              y: 0,
+              w: catalog.minW,
+              h: catalog.minH,
+            }, payload.preferredWidgetType);
+          }}
+          onLayoutChange={(nextLayout) => onLayoutChange(nextLayout)}
+          onDragStart={() => {
+            setIsExternalDragOver(false);
+            setExternalDropPreview(null);
+          }}
+          onDragStop={(nextLayout, _oldItem, newItem) => {
+            onLayoutCommit(nextLayout, newItem?.i);
+          }}
+          onResizeStop={(nextLayout, _oldItem, newItem) => onLayoutCommit(nextLayout, newItem?.i)}
+        >
+          {section.widgets.map((widget) => (
+            <div key={widget.id} className="h-full">
+              <WidgetCard
+                dashboardId={dashboardId}
+                datasetId={datasetId}
+                nativeFilters={nativeFilters}
+                widget={widget}
+                layoutItem={sectionLayoutById[widget.id] || {
+                  i: widget.id,
+                  x: 0,
+                  y: 0,
+                  w: getWidgetCatalogByType(widget.props.widget_type).defaultW,
+                  h: getWidgetCatalogByType(widget.props.widget_type).defaultH,
+                }}
+                readOnly={readOnly}
+                builderMode={builderMode}
+                isRefreshing={refreshingWidgetIds.has(widget.id)}
+                onEdit={() => onEditWidget(widget)}
+                onDelete={() => onDeleteWidget(widget)}
+                onDuplicate={() => onDuplicateWidget(widget)}
+              />
+            </div>
+          ))}
+        </GridLayout>
+
+        {isEditing && isExternalDragOver && externalDropPreview && (
+          <div className="pointer-events-none absolute inset-1.5 z-20">
+            <div
+              className="builder-section-external-drop-preview"
+              style={toDropPreviewStyle(externalDropPreview, width)}
+            />
+          </div>
+        )}
+
+        {isEditing && (
+          <div className="builder-grid-guides-actions pointer-events-none absolute inset-1.5 z-20 grid grid-cols-6 gap-4">
+            {GRID_GUIDES.map((_, columnIndex) => (
+              <div key={`guide-action-${section.id}-${columnIndex}`} className="builder-grid-guides__column builder-grid-guides__column--action pointer-events-none">
+                {!occupiedColumns.has(columnIndex) && (
+                  <div className="h-full">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          className={cn(
+                            "builder-grid-guides-column-trigger group",
+                            isCatalogDragActive ? "pointer-events-none opacity-0" : "pointer-events-auto",
+                          )}
+                          aria-label={`Adicionar widget na coluna ${columnIndex + 1}`}
+                          onDragEnter={(event) => {
+                            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+                            if (!payload) return;
+                            event.preventDefault();
+                            const catalog = payload.preferredWidgetType
+                              ? getWidgetCatalogByType(payload.preferredWidgetType)
+                              : getWidgetCatalogByVisualization(payload.widgetType);
+                            const dropX = Math.max(0, Math.min(SECTION_GRID_COLS - catalog.minW, columnIndex));
+                            setIsExternalDragOver(true);
+                            setExternalDropPreview({
+                              x: dropX,
+                              y: 0,
+                              w: catalog.minW,
+                              h: catalog.minH,
+                            });
+                          }}
+                          onDragOver={(event) => {
+                            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+                            if (!payload) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            event.dataTransfer.dropEffect = "copy";
+                            const catalog = payload.preferredWidgetType
+                              ? getWidgetCatalogByType(payload.preferredWidgetType)
+                              : getWidgetCatalogByVisualization(payload.widgetType);
+                            const dropX = Math.max(0, Math.min(SECTION_GRID_COLS - catalog.minW, columnIndex));
+                            setIsExternalDragOver(true);
+                            setExternalDropPreview({
+                              x: dropX,
+                              y: 0,
+                              w: catalog.minW,
+                              h: catalog.minH,
+                            });
+                          }}
+                          onDragLeave={(event) => {
+                            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                            setIsExternalDragOver(false);
+                            setExternalDropPreview(null);
+                          }}
+                          onDrop={(event) => {
+                            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+                            if (!payload) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const catalog = payload.preferredWidgetType
+                              ? getWidgetCatalogByType(payload.preferredWidgetType)
+                              : getWidgetCatalogByVisualization(payload.widgetType);
+                            const dropX = Math.max(0, Math.min(SECTION_GRID_COLS - catalog.minW, columnIndex));
+                            setIsExternalDragOver(false);
+                            setExternalDropPreview(null);
+                            onAddWidget(payload.widgetType, {
+                              x: dropX,
+                              y: 0,
+                              w: catalog.minW,
+                              h: catalog.minH,
+                            }, payload.preferredWidgetType);
+                          }}
+                        >
+                          <span className="sr-only">Adicionar widget</span>
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-44">
+                        {WIDGET_CATALOG.map((entry) => {
+                          const Icon = widgetTypeIconByWidget[entry.widgetType];
+                          return (
+                            <DropdownMenuItem
+                              key={`${section.id}-${entry.id}-${columnIndex}`}
+                              onClick={() => {
+                                const catalog = getWidgetCatalogByType(entry.widgetType);
+                                const targetW = catalog.minW;
+                                const targetH = catalog.minH;
+                                const x = Math.max(0, Math.min(SECTION_GRID_COLS - targetW, columnIndex));
+                                onAddWidget(entry.visualizationType, {
+                                  x,
+                                  y: 0,
+                                  w: targetW,
+                                  h: targetH,
+                                }, entry.widgetType);
+                              }}
+                            >
+                              <Icon className="mr-2 h-3.5 w-3.5" />
+                              {entry.title}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {isEditing && isExternalDragOver && (
+          <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-md border border-accent/55 bg-background/85 px-2 py-1 text-[11px] font-medium text-accent">
+            Solte para adicionar widget
+          </div>
+        )}
+
       </div>
+
     </motion.div>
   );
 };
@@ -515,111 +901,104 @@ export const DashboardCanvas = ({
   onEditWidget,
   onDeleteWidget,
   onDuplicateWidget,
-  onToggleWidgetTitle,
   onAddSection,
+  onCommitSectionLayout,
   readOnly = false,
   builderMode = false,
   refreshingWidgetIds = new Set(),
 }: DashboardCanvasProps) => {
-  const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
-
   const updateSection = (id: string, updated: DashboardSection) => {
-    onSectionsChange(sections.map((s) => (s.id === id ? updated : s)));
+    onSectionsChange(sections.map((section) => (section.id === id ? updated : section)));
   };
 
   const deleteSection = (id: string) => {
-    onSectionsChange(sections.filter((s) => s.id !== id));
+    onSectionsChange(sections.filter((section) => section.id !== id));
   };
 
   const moveSection = (index: number, dir: "up" | "down") => {
-    const arr = [...sections];
+    const next = [...sections];
     const target = dir === "up" ? index - 1 : index + 1;
-    [arr[index], arr[target]] = [arr[target], arr[index]];
-    onSectionsChange(arr);
+    [next[index], next[target]] = [next[target], next[index]];
+    onSectionsChange(next);
   };
 
-  const dropSectionOnTarget = (targetSectionId: string) => {
-    if (!draggedSectionId || draggedSectionId === targetSectionId) return;
-    const arr = [...sections];
-    const fromIndex = arr.findIndex((s) => s.id === draggedSectionId);
-    const toIndex = arr.findIndex((s) => s.id === targetSectionId);
-    if (fromIndex < 0 || toIndex < 0) return;
-    const [moved] = arr.splice(fromIndex, 1);
-    arr.splice(toIndex, 0, moved);
-    onSectionsChange(arr);
-    setDraggedSectionId(null);
-  };
-
-  const reorderWidgetInSection = (sectionId: string, draggedWidgetId: string, targetWidgetId: string) => {
-    onSectionsChange(sections.map((section) => {
-      if (section.id !== sectionId) return section;
-      const widgets = [...section.widgets];
-      const fromIndex = widgets.findIndex((item) => item.id === draggedWidgetId);
-      const toIndex = widgets.findIndex((item) => item.id === targetWidgetId);
-      if (fromIndex < 0 || toIndex < 0) return section;
-      const [moved] = widgets.splice(fromIndex, 1);
-      widgets.splice(toIndex, 0, moved);
-      return { ...section, widgets };
-    }));
-  };
-
-  const resizeWidgetInSection = (sectionId: string, widgetId: string, width: 1 | 2 | 3 | 4) => {
-    onSectionsChange(sections.map((section) => {
+  const applyLayoutToSection = (sectionId: string, rglLayout: Layout, commit = false, activeItemId?: string) => {
+    const targetSection = sections.find((section) => section.id === sectionId);
+    if (!targetSection) return;
+    const normalizedLayout = normalizeRglLayout(rglLayout, targetSection);
+    const resolvedLayout = resolveSequentialLayout(normalizedLayout, targetSection, activeItemId);
+    const layoutById = new Map(resolvedLayout.map((item) => [item.i, item]));
+    const nextSections = sections.map((section) => {
       if (section.id !== sectionId) return section;
       return {
         ...section,
-        widgets: section.widgets.map((widget) => (
-          widget.id === widgetId
-            ? { ...widget, config: { ...widget.config, size: { width, height: widget.config.size?.height || 1 } } }
-            : widget
-        )),
+        columns: SECTION_GRID_COLS,
+        layout: resolvedLayout,
+        widgets: section.widgets.map((widget) => {
+          const item = layoutById.get(widget.id);
+          if (!item) return widget;
+          const nextProps = {
+            ...widget.props,
+            size: {
+              width: item.w as 1 | 2 | 3 | 4 | 5 | 6,
+              height: gridRowsToWidgetHeight(item.h),
+            },
+          };
+          return {
+            ...widget,
+            sectionId,
+            type: nextProps.widget_type,
+            props: nextProps,
+            config: nextProps,
+          };
+        }),
       };
-    }));
+    });
+    onSectionsChange(nextSections);
+    if (commit) onCommitSectionLayout?.(sectionId, resolvedLayout);
   };
 
   return (
-    <div className="space-y-8">
-      <AnimatePresence mode="popLayout">
-        {sections.map((section, i) => (
-          <div key={section.id} className="space-y-4">
-            <SectionBlock
-              dashboardId={dashboardId}
-              datasetId={datasetId}
-              nativeFilters={nativeFilters}
-              section={section}
-              index={i}
-              total={sections.length}
-              draggedSectionId={draggedSectionId}
-              onStartSectionDrag={setDraggedSectionId}
-              onDropSection={dropSectionOnTarget}
-              onChange={(s) => updateSection(section.id, s)}
-              onDelete={() => deleteSection(section.id)}
-              onMove={(dir) => moveSection(i, dir)}
-              onAddWidget={() => onAddWidget(section.id)}
-              onReorderWidget={(draggedId, targetId) => reorderWidgetInSection(section.id, draggedId, targetId)}
-              onResizeWidget={(widgetId, width) => resizeWidgetInSection(section.id, widgetId, width)}
-              onEditWidget={onEditWidget}
-              onDeleteWidget={onDeleteWidget}
-              onDuplicateWidget={onDuplicateWidget}
-              onToggleWidgetTitle={onToggleWidgetTitle}
-              readOnly={readOnly}
-              builderMode={builderMode}
-              refreshingWidgetIds={refreshingWidgetIds}
-            />
-            {!readOnly && (
-              <motion.button
-                whileHover={{ scale: 1.002 }}
-                whileTap={{ scale: 0.998 }}
-                onClick={() => onAddSection(i + 1)}
-                className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-border/50 text-muted-foreground hover:border-accent/40 hover:text-accent transition-all py-3"
-              >
-                <Plus className="h-4 w-4" />
-                <span className="text-xs font-medium">Adicionar Secao</span>
-              </motion.button>
-            )}
-          </div>
+    <div data-tour="builder-canvas" className={cn("space-y-8", !readOnly && "builder-canvas builder-canvas--edit")}>
+      <AnimatePresence>
+        {sections.map((section, index) => (
+          <SectionBlock
+            key={section.id}
+            dashboardId={dashboardId}
+            datasetId={datasetId}
+            nativeFilters={nativeFilters}
+            section={section}
+            index={index}
+            total={sections.length}
+            onChange={(next) => updateSection(section.id, next)}
+            onDelete={() => deleteSection(section.id)}
+            onMove={(dir) => moveSection(index, dir)}
+            onAddWidget={(type, placement, preferredWidgetType) => onAddWidget(section.id, type, placement, preferredWidgetType)}
+            onLayoutChange={(layout, activeItemId) => applyLayoutToSection(section.id, layout, false, activeItemId)}
+            onLayoutCommit={(layout, activeItemId) => applyLayoutToSection(section.id, layout, true, activeItemId)}
+            onEditWidget={onEditWidget}
+            onDeleteWidget={onDeleteWidget}
+            onDuplicateWidget={onDuplicateWidget}
+            readOnly={readOnly}
+            builderMode={builderMode}
+            refreshingWidgetIds={refreshingWidgetIds}
+          />
         ))}
       </AnimatePresence>
+
+      {!readOnly && (
+        <motion.button
+          whileHover={{ scale: 1.002 }}
+          whileTap={{ scale: 0.998 }}
+          onClick={() => onAddSection()}
+          className="w-full rounded-xl border-2 border-dashed border-border/50 py-3 text-sm font-medium text-muted-foreground transition-colors hover:border-accent/40 hover:text-accent"
+        >
+          <span className="inline-flex items-center gap-2">
+            <Plus className="h-5 w-5" />
+            Adicionar seção
+          </span>
+        </motion.button>
+      )}
     </div>
   );
 };

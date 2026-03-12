@@ -1,7 +1,10 @@
 export type WidgetType = "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
 export type MetricOp = "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
 export type TimeGranularity = "day" | "week" | "month" | "hour" | "timestamp";
-export type WidgetWidth = 1 | 2 | 3 | 4;
+export type WidgetWidth = 1 | 2 | 3 | 4 | 5 | 6;
+export type SectionColumns = 1 | 2 | 3 | 4 | 5 | 6;
+export type SectionGridCols = 6;
+export type CanonicalWidgetWidth = 1 | 2 | 3 | 4 | 6;
 export type WidgetHeight = 0.5 | 1 | 2;
 export type WidgetPadding = "compact" | "normal" | "comfortable";
 export type WidgetPalette = "default" | "warm" | "cool" | "mono" | "vivid";
@@ -98,6 +101,8 @@ export interface WidgetConfig {
   donut_data_labels_enabled?: boolean;
   donut_data_labels_min_percent?: number;
   donut_metric_display?: "value" | "percent";
+  donut_group_others_enabled?: boolean;
+  donut_group_others_top_n?: number;
   dre_rows?: Array<{
     title: string;
     row_type: "result" | "deduction" | "detail";
@@ -115,11 +120,23 @@ export interface WidgetConfig {
   offset?: number;
 }
 
+export interface DashboardLayoutItem {
+  i: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface DashboardWidget {
   id: string;
+  type: WidgetType;
+  sectionId: string;
+  props: WidgetConfig;
   title: string;
   position: number;
   configVersion: number;
+  // Legacy alias kept for existing renderer/config-panel integration.
   config: WidgetConfig;
 }
 
@@ -127,7 +144,8 @@ export interface DashboardSection {
   id: string;
   title: string;
   showTitle?: boolean;
-  columns: 1 | 2 | 3 | 4;
+  columns: SectionColumns;
+  layout: DashboardLayoutItem[];
   widgets: DashboardWidget[];
 }
 
@@ -146,11 +164,71 @@ export interface Dashboard {
   updatedAt: string;
 }
 
+export const SECTION_GRID_COLS: SectionGridCols = 6;
+export const CANONICAL_WIDGET_WIDTHS: readonly CanonicalWidgetWidth[] = [1, 2, 3, 4, 6] as const;
+export const CANONICAL_WIDGET_ROW_SPANS: readonly [2, 4, 8] = [2, 4, 8];
+
+export const snapToCanonicalWidgetWidth = (value: number): CanonicalWidgetWidth => {
+  let best = CANONICAL_WIDGET_WIDTHS[0];
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of CANONICAL_WIDGET_WIDTHS) {
+    const distance = Math.abs(candidate - value);
+    if (distance < bestDistance || (distance === bestDistance && candidate > best)) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
+};
+
+export const widgetHeightToGridRows = (height?: WidgetHeight): number => {
+  if (height === 0.5) return 2;
+  if (height === 2) return 8;
+  return 4;
+};
+
+export const snapToCanonicalWidgetRows = (
+  value: number,
+  minRows: number = 2,
+  maxRows: number = CANONICAL_WIDGET_ROW_SPANS[CANONICAL_WIDGET_ROW_SPANS.length - 1],
+): number => {
+  const candidates = CANONICAL_WIDGET_ROW_SPANS.filter((rows) => rows >= minRows && rows <= maxRows);
+  if (candidates.length === 0) {
+    return Math.max(minRows, Math.min(maxRows, Math.floor(value)));
+  }
+
+  let best = candidates[0];
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const distance = Math.abs(candidate - value);
+    if (distance < bestDistance || (distance === bestDistance && candidate > best)) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
+};
+
+export const gridRowsToWidgetHeight = (rows: number): WidgetHeight => {
+  if (rows <= 2) return 0.5;
+  if (rows >= 7) return 2;
+  return 1;
+};
+
+export const normalizeLayoutItem = (item: DashboardLayoutItem): DashboardLayoutItem => ({
+  i: item.i,
+  x: Math.max(0, Math.min(SECTION_GRID_COLS - 1, Math.floor(item.x))),
+  y: Math.max(0, Math.floor(item.y)),
+  w: snapToCanonicalWidgetWidth(Math.max(1, Math.min(SECTION_GRID_COLS, Math.floor(item.w)))),
+  h: Math.max(1, Math.floor(item.h)),
+});
+
 export const createSection = (): DashboardSection => ({
   id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   title: "",
   showTitle: true,
-  columns: 4,
+  columns: SECTION_GRID_COLS,
+  layout: [],
   widgets: [],
 });
 
@@ -225,6 +303,8 @@ export const createDefaultWidgetConfig = (params: {
       donut_data_labels_enabled: type === "donut" ? false : undefined,
       donut_data_labels_min_percent: type === "donut" ? 6 : undefined,
       donut_metric_display: type === "donut" ? "value" : undefined,
+      donut_group_others_enabled: type === "donut" ? true : undefined,
+      donut_group_others_top_n: type === "donut" ? 3 : undefined,
       size: { width: 1, height: 1 },
       metrics: [{ op: "count", column: fallback?.name }],
       dimensions: [categorical?.name || fallback?.name || ""],

@@ -195,11 +195,11 @@ def _widget_load_cost(widget: DashboardWidget) -> float:
     size_cfg = payload.get("size") if isinstance(payload.get("size"), dict) else {}
     width_raw = size_cfg.get("width", 1) if isinstance(size_cfg, dict) else 1
     try:
-        width = max(1, min(4, int(width_raw)))
+        width = max(1, min(6, int(width_raw)))
     except Exception:
         width = 1
 
-    width_score = ((width - 1) / 3.0) * 8.0
+    width_score = ((width - 1) / 5.0) * 8.0
     filter_score = min(12.0, filters * 2.0)
     dimension_score = min(8.0, dimensions * 2.0)
     metric_score = min(6.0, max(0, metrics - 1) * 2.0)

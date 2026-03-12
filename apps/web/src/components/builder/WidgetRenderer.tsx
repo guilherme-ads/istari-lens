@@ -303,6 +303,7 @@ type RendererProps = {
   disableFetch?: boolean;
   builderMode?: boolean;
   heightMultiplier?: 0.5 | 1 | 2;
+  layoutRows?: number;
   preloadedData?: ApiDashboardWidgetDataResponse;
   preloadedLoading?: boolean;
   preloadedError?: string | null;
@@ -494,7 +495,7 @@ const buildDraftPreviewSpec = ({
   }
 
   const mergedFilters = [
-    ...(nativeFilters || []).filter((filter) => filter.visible !== false),
+    ...(nativeFilters || []),
     ...(widget.config.filters || []),
   ];
   const filters: ApiQuerySpec["filters"] = [];
@@ -824,6 +825,7 @@ export const WidgetRenderer = ({
   disableFetch = false,
   builderMode = false,
   heightMultiplier = 1,
+  layoutRows,
   preloadedData,
   preloadedLoading = false,
   preloadedError = null,
@@ -837,7 +839,7 @@ export const WidgetRenderer = ({
   const persistedGlobalFilters = useMemo(
     () =>
       (nativeFilters || [])
-        .filter((filter) => !!filter.column && !!filter.op && filter.visible !== false)
+        .filter((filter) => !!filter.column && !!filter.op)
         .map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
     [nativeFilters],
   );
@@ -905,8 +907,42 @@ export const WidgetRenderer = ({
     [normalizedDraftRows, preloadedData, widgetQuery.data],
   );
   const metricLabel = useMemo(() => getMetricLabel(widget), [widget]);
-  const chartHeight = heightMultiplier === 0.5 ? 110 : heightMultiplier === 2 ? 380 : 220;
-  const lineTargetTicks = heightMultiplier === 0.5 ? 4 : heightMultiplier === 2 ? 12 : 8;
+  const fallbackChartHeight = heightMultiplier === 0.5 ? 110 : heightMultiplier === 2 ? 320 : 190;
+  const gridItemPixelHeight = typeof layoutRows === "number"
+    ? ((layoutRows * 36) + (Math.max(1, layoutRows) - 1) * 16)
+    : null;
+  const estimatedHeaderHeight = widget.config.show_title === false ? 0 : 52;
+  const verticalPaddingByDensity: Record<NonNullable<DashboardWidget["config"]["visual_padding"]>, number> = {
+    compact: 16,
+    normal: 24,
+    comfortable: 32,
+  };
+  const estimatedInnerHeightFromRows = gridItemPixelHeight === null
+    ? null
+    : Math.max(
+      84,
+      Math.floor(
+        gridItemPixelHeight
+        - estimatedHeaderHeight
+        - (verticalPaddingByDensity[widget.config.visual_padding || "normal"] ?? 24)
+        - 10,
+      ),
+    );
+  const minReadableHeightByType: Record<DashboardWidget["config"]["widget_type"], number> = {
+    kpi: 96,
+    line: 170,
+    bar: 190,
+    column: 170,
+    donut: 170,
+    table: 180,
+    text: 110,
+    dre: 240,
+  };
+  const chartHeight = estimatedInnerHeightFromRows ?? Math.max(
+    minReadableHeightByType[widget.config.widget_type] || 170,
+    fallbackChartHeight,
+  );
+  const lineTargetTicks = Math.max(4, Math.round(chartHeight / 34));
   const chartPalette = paletteByName[widget.config.visual_palette || "default"] || paletteByName.default;
   const lineMetricKeys = widget.config.widget_type === "line"
     ? widget.config.metrics.map((_, index) => `m${index}`)
@@ -1083,6 +1119,13 @@ export const WidgetRenderer = ({
   const chartPrefix = widget.config.kpi_prefix || "";
   const chartSuffix = widget.config.kpi_suffix || "";
   const formatChartValueCompact = (value: unknown): string => `${chartPrefix}${formatCompactNumber(value)}${chartSuffix}`;
+  const formatCategoryLabel = (value: unknown): string => {
+    const parsed = parseDateLike(value);
+    const raw = parsed ? formatDateBR(parsed) : String(value ?? "");
+    const singleLine = raw.replace(/\s+/g, " ").trim();
+    if (singleLine.length <= 18) return singleLine;
+    return `${singleLine.slice(0, 17)}...`;
+  };
 
   if (forcedLoading) {
     return <WidgetLoadingSkeleton type={widget.config.widget_type} chartHeight={chartHeight} />;
@@ -1226,14 +1269,27 @@ export const WidgetRenderer = ({
     const decimals = widget.config.kpi_decimals ?? 2;
     const prefix = widget.config.kpi_prefix;
     const suffix = widget.config.kpi_suffix;
+    const width = widget.config.size?.width || 1;
+    const height = typeof layoutRows === "number"
+      ? (layoutRows <= 2 ? 0.5 : layoutRows >= 8 ? 2 : 1)
+      : (widget.config.size?.height || 1);
+    const kpiSizeClass = width >= 3 || height >= 2
+      ? "text-4xl"
+      : width >= 2
+        ? "text-3xl"
+        : height <= 0.5
+          ? "text-xl"
+          : "text-2xl";
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 py-4">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {widget.title || "KPI"}
-        </span>
-        <span className="text-3xl font-extrabold tracking-tight text-foreground" title={formatKpiValueFull(value, showAs, decimals, prefix, suffix)}>
-          {formatKpiValueCompact(value, showAs, decimals, prefix, suffix)}
-        </span>
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="flex max-w-full flex-col items-center justify-center gap-2 text-center">
+          <span className="max-w-full truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground" title={widget.title || "KPI"}>
+            {widget.title || "KPI"}
+          </span>
+          <span className={`${kpiSizeClass} min-h-[1.25rem] font-extrabold leading-tight tracking-tight text-foreground`} title={formatKpiValueFull(value, showAs, decimals, prefix, suffix)}>
+            {formatKpiValueCompact(value, showAs, decimals, prefix, suffix)}
+          </span>
+        </div>
       </div>
     );
   }
@@ -1337,15 +1393,61 @@ export const WidgetRenderer = ({
     const barGap = 8;
     const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
     const barAxisMax = barDataMax > 0 ? barDataMax * 1.18 : 1;
-    const barChartHeight = Math.max(chartHeight, rows.length * (fixedBarHeight + barGap) + 24);
+    const axisFooterHeight = 28;
+    const plotViewportHeight = Math.max(96, chartHeight - axisFooterHeight);
+    const barChartHeight = Math.max(plotViewportHeight, rows.length * (fixedBarHeight + barGap) + 24);
     return (
-      <div className="w-full overflow-y-auto" style={{ maxHeight: `${chartHeight}px` }}>
-        <div style={{ height: `${barChartHeight}px` }}>
+      <div className="h-full w-full">
+        <div className="w-full overflow-y-auto" style={{ maxHeight: `${plotViewportHeight}px` }}>
+          <div style={{ height: `${barChartHeight}px` }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartRows} margin={{ top: 8, right: 64, bottom: 6, left: 8 }} layout="vertical" barCategoryGap={barGap}>
+                {showBarGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />}
+                <XAxis
+                  type="number"
+                  hide
+                  domain={[0, barAxisMax]}
+                  allowDataOverflow={false}
+                  tickFormatter={(value) => formatChartValueCompact(value)}
+                />
+                <YAxis
+                  type="category"
+                  dataKey={dimKey}
+                  tick={{ fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={110}
+                  tickFormatter={(value) => formatCategoryLabel(value)}
+                />
+                <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
+                <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
+                  {showBarLabels && (
+                    <LabelList
+                      dataKey={metricKey}
+                      content={(props: Record<string, unknown>) => {
+                        const value = props.value;
+                        const x = Number(props.x || 0);
+                        const y = Number(props.y || 0);
+                        const width = Number(props.width || 0);
+                        const height = Number(props.height || 0);
+                        if (value === undefined || value === null) return null;
+                        const labelX = x + width + 18;
+                        const labelY = y + (height / 2);
+                        return renderGlassLabel({ x: labelX, y: labelY, text: formatChartValueCompact(value), fontSize: 10 });
+                      }}
+                    />
+                  )}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div style={{ height: `${axisFooterHeight}px` }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartRows} margin={{ top: 8, right: 64, bottom: 8, left: 8 }} layout="vertical" barCategoryGap={barGap}>
-              {showBarGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />}
+            <BarChart data={chartRows.length > 0 ? [chartRows[0]] : [{ [metricKey]: 0 }]} margin={{ top: 0, right: 64, bottom: 2, left: 8 }}>
               <XAxis
                 type="number"
+                dataKey={metricKey}
                 tick={{ fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
@@ -1353,37 +1455,6 @@ export const WidgetRenderer = ({
                 allowDataOverflow={false}
                 tickFormatter={(value) => formatChartValueCompact(value)}
               />
-              <YAxis
-                type="category"
-                dataKey={dimKey}
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                width={90}
-                tickFormatter={(value) => {
-                  const parsed = parseDateLike(value);
-                  return parsed ? formatDateBR(parsed) : String(value);
-                }}
-              />
-              <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
-              <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
-                {showBarLabels && (
-                  <LabelList
-                    dataKey={metricKey}
-                    content={(props: Record<string, unknown>) => {
-                      const value = props.value;
-                      const x = Number(props.x || 0);
-                      const y = Number(props.y || 0);
-                      const width = Number(props.width || 0);
-                      const height = Number(props.height || 0);
-                      if (value === undefined || value === null) return null;
-                      const labelX = x + width + 18;
-                      const labelY = y + (height / 2);
-                      return renderGlassLabel({ x: labelX, y: labelY, text: formatChartValueCompact(value), fontSize: 10 });
-                    }}
-                  />
-                )}
-              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -1443,17 +1514,19 @@ export const WidgetRenderer = ({
   const donutDataLabelsEnabled = !!widget.config.donut_data_labels_enabled;
   const donutLabelMinPercent = Math.max(1, Math.min(100, widget.config.donut_data_labels_min_percent || 6));
   const donutMetricDisplay = widget.config.donut_metric_display === "percent" ? "percent" : "value";
+  const donutGroupOthersEnabled = widget.config.donut_group_others_enabled !== false;
+  const donutGroupOthersTopN = Math.max(2, Math.min(12, Math.trunc(widget.config.donut_group_others_top_n || 3)));
   const donutCanvasHeight = Math.max(160, chartHeight);
   const donutLegendReservedHeight = donutShowLegend ? 34 : 0;
   const donutLabelTopPadding = 12;
   const donutLabelBottomPadding = 10 + donutLegendReservedHeight;
-  const donutRows = chartRows.length > 5
+  const donutRows = donutGroupOthersEnabled && chartRows.length > donutGroupOthersTopN
     ? (() => {
         const sorted = [...chartRows].sort((a, b) => toFiniteNumber(b[metricKey]) - toFiniteNumber(a[metricKey]));
-        const top3 = sorted.slice(0, 3);
-        const remaining = sorted.slice(3);
+        const topRows = sorted.slice(0, donutGroupOthersTopN);
+        const remaining = sorted.slice(donutGroupOthersTopN);
         const othersValue = remaining.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
-        return othersValue > 0 ? [...top3, { [dimKey]: "Outros", [metricKey]: othersValue }] : top3;
+        return othersValue > 0 ? [...topRows, { [dimKey]: "Outros", [metricKey]: othersValue }] : topRows;
       })()
     : chartRows;
   const donutTotal = donutRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);

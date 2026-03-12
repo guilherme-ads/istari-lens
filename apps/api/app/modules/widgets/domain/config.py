@@ -128,7 +128,7 @@ class OrderByConfig(BaseModel):
 
 
 class WidgetSizeConfig(BaseModel):
-    width: Literal[1, 2, 3, 4] = 1
+    width: Literal[1, 2, 3, 4, 5, 6] = 1
     height: Literal[0.5, 1, 2] = 1
 
 

@@ -39,8 +39,8 @@ const AppLayout = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-card/80 backdrop-blur-md">
-        <div className="container flex h-14 items-center justify-between">
+      <header className="fixed inset-x-0 top-0 z-50 glass-nav">
+        <div className="app-container flex h-14 items-stretch justify-between">
           <div className="flex items-center gap-6">
             <Link to="/home" className="flex items-center gap-2.5 group">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent shadow-sm group-hover:shadow-md transition-shadow">
@@ -49,7 +49,7 @@ const AppLayout = () => {
               <BrandLogo className="text-foreground" />
             </Link>
 
-            <nav className="hidden items-center gap-0.5 md:flex">
+            <nav className="hidden items-center gap-1 md:flex">
               {navLinks.map((link) => {
                 const isActive = isActiveLink(link.to);
                 return (
@@ -57,16 +57,18 @@ const AppLayout = () => {
                     <TooltipTrigger asChild>
                       <Link
                         to={link.to}
-                        className={`group relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all duration-200 ease-out ${
-                          isActive ? "bg-accent/10 text-foreground border-l-2 border-accent" : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground"
+                        className={`group relative inline-flex h-9 items-center gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium transition-all duration-200 ease-out ${
+                          isActive
+                            ? "border-border/70 bg-secondary text-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground"
                         }`}
                       >
                         <link.icon className="h-3.5 w-3.5" />
-                        <span className="transition-transform duration-200 ease-out group-hover:translate-x-[2px]">{link.label}</span>
+                        <span>{link.label}</span>
                         {isActive && (
                           <motion.div
                             layoutId="nav-indicator"
-                            className="absolute -bottom-[17px] left-2 right-2 h-0.5 rounded-full bg-accent"
+                            className="absolute -bottom-2 left-2 right-2 h-0.5 rounded-full bg-accent"
                             transition={{ type: "spring", stiffness: 500, damping: 35 }}
                           />
                         )}
@@ -169,7 +171,7 @@ const AppLayout = () => {
               transition={{ duration: 0.2 }}
               className="overflow-hidden border-t border-border md:hidden"
             >
-              <nav className="container flex flex-col gap-1 py-3">
+              <nav className="app-container flex flex-col gap-1 py-3">
                 {navLinks.map((link) => {
                   const isActive = isActiveLink(link.to);
                   return (
@@ -178,11 +180,11 @@ const AppLayout = () => {
                       to={link.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={`group flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
-                        isActive ? "bg-accent/10 text-foreground border-l-2 border-accent" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        isActive ? "bg-accent/10 text-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
                       <link.icon className="h-4 w-4" />
-                      <span className="transition-transform duration-200 ease-out group-hover:translate-x-[2px]">{link.label}</span>
+                      <span>{link.label}</span>
                     </Link>
                   );
                 })}
@@ -193,7 +195,7 @@ const AppLayout = () => {
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
                         isActiveLink("/admin/users")
-                          ? "bg-accent/10 text-foreground border-l-2 border-accent"
+                          ? "bg-accent/10 text-foreground"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
@@ -205,7 +207,7 @@ const AppLayout = () => {
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
                         isActiveLink("/api-config")
-                          ? "bg-accent/10 text-foreground border-l-2 border-accent"
+                          ? "bg-accent/10 text-foreground"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
@@ -219,7 +221,7 @@ const AppLayout = () => {
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
                     isActiveLink("/account")
-                      ? "bg-accent/10 text-foreground border-l-2 border-accent"
+                      ? "bg-accent/10 text-foreground"
                       : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                   }`}
                 >

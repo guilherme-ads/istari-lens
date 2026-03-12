@@ -30,7 +30,6 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -164,7 +163,7 @@ const DashboardsPage = () => {
 
   return (
     <div className="bg-background">
-      <main className="container py-6 space-y-8">
+      <main className="app-container py-6 space-y-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -248,13 +247,41 @@ const DashboardsPage = () => {
           </div>
         </motion.div>
 
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "mine" | "shared" | "org")}> 
-          <TabsList>
-            <TabsTrigger value="mine">Meus dashboards ({tabCounts.mine})</TabsTrigger>
-            <TabsTrigger value="shared">Compartilhados comigo ({tabCounts.shared})</TabsTrigger>
-            <TabsTrigger value="org">Todos da organização ({tabCounts.org})</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab("mine")}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === "mine"
+                ? "bg-accent text-accent-foreground"
+                : "border border-border bg-card text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Meus dashboards ({tabCounts.mine})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("shared")}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === "shared"
+                ? "bg-accent text-accent-foreground"
+                : "border border-border bg-card text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Compartilhados comigo ({tabCounts.shared})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("org")}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === "org"
+                ? "bg-accent text-accent-foreground"
+                : "border border-border bg-card text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Todos da organização ({tabCounts.org})
+          </button>
+        </div>
 
         {hasError ? (
           <EmptyState

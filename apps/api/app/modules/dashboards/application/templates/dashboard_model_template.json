@@ -3,8 +3,8 @@
   "description": "Modelo de referencia para IA gerar dashboards compatíveis com o Lens.",
   "rules": {
     "use_only_dataset_columns": true,
-    "supported_section_columns": [1, 2, 3, 4],
-    "supported_widget_width": [1, 2, 3, 4],
+    "supported_section_columns": [1, 2, 3, 4, 5, 6],
+    "supported_widget_width": [1, 2, 3, 4, 5, 6],
     "supported_widget_height": [0.5, 1, 2],
     "widget_width_must_fit_section_columns": true,
     "supported_widget_types": ["kpi", "line", "bar", "column", "donut", "table", "text", "dre"],
@@ -40,21 +40,21 @@
         "id": "sec-1",
         "title": "Visao Geral",
         "showTitle": true,
-        "columns": 4,
+        "columns": 6,
         "widgets": [
-          { "id": "w-1", "width": 1, "height": 1 },
+          { "id": "w-1", "width": 2, "height": 1 },
           { "id": "w-2", "width": 1, "height": 1 },
           { "id": "w-3", "width": 1, "height": 1 },
-          { "id": "w-4", "width": 1, "height": 1 }
+          { "id": "w-4", "width": 2, "height": 1 }
         ]
       },
       {
         "id": "sec-2",
         "title": "Analise Temporal",
         "showTitle": true,
-        "columns": 4,
+        "columns": 6,
         "widgets": [
-          { "id": "w-5", "width": 4, "height": 2 }
+          { "id": "w-5", "width": 6, "height": 2 }
         ]
       },
       {
@@ -71,18 +71,18 @@
         "id": "sec-4",
         "title": "DRE",
         "showTitle": true,
-        "columns": 4,
+        "columns": 6,
         "widgets": [
-          { "id": "w-8", "width": 4, "height": 2 }
+          { "id": "w-8", "width": 6, "height": 2 }
         ]
       },
       {
         "id": "sec-5",
         "title": "Detalhamento",
         "showTitle": true,
-        "columns": 4,
+        "columns": 6,
         "widgets": [
-          { "id": "w-9", "width": 4, "height": 2 }
+          { "id": "w-9", "width": 6, "height": 2 }
         ]
       }
     ],
