@@ -23,7 +23,7 @@ import {
 import { WidgetRenderer } from "@/components/builder/WidgetRenderer";
 import { gridRowsToWidgetHeight, type DashboardSection, type SectionColumns, type WidgetWidth } from "@/types/dashboard";
 import { useCoreData } from "@/hooks/use-core-data";
-import { api } from "@/lib/api";
+import { api, type ApiDashboardWidgetDataResponse } from "@/lib/api";
 import { mapDashboard } from "@/lib/mappers";
 import EmptyState from "@/components/shared/EmptyState";
 import ContextualBreadcrumb from "@/components/shared/ContextualBreadcrumb";
@@ -49,6 +49,14 @@ type AppliedGlobalFilter = {
   op: FilterOp;
   value: string | string[] | { relative: RelativeDatePreset };
 };
+type ComparableDateWindow = {
+  column: string;
+  currentStart: string;
+  currentEnd: string;
+  previousStart: string;
+  previousEnd: string;
+};
+type KpiComparisonMap = Record<string, { previousData?: ApiDashboardWidgetDataResponse; label: string }>;
 
 const commonOps: Array<{ value: FilterOp; label: string }> = [
   { value: "eq", label: "=" },
@@ -94,6 +102,83 @@ const formatDateBR = (date: Date) =>
   new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 
 const dateToApi = (date: Date) => date.toISOString().slice(0, 10);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const toYmdLocal = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseYmdLocal = (value: string): Date | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const resolveRelativeDateRange = (preset: RelativeDatePreset): [string, string] | null => {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  if (preset === "today") return [toYmdLocal(end), toYmdLocal(end)];
+  if (preset === "yesterday") {
+    const day = new Date(end);
+    day.setDate(day.getDate() - 1);
+    return [toYmdLocal(day), toYmdLocal(day)];
+  }
+  if (preset === "last_7_days") {
+    const start = new Date(end);
+    start.setDate(start.getDate() - 6);
+    return [toYmdLocal(start), toYmdLocal(end)];
+  }
+  if (preset === "last_30_days") {
+    const start = new Date(end);
+    start.setDate(start.getDate() - 29);
+    return [toYmdLocal(start), toYmdLocal(end)];
+  }
+  if (preset === "this_year") {
+    const start = new Date(end.getFullYear(), 0, 1);
+    return [toYmdLocal(start), toYmdLocal(end)];
+  }
+  if (preset === "this_month") {
+    const start = new Date(end.getFullYear(), end.getMonth(), 1);
+    return [toYmdLocal(start), toYmdLocal(end)];
+  }
+  if (preset === "last_month") {
+    const start = new Date(end.getFullYear(), end.getMonth() - 1, 1);
+    const monthEnd = new Date(end.getFullYear(), end.getMonth(), 0);
+    return [toYmdLocal(start), toYmdLocal(monthEnd)];
+  }
+  return null;
+};
+
+const resolveTemporalBetweenValue = (rawValue: AppliedGlobalFilter["value"]): [string, string] | null => {
+  if (Array.isArray(rawValue) && rawValue.length === 2) {
+    const start = String(rawValue[0] || "").trim();
+    const end = String(rawValue[1] || "").trim();
+    if (!start || !end) return null;
+    return [start, end];
+  }
+  if (rawValue && typeof rawValue === "object" && "relative" in rawValue) {
+    const preset = (rawValue as { relative?: RelativeDatePreset }).relative;
+    if (!preset) return null;
+    return resolveRelativeDateRange(preset);
+  }
+  return null;
+};
 
 const normalizeSemanticColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
   const value = (rawType || "").toLowerCase();
@@ -493,6 +578,63 @@ const DashboardViewPage = () => {
   }, [dashboard?.id, dashboard?.updatedAt, effectiveColumns]);
 
   const canLoadWidgetData = shouldUsePublicApi ? !!publicDashboardQuery.data : hasToken;
+  const kpiWidgetIds = useMemo(
+    () => widgets
+      .filter((widget) => widget.config.widget_type === "kpi" && widget.config.kpi_show_trend === true)
+      .map((widget) => Number(widget.id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+    [widgets],
+  );
+  const comparableDateWindow = useMemo<ComparableDateWindow | null>(() => {
+    const temporalColumns = new Set(
+      effectiveColumns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal").map((column) => column.name),
+    );
+    let best: ComparableDateWindow | null = null;
+    let bestDurationDays = Number.POSITIVE_INFINITY;
+    for (const filter of effectiveAppliedFilters) {
+      if (filter.op !== "between" || !temporalColumns.has(filter.column)) continue;
+      const range = resolveTemporalBetweenValue(filter.value);
+      if (!range) continue;
+      const currentStartDate = parseYmdLocal(range[0]);
+      const currentEndDate = parseYmdLocal(range[1]);
+      if (!currentStartDate || !currentEndDate) continue;
+      if (currentEndDate.getTime() < currentStartDate.getTime()) continue;
+      const durationDays = Math.floor((currentEndDate.getTime() - currentStartDate.getTime()) / DAY_MS) + 1;
+      if (durationDays <= 0) continue;
+      const previousEndDate = new Date(currentStartDate.getTime() - DAY_MS);
+      const previousStartDate = new Date(previousEndDate.getTime() - ((durationDays - 1) * DAY_MS));
+      if (durationDays >= bestDurationDays) continue;
+      bestDurationDays = durationDays;
+      best = {
+        column: filter.column,
+        currentStart: toYmdLocal(currentStartDate),
+        currentEnd: toYmdLocal(currentEndDate),
+        previousStart: toYmdLocal(previousStartDate),
+        previousEnd: toYmdLocal(previousEndDate),
+      };
+    }
+    return best;
+  }, [effectiveAppliedFilters, effectiveColumns]);
+  const previousPeriodFilters = useMemo<AppliedGlobalFilter[]>(() => {
+    if (!comparableDateWindow) return [];
+    let replaced = false;
+    return effectiveAppliedFilters.map((filter) => {
+      if (replaced || filter.op !== "between" || filter.column !== comparableDateWindow.column) {
+        return filter;
+      }
+      const currentRange = resolveTemporalBetweenValue(filter.value);
+      if (!currentRange) return filter;
+      if (currentRange[0] !== comparableDateWindow.currentStart || currentRange[1] !== comparableDateWindow.currentEnd) {
+        return filter;
+      }
+      replaced = true;
+      return {
+        ...filter,
+        value: [comparableDateWindow.previousStart, comparableDateWindow.previousEnd],
+      };
+    });
+  }, [comparableDateWindow, effectiveAppliedFilters]);
+
   const widgetsDataQuery = useQuery({
     queryKey: [
       "dashboard-widget-data",
@@ -516,9 +658,35 @@ const DashboardViewPage = () => {
     },
     enabled: canLoadWidgetData && !!dashboardId && widgets.length > 0,
   });
+  const previousKpiDataQuery = useQuery({
+    queryKey: [
+      "dashboard-widget-data-previous-period-kpi",
+      dashboardId,
+      kpiWidgetIds.join(","),
+      JSON.stringify(previousPeriodFilters),
+      comparableDateWindow?.column || "",
+      comparableDateWindow?.currentStart || "",
+      comparableDateWindow?.currentEnd || "",
+    ],
+    queryFn: () => {
+      if (!shouldUsePublicApi) {
+        return api.getDashboardWidgetsData(
+          Number(dashboardId),
+          kpiWidgetIds,
+          previousPeriodFilters,
+        );
+      }
+      return api.getPublicDashboardWidgetsData(
+        String(dashboardId),
+        kpiWidgetIds,
+        previousPeriodFilters,
+      );
+    },
+    enabled: canLoadWidgetData && !!dashboardId && !!comparableDateWindow && kpiWidgetIds.length > 0,
+  });
 
   const widgetDataById = useMemo(() => {
-    const mapped: Record<string, { columns: string[]; rows: Record<string, unknown>[]; row_count: number }> = {};
+    const mapped: Record<string, ApiDashboardWidgetDataResponse> = {};
     (widgetsDataQuery.data?.results || []).forEach((result) => {
       mapped[String(result.widget_id)] = {
         columns: result.columns,
@@ -528,6 +696,29 @@ const DashboardViewPage = () => {
     });
     return mapped;
   }, [widgetsDataQuery.data]);
+  const previousKpiDataByWidgetId = useMemo(() => {
+    const mapped: Record<string, ApiDashboardWidgetDataResponse> = {};
+    (previousKpiDataQuery.data?.results || []).forEach((result) => {
+      mapped[String(result.widget_id)] = {
+        columns: result.columns,
+        rows: result.rows,
+        row_count: result.row_count,
+      };
+    });
+    return mapped;
+  }, [previousKpiDataQuery.data]);
+  const kpiComparisonByWidgetId = useMemo<KpiComparisonMap>(() => {
+    if (!comparableDateWindow || previousKpiDataQuery.isLoading || previousKpiDataQuery.isError) return {};
+    const mapped: KpiComparisonMap = {};
+    widgets.forEach((widget) => {
+      if (widget.config.widget_type !== "kpi" || widget.config.kpi_show_trend !== true) return;
+      mapped[widget.id] = {
+        previousData: previousKpiDataByWidgetId[widget.id],
+        label: "vs periodo anterior",
+      };
+    });
+    return mapped;
+  }, [comparableDateWindow, previousKpiDataByWidgetId, previousKpiDataQuery.isError, previousKpiDataQuery.isLoading, widgets]);
 
   const previewErrorMessage = widgetsDataQuery.isError
     ? (widgetsDataQuery.error as Error).message || "Falha ao carregar dados"
@@ -1089,6 +1280,7 @@ const DashboardViewPage = () => {
                 dashboardId={dashboardId}
                 delay={idx * 0.06}
                 dataByWidgetId={widgetDataById}
+                kpiComparisonByWidgetId={kpiComparisonByWidgetId}
                 loading={widgetsDataQuery.isLoading}
                 errorMessage={previewErrorMessage}
               />
@@ -1370,13 +1562,15 @@ const ViewSection = ({
   dashboardId,
   delay,
   dataByWidgetId,
+  kpiComparisonByWidgetId,
   loading,
   errorMessage,
 }: {
   section: DashboardSection;
   dashboardId: string;
   delay: number;
-  dataByWidgetId: Record<string, { columns: string[]; rows: Record<string, unknown>[]; row_count: number }>;
+  dataByWidgetId: Record<string, ApiDashboardWidgetDataResponse>;
+  kpiComparisonByWidgetId: KpiComparisonMap;
   loading: boolean;
   errorMessage: string | null;
 }) => {
@@ -1468,6 +1662,7 @@ const ViewSection = ({
                     heightMultiplier={height as 0.5 | 1 | 2}
                     layoutRows={layout?.h}
                     preloadedData={dataByWidgetId[widget.id]}
+                    kpiComparison={kpiComparisonByWidgetId[widget.id]}
                     preloadedLoading={loading}
                     preloadedError={errorMessage}
                   />

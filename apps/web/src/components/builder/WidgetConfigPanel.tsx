@@ -654,6 +654,7 @@ export const WidgetConfigPanel = ({
             formula: undefined,
             dependencies: [],
             metrics: [],
+            kpi_show_trend: !!normalizedDraft.config.kpi_show_trend,
             composite_metric: {
               ...normalizedDraft.config.composite_metric,
               inner_agg: draftMetric.op,
@@ -674,6 +675,7 @@ export const WidgetConfigPanel = ({
             kpi_dependencies: kpiType === "derived"
               ? normalizeKpiDependencies(normalizedDraft.config.kpi_dependencies || [])
               : [],
+            kpi_show_trend: !!normalizedDraft.config.kpi_show_trend,
             kpi_decimals: Math.max(0, Math.min(8, Math.trunc(Number(normalizedDraft.config.kpi_decimals ?? 2)))),
             composite_metric: undefined,
             metrics: kpiType === "derived"
@@ -1412,6 +1414,13 @@ export const WidgetConfigPanel = ({
                     placeholder="Ex: %"
                   />
                 </div>
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+                <Label className="text-xs font-semibold text-muted-foreground">Comparar com periodo anterior</Label>
+                <Switch
+                  checked={!!draft.config.kpi_show_trend}
+                  onCheckedChange={(checked) => update({ config: { ...draft.config, kpi_show_trend: checked } })}
+                />
               </div>
             </DataBlock>
           )}

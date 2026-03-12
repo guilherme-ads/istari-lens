@@ -106,6 +106,7 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     kpi_decimals: Math.max(0, Math.min(8, asNumber(raw.kpi_decimals, 2))),
     kpi_prefix: asString(raw.kpi_prefix) || undefined,
     kpi_suffix: asString(raw.kpi_suffix) || undefined,
+    kpi_show_trend: typeof raw.kpi_show_trend === "boolean" ? raw.kpi_show_trend : false,
     kpi_type: (["atomic", "derived"].includes(asString(raw.kpi_type, "atomic"))
       ? asString(raw.kpi_type, "atomic")
       : "atomic") as "atomic" | "derived",

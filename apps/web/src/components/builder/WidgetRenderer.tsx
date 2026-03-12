@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart as ReLineChart, Line, LabelList, Legend, PieChart as RePieChart, Pie, Cell,
 } from "recharts";
-import { ArrowUpDown, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUpDown, Download, ChevronLeft, ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
 import type { DashboardWidget } from "@/types/dashboard";
 import { api, type ApiDashboardWidgetDataResponse, type ApiQuerySpec } from "@/lib/api";
 
@@ -295,6 +295,11 @@ const renderGlassLabel = (params: { x: number; y: number; text: string; fontSize
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
+type KpiComparisonData = {
+  previousData?: ApiDashboardWidgetDataResponse;
+  label?: string;
+};
+
 type RendererProps = {
   widget: DashboardWidget;
   dashboardId?: string;
@@ -305,6 +310,7 @@ type RendererProps = {
   heightMultiplier?: 0.5 | 1 | 2;
   layoutRows?: number;
   preloadedData?: ApiDashboardWidgetDataResponse;
+  kpiComparison?: KpiComparisonData;
   preloadedLoading?: boolean;
   preloadedError?: string | null;
   hideTableExport?: boolean;
@@ -407,6 +413,117 @@ type DraftPreviewPlan = {
   lineTimeColumn?: string;
   dimensionAliasMap?: Record<string, string>;
   dreRowMetricKeys?: Record<string, string[]>;
+};
+
+type ComparableDateWindow = {
+  key: string;
+  currentStart: string;
+  currentEnd: string;
+  previousStart: string;
+  previousEnd: string;
+};
+
+const parseYmdLocal = (value: string): Date | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const resolveBetweenDateRange = (rawValue: unknown): [string, string] | null => {
+  if (Array.isArray(rawValue) && rawValue.length === 2) {
+    const start = String(rawValue[0] || "").trim();
+    const end = String(rawValue[1] || "").trim();
+    if (!start || !end) return null;
+    return [start, end];
+  }
+  return resolveRelativeBetweenValue(rawValue);
+};
+
+const buildPreviousPeriodFilters = <T extends { op: string; value?: unknown }>(
+  filters: T[],
+  getKey: (filter: T) => string | undefined,
+  setRangeValue: (filter: T, value: [string, string]) => T,
+): { window: ComparableDateWindow; filters: T[] } | null => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  let selected: {
+    key: string;
+    currentRange: [string, string];
+    durationDays: number;
+    previousRange: [string, string];
+  } | null = null;
+
+  for (const filter of filters) {
+    if (filter.op !== "between") continue;
+    const key = (getKey(filter) || "").trim();
+    if (!key) continue;
+    const currentRange = resolveBetweenDateRange(filter.value);
+    if (!currentRange) continue;
+    const currentStartDate = parseYmdLocal(currentRange[0]);
+    const currentEndDate = parseYmdLocal(currentRange[1]);
+    if (!currentStartDate || !currentEndDate) continue;
+    if (currentEndDate.getTime() < currentStartDate.getTime()) continue;
+    const durationDays = Math.floor((currentEndDate.getTime() - currentStartDate.getTime()) / DAY_MS) + 1;
+    if (durationDays <= 0) continue;
+
+    const previousEndDate = new Date(currentStartDate.getTime() - DAY_MS);
+    const previousStartDate = new Date(previousEndDate.getTime() - ((durationDays - 1) * DAY_MS));
+    const previousRange: [string, string] = [toYmd(previousStartDate), toYmd(previousEndDate)];
+    if (selected && durationDays >= selected.durationDays) continue;
+    selected = { key, currentRange, durationDays, previousRange };
+  }
+  if (!selected) return null;
+
+  let replaced = false;
+  const previousFilters = filters.map((item) => {
+    if (replaced || item.op !== "between") return item;
+    const itemKey = (getKey(item) || "").trim();
+    if (itemKey !== selected.key) return item;
+    const itemRange = resolveBetweenDateRange(item.value);
+    if (!itemRange) return item;
+    if (itemRange[0] !== selected.currentRange[0] || itemRange[1] !== selected.currentRange[1]) return item;
+    replaced = true;
+    return setRangeValue(item, selected.previousRange);
+  });
+  if (!replaced) return null;
+
+  return {
+    window: {
+      key: selected.key,
+      currentStart: selected.currentRange[0],
+      currentEnd: selected.currentRange[1],
+      previousStart: selected.previousRange[0],
+      previousEnd: selected.previousRange[1],
+    },
+    filters: previousFilters,
+  };
+};
+
+const normalizeDraftRowsForWidget = (
+  baseRows: Record<string, unknown>[],
+  draftPreviewPlan: DraftPreviewPlan | null,
+): Record<string, unknown>[] => {
+  if (!draftPreviewPlan) return baseRows;
+  return baseRows.map((item) => {
+    if (typeof item !== "object" || item === null) return item;
+    const row = { ...item } as Record<string, unknown>;
+    if (draftPreviewPlan.lineTimeColumn && !Object.prototype.hasOwnProperty.call(row, "time_bucket")) {
+      row.time_bucket = row[draftPreviewPlan.lineTimeColumn];
+    }
+    Object.entries(draftPreviewPlan.dimensionAliasMap || {}).forEach(([target, source]) => {
+      if (Object.prototype.hasOwnProperty.call(row, target)) return;
+      row[target] = row[source];
+    });
+    Object.entries(draftPreviewPlan.dreRowMetricKeys || {}).forEach(([target, sourceKeys]) => {
+      row[target] = sourceKeys.reduce((acc, sourceKey) => acc + toFiniteNumber(row[sourceKey]), 0);
+    });
+    return row;
+  });
 };
 
 const buildDraftPreviewSpec = ({
@@ -846,6 +963,7 @@ export const WidgetRenderer = ({
   heightMultiplier = 1,
   layoutRows,
   preloadedData,
+  kpiComparison,
   preloadedLoading = false,
   preloadedError = null,
   hideTableExport = false,
@@ -859,6 +977,7 @@ export const WidgetRenderer = ({
   const numericDashboardId = Number(dashboardId);
   const numericWidgetId = Number(widget.id);
   const hasPersistedWidgetId = Number.isFinite(numericWidgetId) && numericWidgetId > 0;
+  const kpiTrendEnabled = widget.config.widget_type === "kpi" && widget.config.kpi_show_trend === true;
   const persistedGlobalFilters = useMemo(
     () =>
       (nativeFilters || [])
@@ -882,6 +1001,32 @@ export const WidgetRenderer = ({
     && Number.isFinite(numericDashboardId)
     && numericDashboardId > 0
     && (!builderMode || !draftPreviewPlan?.spec);
+  const shouldTryLocalComparison = kpiTrendEnabled && !disableFetch && !kpiComparison;
+  const persistedPreviousPeriod = useMemo(
+    () => (
+      shouldTryLocalComparison
+        ? buildPreviousPeriodFilters(
+            persistedGlobalFilters,
+            (filter) => filter.column,
+            (filter, value) => ({ ...filter, value }),
+          )
+        : null
+    ),
+    [persistedGlobalFilters, shouldTryLocalComparison],
+  );
+  const draftPreviousPeriodSpec = useMemo(() => {
+    if (!shouldTryLocalComparison || !draftPreviewPlan?.spec) return null;
+    const previous = buildPreviousPeriodFilters(
+      draftPreviewPlan.spec.filters || [],
+      (filter) => filter.field,
+      (filter, value) => ({ ...filter, value }),
+    );
+    if (!previous) return null;
+    return {
+      ...draftPreviewPlan.spec,
+      filters: previous.filters,
+    } as ApiQuerySpec;
+  }, [draftPreviewPlan?.spec, shouldTryLocalComparison]);
 
   const widgetQuery = useQuery({
     queryKey: ["widget-data", dashboardId, widget.id, JSON.stringify(persistedGlobalFilters)],
@@ -900,30 +1045,87 @@ export const WidgetRenderer = ({
     },
     enabled: shouldFetchPersisted,
   });
+  const previousWidgetQuery = useQuery({
+    queryKey: [
+      "widget-data-previous-period",
+      dashboardId,
+      widget.id,
+      JSON.stringify(persistedPreviousPeriod?.filters || []),
+      persistedPreviousPeriod?.window.currentStart || "",
+      persistedPreviousPeriod?.window.currentEnd || "",
+    ],
+    queryFn: async () => {
+      const response = await api.getDashboardWidgetsData(
+        numericDashboardId,
+        [numericWidgetId],
+        persistedPreviousPeriod?.filters || [],
+      );
+      const item = response.results.find((result) => result.widget_id === numericWidgetId);
+      if (!item) throw new Error("Widget previous period data not found");
+      return item;
+    },
+    enabled: shouldFetchPersisted && !!persistedPreviousPeriod,
+  });
   const draftWidgetQuery = useQuery({
     queryKey: ["widget-draft-data", datasetId, widget.id, JSON.stringify(draftPreviewPlan?.spec || {})],
     queryFn: () => api.previewQuery(draftPreviewPlan?.spec as ApiQuerySpec),
     enabled: shouldFetchDraftPreview,
   });
+  const previousDraftWidgetQuery = useQuery({
+    queryKey: ["widget-draft-data-previous-period", datasetId, widget.id, JSON.stringify(draftPreviousPeriodSpec || {})],
+    queryFn: () => api.previewQuery(draftPreviousPeriodSpec as ApiQuerySpec),
+    enabled: shouldFetchDraftPreview && !!draftPreviousPeriodSpec,
+  });
   const normalizedDraftRows = useMemo(() => {
     const baseRows = draftWidgetQuery.data?.rows || [];
-    if (!draftPreviewPlan) return baseRows;
-    return baseRows.map((item) => {
-      if (typeof item !== "object" || item === null) return item;
-      const row = { ...item } as Record<string, unknown>;
-      if (draftPreviewPlan.lineTimeColumn && !Object.prototype.hasOwnProperty.call(row, "time_bucket")) {
-        row.time_bucket = row[draftPreviewPlan.lineTimeColumn];
-      }
-      Object.entries(draftPreviewPlan.dimensionAliasMap || {}).forEach(([target, source]) => {
-        if (Object.prototype.hasOwnProperty.call(row, target)) return;
-        row[target] = row[source];
-      });
-      Object.entries(draftPreviewPlan.dreRowMetricKeys || {}).forEach(([target, sourceKeys]) => {
-        row[target] = sourceKeys.reduce((acc, sourceKey) => acc + toFiniteNumber(row[sourceKey]), 0);
-      });
-      return row;
-    });
+    return normalizeDraftRowsForWidget(baseRows, draftPreviewPlan);
   }, [draftPreviewPlan, draftWidgetQuery.data]);
+  const normalizedPreviousDraftRows = useMemo(() => {
+    const baseRows = previousDraftWidgetQuery.data?.rows || [];
+    return normalizeDraftRowsForWidget(baseRows, draftPreviewPlan);
+  }, [draftPreviewPlan, previousDraftWidgetQuery.data]);
+  const localKpiComparison = useMemo<KpiComparisonData | undefined>(() => {
+    if (!shouldTryLocalComparison) return undefined;
+    if (shouldFetchPersisted) {
+      if (!persistedPreviousPeriod || previousWidgetQuery.isLoading || previousWidgetQuery.isError) return undefined;
+      return {
+        previousData: previousWidgetQuery.data
+          ? {
+              columns: previousWidgetQuery.data.columns,
+              rows: previousWidgetQuery.data.rows,
+              row_count: previousWidgetQuery.data.row_count,
+            }
+          : { columns: [], rows: [], row_count: 0 },
+        label: "vs periodo anterior",
+      };
+    }
+    if (shouldFetchDraftPreview) {
+      if (!draftPreviousPeriodSpec || previousDraftWidgetQuery.isLoading || previousDraftWidgetQuery.isError) return undefined;
+      return {
+        previousData: {
+          columns: previousDraftWidgetQuery.data?.columns || [],
+          rows: normalizedPreviousDraftRows,
+          row_count: previousDraftWidgetQuery.data?.row_count || normalizedPreviousDraftRows.length,
+        },
+        label: "vs periodo anterior",
+      };
+    }
+    return undefined;
+  }, [
+    draftPreviousPeriodSpec,
+    normalizedPreviousDraftRows,
+    persistedPreviousPeriod,
+    previousDraftWidgetQuery.data,
+    previousDraftWidgetQuery.isError,
+    previousDraftWidgetQuery.isLoading,
+    previousWidgetQuery.data,
+    previousWidgetQuery.isError,
+    previousWidgetQuery.isLoading,
+    shouldFetchDraftPreview,
+    shouldFetchPersisted,
+    shouldTryLocalComparison,
+  ]);
+  const effectiveKpiComparison = kpiComparison ?? localKpiComparison;
 
   const rows = useMemo(
     () => preloadedData?.rows || widgetQuery.data?.rows || normalizedDraftRows || [],
@@ -1319,8 +1521,27 @@ export const WidgetRenderer = ({
         if (outerAgg === "distinct_count") return new Set(values.map((item) => String(item))).size;
         return values.reduce((acc, item) => acc + item, 0) / Math.max(1, values.length);
       }
-      return Number(rows[0]?.[metricKey] || 0);
+      return toFiniteNumber(rows[0]?.[metricKey]);
     })();
+    const hasComparison = !!effectiveKpiComparison;
+    const previousRows = effectiveKpiComparison?.previousData?.rows || [];
+    const previousMetricKey = previousRows.length > 0 ? resolvePrimaryMetricKey(widget, previousRows) : metricKey;
+    const previousValue = hasComparison ? toFiniteNumber(previousRows[0]?.[previousMetricKey]) : null;
+    const deltaAbsolute = hasComparison && previousValue !== null ? value - previousValue : null;
+    const deltaPercent = previousValue !== null && previousValue !== 0 && deltaAbsolute !== null
+      ? deltaAbsolute / previousValue
+      : null;
+    const deltaPercentText = deltaPercent === null
+      ? null
+      : `${deltaPercent > 0 ? "+" : ""}${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(deltaPercent * 100)}%`;
+    const trendLabel = effectiveKpiComparison?.label || "vs periodo anterior";
+    const trendColorClass = deltaPercent === null
+      ? "text-muted-foreground"
+      : deltaPercent > 0
+        ? "text-emerald-500"
+        : deltaPercent < 0
+          ? "text-rose-500"
+          : "text-muted-foreground";
     const showAs = widget.config.kpi_show_as || "number_2";
     const abbreviationMode = widget.config.kpi_abbreviation_mode || "always";
     const decimals = widget.config.kpi_decimals ?? 2;
@@ -1358,6 +1579,20 @@ export const WidgetRenderer = ({
               {fullKpiValue}
             </span>
           </div>
+          {hasComparison && (
+            <div className={`flex items-center justify-center gap-1 text-[12px] font-semibold ${trendColorClass}`}>
+              {deltaPercent === null ? (
+                <span className="font-medium text-muted-foreground">Sem base de comparacao</span>
+              ) : (
+                <>
+                  {deltaPercent > 0 && <TrendingUp className="h-3.5 w-3.5 shrink-0" />}
+                  {deltaPercent < 0 && <TrendingDown className="h-3.5 w-3.5 shrink-0" />}
+                  <span className="tabular-nums">{deltaPercentText}</span>
+                  <span className="font-medium text-muted-foreground">{trendLabel}</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );

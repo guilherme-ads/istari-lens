@@ -118,6 +118,7 @@ def _setup_default_widget_config(
         config.update({
             "kpi_show_as": "number_2",
             "kpi_decimals": 2,
+            "kpi_show_trend": False,
             "kpi_type": "atomic",
             "formula": None,
             "dependencies": [],

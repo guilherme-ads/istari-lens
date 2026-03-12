@@ -283,6 +283,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
     const normalizedSuffix = legacyShowAs === "percent" && !widget.config.kpi_suffix
       ? "%"
       : widget.config.kpi_suffix;
+    const normalizedShowTrend = widget.config.kpi_show_trend === true;
     setDraft({
       ...widget,
       config: {
@@ -290,12 +291,14 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
         kpi_show_as: normalizedShowAs,
         kpi_prefix: normalizedPrefix,
         kpi_suffix: normalizedSuffix,
+        kpi_show_trend: normalizedShowTrend,
       },
       props: {
         ...widget.props,
         kpi_show_as: normalizedShowAs,
         kpi_prefix: normalizedPrefix,
         kpi_suffix: normalizedSuffix,
+        kpi_show_trend: normalizedShowTrend,
       },
     });
     setActiveTab("dados");
@@ -533,6 +536,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
             dependencies: [],
             kpi_dependencies: [],
             metrics: [],
+            kpi_show_trend: !!normalizedDraft.config.kpi_show_trend,
             kpi_decimals: clampKpiDecimals(normalizedDraft.config.kpi_decimals ?? 2),
             composite_metric: {
               ...normalizedDraft.config.composite_metric,
@@ -554,6 +558,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
             kpi_dependencies: kpiType === "derived"
               ? normalizeKpiDependencies(normalizedDraft.config.kpi_dependencies || [])
               : [],
+            kpi_show_trend: !!normalizedDraft.config.kpi_show_trend,
             kpi_decimals: clampKpiDecimals(normalizedDraft.config.kpi_decimals ?? 2),
             composite_metric: undefined,
             metrics: kpiType === "derived"
@@ -831,6 +836,17 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                         </div>
                       </div>
                     )}
+
+                    <div className="grid grid-cols-[160px_minmax(0,1fr)] items-center gap-2">
+                      <Label className="text-caption text-muted-foreground">Comparar periodo</Label>
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="text-[11px] text-muted-foreground">{draft.config.kpi_show_trend ? "Ativa" : "Desativada"}</span>
+                        <Switch
+                          checked={!!draft.config.kpi_show_trend}
+                          onCheckedChange={(checked) => setConfig({ kpi_show_trend: checked })}
+                        />
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">

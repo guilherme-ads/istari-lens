@@ -55,6 +55,7 @@ export interface WidgetConfig {
   kpi_decimals?: number;
   kpi_prefix?: string;
   kpi_suffix?: string;
+  kpi_show_trend?: boolean;
   kpi_type?: "atomic" | "derived";
   formula?: string;
   dependencies?: string[];
@@ -254,6 +255,7 @@ export const createDefaultWidgetConfig = (params: {
       kpi_show_as: "number_2",
       kpi_abbreviation_mode: "always",
       kpi_decimals: 2,
+      kpi_show_trend: false,
       kpi_type: "atomic",
       formula: undefined,
       dependencies: [],

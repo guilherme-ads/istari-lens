@@ -26,6 +26,35 @@ def test_kpi_sum_numeric_column_is_valid() -> None:
     validate_widget_config_against_columns(config, COLUMN_TYPES)
 
 
+def test_kpi_show_trend_defaults_to_false() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "kpi",
+            "view_name": "public.vw_recargas",
+            "metrics": [{"op": "sum", "column": "kwh"}],
+            "dimensions": [],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    assert config.kpi_show_trend is False
+
+
+def test_kpi_show_trend_accepts_true() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "kpi",
+            "view_name": "public.vw_recargas",
+            "kpi_show_trend": True,
+            "metrics": [{"op": "sum", "column": "kwh"}],
+            "dimensions": [],
+            "filters": [],
+            "order_by": [],
+        }
+    )
+    assert config.kpi_show_trend is True
+
+
 def test_kpi_sum_non_numeric_column_fails() -> None:
     config = WidgetConfig.model_validate(
         {

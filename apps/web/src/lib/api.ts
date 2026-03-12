@@ -408,6 +408,7 @@ export type ApiWidgetConfig = {
   kpi_decimals?: number;
   kpi_prefix?: string;
   kpi_suffix?: string;
+  kpi_show_trend?: boolean;
   kpi_type?: "atomic" | "derived";
   formula?: string;
   dependencies?: string[];

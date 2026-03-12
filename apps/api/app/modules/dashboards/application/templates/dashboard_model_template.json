@@ -104,6 +104,7 @@
           "size": { "width": 1, "height": 1 },
           "kpi_show_as": "currency_brl",
           "kpi_decimals": 2,
+          "kpi_show_trend": false,
           "kpi_type": "atomic",
           "metrics": [{ "op": "sum", "column": "revenue" }],
           "dimensions": [],
@@ -125,6 +126,7 @@
           "size": { "width": 1, "height": 1 },
           "kpi_show_as": "number_2",
           "kpi_decimals": 2,
+          "kpi_show_trend": false,
           "kpi_type": "derived",
           "formula": "(receita / pedidos)",
           "dependencies": ["receita", "pedidos"],
@@ -151,6 +153,7 @@
           "visual_palette": "default",
           "size": { "width": 1, "height": 1 },
           "kpi_show_as": "number_2",
+          "kpi_show_trend": false,
           "kpi_type": "atomic",
           "composite_metric": {
             "type": "agg_over_time_bucket",

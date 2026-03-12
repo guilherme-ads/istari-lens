@@ -32,6 +32,7 @@ const ENTRY_KPI: WidgetCatalogEntry = {
     show_title: false,
     kpi_show_as: "number_2",
     kpi_decimals: 2,
+    kpi_show_trend: false,
     kpi_type: "atomic",
     visual_padding: "normal",
     visual_palette: "default",

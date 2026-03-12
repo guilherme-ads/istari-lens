@@ -211,6 +211,7 @@ class WidgetConfig(BaseModel):
     kpi_decimals: int = 2
     kpi_prefix: str | None = None
     kpi_suffix: str | None = None
+    kpi_show_trend: bool = False
     kpi_type: KpiType = "atomic"
     formula: str | None = None
     dependencies: list[str] = Field(default_factory=list)
