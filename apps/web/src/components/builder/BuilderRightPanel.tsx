@@ -68,11 +68,13 @@ const paletteByName: Record<"default" | "warm" | "cool" | "mono" | "vivid", stri
   vivid: ["bg-accent", "bg-chart-7", "bg-chart-8", "bg-success", "bg-chart-5"],
 };
 
-const kpiShowAsOptions: Array<{ value: "number_2" | "integer" | "currency_brl" | "percent"; label: string }> = [
-  { value: "number_2", label: "Decimal (2 casas)" },
+const kpiShowAsOptions: Array<{ value: "number_2" | "integer"; label: string }> = [
+  { value: "number_2", label: "Decimal" },
   { value: "integer", label: "Inteiro" },
-  { value: "currency_brl", label: "Moeda (BRL)" },
-  { value: "percent", label: "Percentual" },
+];
+const kpiAbbreviationModeOptions: Array<{ value: "auto" | "always"; label: string }> = [
+  { value: "auto", label: "Automatico" },
+  { value: "always", label: "Sempre abreviar" },
 ];
 const kpiBaseAggOptions: Array<{ value: MetricOp; label: string }> = [
   { value: "sum", label: "SOMA" },
@@ -263,7 +265,39 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
   const [filterJoin, setFilterJoin] = useState<"AND" | "OR">("AND");
 
   useEffect(() => {
-    setDraft(widget);
+    if (!widget) {
+      setDraft(null);
+      setActiveTab("dados");
+      return;
+    }
+    if (widget.config.widget_type !== "kpi") {
+      setDraft(widget);
+      setActiveTab("dados");
+      return;
+    }
+    const legacyShowAs = widget.config.kpi_show_as;
+    const normalizedShowAs = legacyShowAs === "integer" ? "integer" : "number_2";
+    const normalizedPrefix = legacyShowAs === "currency_brl" && !widget.config.kpi_prefix
+      ? "R$ "
+      : widget.config.kpi_prefix;
+    const normalizedSuffix = legacyShowAs === "percent" && !widget.config.kpi_suffix
+      ? "%"
+      : widget.config.kpi_suffix;
+    setDraft({
+      ...widget,
+      config: {
+        ...widget.config,
+        kpi_show_as: normalizedShowAs,
+        kpi_prefix: normalizedPrefix,
+        kpi_suffix: normalizedSuffix,
+      },
+      props: {
+        ...widget.props,
+        kpi_show_as: normalizedShowAs,
+        kpi_prefix: normalizedPrefix,
+        kpi_suffix: normalizedSuffix,
+      },
+    });
     setActiveTab("dados");
   }, [widget]);
 
@@ -319,6 +353,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
   const derivedMetricAliases = normalizedDerivedDeps.map((item) => item.alias);
   const compositeMetric = isKpiWidget ? draft.config.composite_metric : undefined;
   const isCompositeSentence = kpiMode === "composite" && !!compositeMetric;
+  const kpiFormattingMode = draft.config.kpi_show_as === "integer" ? "integer" : "number_2";
   const kpiSentenceBaseAgg = (isCompositeSentence ? compositeMetric.inner_agg : metric.op) as MetricOp;
   const kpiSentenceFinalAgg = (isCompositeSentence ? compositeMetric.outer_agg : metric.op) as MetricOp;
   const kpiSentenceColumn = isCompositeSentence ? (compositeMetric.value_column || "__none__") : (metric.column || "__none__");
@@ -645,11 +680,10 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                               value={kpiSentenceColumn}
                               onChange={setKpiSentenceColumn}
                               options={[
-                                { value: "__none__", label: "sem coluna", disabled: !countLikeOps.has(kpiSentenceBaseAgg) },
-                                ...resolvedColumns.map((column) => ({
+                                ...(countLikeOps.has(kpiSentenceBaseAgg) ? [{ value: "__none__", label: "sem coluna" }] : []),
+                                ...kpiAllowedColumns.map((column) => ({
                                   value: column.name,
                                   label: column.name,
-                                  disabled: !countLikeOps.has(kpiSentenceBaseAgg) && !numericColumns.some((numCol) => numCol.name === column.name),
                                 })),
                               ]}
                             />
@@ -965,8 +999,8 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               {draft.config.widget_type === "kpi" && (
                 <ConfigSection title="Formatação" icon={Type} defaultOpen={false}>
                   <Select
-                    value={draft.config.kpi_show_as || "number_2"}
-                    onValueChange={(value) => setConfig({ kpi_show_as: value as "number_2" | "integer" | "currency_brl" | "percent" })}
+                    value={kpiFormattingMode}
+                    onValueChange={(value) => setConfig({ kpi_show_as: value as "number_2" | "integer" })}
                   >
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -976,16 +1010,32 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                     </SelectContent>
                   </Select>
                   <div className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
-                    <Label className="text-caption text-muted-foreground">Casas decimais</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={8}
-                      className="h-8 text-xs"
-                      value={draft.config.kpi_decimals ?? 2}
-                      onChange={(event) => setConfig({ kpi_decimals: clampKpiDecimals(event.target.value) })}
-                    />
+                    <Label className="text-caption text-muted-foreground">Abreviacao</Label>
+                    <Select
+                      value={draft.config.kpi_abbreviation_mode || "always"}
+                      onValueChange={(value) => setConfig({ kpi_abbreviation_mode: value as "auto" | "always" })}
+                    >
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {kpiAbbreviationModeOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+                  {kpiFormattingMode !== "integer" && (
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
+                      <Label className="text-caption text-muted-foreground">Casas decimais</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={8}
+                        className="h-8 text-xs"
+                        value={draft.config.kpi_decimals ?? 2}
+                        onChange={(event) => setConfig({ kpi_decimals: clampKpiDecimals(event.target.value) })}
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <Input className="h-8 text-xs" value={draft.config.kpi_prefix || ""} placeholder="Prefixo (ex: R$)" onChange={(event) => setConfig({ kpi_prefix: event.target.value || undefined })} />
                     <Input className="h-8 text-xs" value={draft.config.kpi_suffix || ""} placeholder="Sufixo (ex: %)" onChange={(event) => setConfig({ kpi_suffix: event.target.value || undefined })} />

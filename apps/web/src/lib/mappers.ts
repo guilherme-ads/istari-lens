@@ -100,6 +100,9 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     kpi_show_as: (["currency_brl", "number_2", "integer", "percent"].includes(asString(raw.kpi_show_as, "number_2"))
       ? asString(raw.kpi_show_as, "number_2")
       : "number_2") as "currency_brl" | "number_2" | "integer" | "percent",
+    kpi_abbreviation_mode: (["auto", "always"].includes(asString(raw.kpi_abbreviation_mode, "always"))
+      ? asString(raw.kpi_abbreviation_mode, "always")
+      : "always") as "auto" | "always",
     kpi_decimals: Math.max(0, Math.min(8, asNumber(raw.kpi_decimals, 2))),
     kpi_prefix: asString(raw.kpi_prefix) || undefined,
     kpi_suffix: asString(raw.kpi_suffix) || undefined,

@@ -404,6 +404,7 @@ export type ApiWidgetConfig = {
   view_name: string;
   show_title?: boolean;
   kpi_show_as?: "currency_brl" | "number_2" | "integer" | "percent";
+  kpi_abbreviation_mode?: "auto" | "always";
   kpi_decimals?: number;
   kpi_prefix?: string;
   kpi_suffix?: string;

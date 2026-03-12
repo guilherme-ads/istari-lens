@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -852,6 +852,10 @@ export const WidgetRenderer = ({
   forcedLoading = false,
 }: RendererProps) => {
   const isTextWidget = widget.config.widget_type === "text";
+  const kpiValueContainerRef = useRef<HTMLDivElement | null>(null);
+  const kpiMeasureRef = useRef<HTMLSpanElement | null>(null);
+  const [kpiValueContainerWidth, setKpiValueContainerWidth] = useState(0);
+  const [kpiMeasureTextWidth, setKpiMeasureTextWidth] = useState(0);
   const numericDashboardId = Number(dashboardId);
   const numericWidgetId = Number(widget.id);
   const hasPersistedWidgetId = Number.isFinite(numericWidgetId) && numericWidgetId > 0;
@@ -925,6 +929,23 @@ export const WidgetRenderer = ({
     () => preloadedData?.rows || widgetQuery.data?.rows || normalizedDraftRows || [],
     [normalizedDraftRows, preloadedData, widgetQuery.data],
   );
+  useEffect(() => {
+    if (widget.config.widget_type !== "kpi") return;
+    const containerEl = kpiValueContainerRef.current;
+    const measureEl = kpiMeasureRef.current;
+    if (!containerEl || !measureEl) return;
+    const recalculate = () => {
+      // Measure against real available line width, not content width.
+      setKpiValueContainerWidth(Math.max(0, containerEl.clientWidth - 4));
+      setKpiMeasureTextWidth(measureEl.scrollWidth);
+    };
+    recalculate();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => recalculate());
+    observer.observe(containerEl);
+    observer.observe(measureEl);
+    return () => observer.disconnect();
+  }, [widget.config, widget.id, rows]);
   const metricLabel = useMemo(() => getMetricLabel(widget), [widget]);
   const fallbackChartHeight = heightMultiplier === 0.5 ? 110 : heightMultiplier === 2 ? 320 : 190;
   const gridItemPixelHeight = typeof layoutRows === "number"
@@ -1301,6 +1322,7 @@ export const WidgetRenderer = ({
       return Number(rows[0]?.[metricKey] || 0);
     })();
     const showAs = widget.config.kpi_show_as || "number_2";
+    const abbreviationMode = widget.config.kpi_abbreviation_mode || "always";
     const decimals = widget.config.kpi_decimals ?? 2;
     const prefix = widget.config.kpi_prefix;
     const suffix = widget.config.kpi_suffix;
@@ -1315,15 +1337,27 @@ export const WidgetRenderer = ({
         : height <= 0.5
           ? "text-xl"
           : "text-2xl";
+    const fullKpiValue = formatKpiValueFull(value, showAs, decimals, prefix, suffix);
+    const compactKpiValue = formatKpiValueCompact(value, showAs, decimals, prefix, suffix);
+    const shouldUseCompactInAuto = kpiValueContainerWidth <= 0 || kpiMeasureTextWidth <= 0
+      ? true
+      : kpiMeasureTextWidth > kpiValueContainerWidth;
+    const shouldUseCompactValue = abbreviationMode === "always"
+      || (abbreviationMode === "auto" && shouldUseCompactInAuto);
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <div className="flex max-w-full flex-col items-center justify-center gap-2 text-center">
+        <div className="flex h-full w-full max-w-full flex-col items-center justify-center gap-2 text-center">
           <span className="max-w-full truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground" title={widget.title || "KPI"}>
             {widget.title || "KPI"}
           </span>
-          <span className={`${kpiSizeClass} min-h-[1.25rem] font-extrabold leading-tight tracking-tight text-foreground`} title={formatKpiValueFull(value, showAs, decimals, prefix, suffix)}>
-            {formatKpiValueCompact(value, showAs, decimals, prefix, suffix)}
-          </span>
+          <div ref={kpiValueContainerRef} className="relative w-full max-w-full text-center">
+            <span className={`${kpiSizeClass} min-h-[1.25rem] whitespace-nowrap font-extrabold leading-tight tracking-tight text-foreground`} title={fullKpiValue}>
+              {shouldUseCompactValue ? compactKpiValue : fullKpiValue}
+            </span>
+            <span ref={kpiMeasureRef} className={`${kpiSizeClass} pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap font-extrabold leading-tight tracking-tight`}>
+              {fullKpiValue}
+            </span>
+          </div>
         </div>
       </div>
     );

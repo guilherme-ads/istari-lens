@@ -51,6 +51,7 @@ export interface WidgetConfig {
   view_name: string;
   show_title?: boolean;
   kpi_show_as?: "currency_brl" | "number_2" | "integer" | "percent";
+  kpi_abbreviation_mode?: "auto" | "always";
   kpi_decimals?: number;
   kpi_prefix?: string;
   kpi_suffix?: string;
@@ -251,6 +252,7 @@ export const createDefaultWidgetConfig = (params: {
       visual_padding: "normal",
       visual_palette: "default",
       kpi_show_as: "number_2",
+      kpi_abbreviation_mode: "always",
       kpi_decimals: 2,
       kpi_type: "atomic",
       formula: undefined,

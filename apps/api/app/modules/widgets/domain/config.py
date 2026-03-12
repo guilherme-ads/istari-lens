@@ -207,6 +207,7 @@ class WidgetConfig(BaseModel):
     view_name: str
     show_title: bool = True
     kpi_show_as: Literal["currency_brl", "number_2", "integer", "percent"] = "number_2"
+    kpi_abbreviation_mode: Literal["auto", "always"] = "always"
     kpi_decimals: int = 2
     kpi_prefix: str | None = None
     kpi_suffix: str | None = None
