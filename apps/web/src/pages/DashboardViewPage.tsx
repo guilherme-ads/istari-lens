@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -188,6 +188,45 @@ const gridRowsToWidgetCardHeightPx = (rows: number): number => (
   (Math.max(1, rows) * VIEW_GRID_ROW_HEIGHT) + ((Math.max(1, rows) - 1) * VIEW_GRID_MARGIN_Y)
 );
 
+const BuilderRouteTransitionSkeleton = () => (
+  <div className="bg-background min-h-screen">
+    <main className="h-[calc(100vh-56px)] min-h-0 overflow-hidden">
+      <div className="flex h-full min-h-0">
+        <aside className="hidden h-full w-[240px] shrink-0 border-r border-border/60 bg-card/20 p-4 lg:block">
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-full rounded-md" />
+            <Skeleton className="h-8 w-full rounded-md" />
+            <Skeleton className="h-8 w-full rounded-md" />
+          </div>
+          <div className="mt-6 space-y-2">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <Skeleton key={`dashboard-to-builder-left-nav-skeleton-${index}`} className="h-7 w-full rounded-md" />
+            ))}
+          </div>
+        </aside>
+
+        <div className="min-w-0 flex-1 p-4 md:p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Skeleton className="h-8 w-60 rounded-md" />
+            <Skeleton className="ml-auto h-8 w-24 rounded-md" />
+            <Skeleton className="h-8 w-28 rounded-md" />
+          </div>
+          <div className="h-[calc(100%-48px)] min-h-0 rounded-xl border border-border/60 bg-card/10 p-4">
+            <div className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <Skeleton className="h-36 rounded-lg" />
+              <Skeleton className="h-48 rounded-lg" />
+              <Skeleton className="h-28 rounded-lg" />
+              <Skeleton className="h-44 rounded-lg" />
+              <Skeleton className="h-32 rounded-lg" />
+              <Skeleton className="h-52 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+);
+
 const DashboardViewPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -196,6 +235,8 @@ const DashboardViewPage = () => {
   const { datasetId, dashboardId } = useParams<{ datasetId?: string; dashboardId?: string }>();
   const { datasets, views, dashboards, hasToken, isLoading, isError, errorMessage } = useCoreData();
   const { isLoading: isSimulatedLoading } = useSimulatedLoading();
+  const [routeTransitionLoading, setRouteTransitionLoading] = useState(false);
+  const routeTransitionTimeoutRef = useRef<number | null>(null);
   const isPresentationMode = location.pathname.startsWith("/presentation/");
   const isPublicMode = location.pathname.startsWith("/public/");
   const shouldUsePublicApi = isPublicMode;
@@ -207,6 +248,23 @@ const DashboardViewPage = () => {
     retry: false,
   });
   const showLoadingSkeleton = isLoading || isSimulatedLoading || publicDashboardQuery.isLoading;
+  useEffect(() => {
+    const state = location.state as { dashboardBuilderTransition?: boolean } | null;
+    if (!state?.dashboardBuilderTransition) return;
+    setRouteTransitionLoading(true);
+    if (routeTransitionTimeoutRef.current) {
+      window.clearTimeout(routeTransitionTimeoutRef.current);
+    }
+    routeTransitionTimeoutRef.current = window.setTimeout(() => {
+      setRouteTransitionLoading(false);
+      routeTransitionTimeoutRef.current = null;
+    }, 220);
+  }, [location.state]);
+  useEffect(() => () => {
+    if (routeTransitionTimeoutRef.current) {
+      window.clearTimeout(routeTransitionTimeoutRef.current);
+    }
+  }, []);
   const mappedPublicDashboard = useMemo(
     () => (publicDashboardQuery.data
       ? mapDashboard({
@@ -613,6 +671,10 @@ const DashboardViewPage = () => {
     );
   }
 
+  if (routeTransitionLoading) {
+    return <BuilderRouteTransitionSkeleton />;
+  }
+
   if (showLoadingSkeleton) {
     return (
       <div className="bg-background min-h-screen">
@@ -696,7 +758,7 @@ const DashboardViewPage = () => {
                   className="h-8 text-xs"
                   onClick={() => {
                     if (!resolvedDatasetId || !dashboardId) return;
-                    navigate(`/datasets/${resolvedDatasetId}/builder/${dashboardId}`);
+                    navigate(`/datasets/${resolvedDatasetId}/builder/${dashboardId}`, { state: { dashboardBuilderTransition: true } });
                   }}
                   disabled={!canEditDashboard}
                 >
@@ -732,8 +794,8 @@ const DashboardViewPage = () => {
                   variant="outline"
                   className="h-8 text-xs"
                   onClick={() => {
-                    if (!publicShareKey) return;
-                    navigate(`/public/dashboard/${publicShareKey}`);
+                    if (!resolvedDatasetId || !dashboardId) return;
+                    navigate(`/presentation/datasets/${resolvedDatasetId}/dashboard/${dashboardId}`);
                   }}
                 >
                   <Monitor className="h-3 w-3 sm:mr-1" />
@@ -1011,7 +1073,7 @@ const DashboardViewPage = () => {
               variant="outline"
               onClick={() => {
                 if (!resolvedDatasetId || !dashboardId) return;
-                navigate(`/datasets/${resolvedDatasetId}/builder/${dashboardId}`);
+                navigate(`/datasets/${resolvedDatasetId}/builder/${dashboardId}`, { state: { dashboardBuilderTransition: true } });
               }}
               disabled={!canEditDashboard || !resolvedDatasetId || !dashboardId}
             >

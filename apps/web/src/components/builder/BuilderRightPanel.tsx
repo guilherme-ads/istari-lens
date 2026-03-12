@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ElementType, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ElementType, type ReactNode } from "react";
 import { ArrowUpDown, BarChart3, Calendar, ChevronDown, Columns3, Filter, Hash, LineChart, MousePointer, Palette, PieChart, Sparkles, Table2, Type, Wand2, X, Trash2, Plus } from "lucide-react";
 
 import type { DashboardWidget, MetricOp, WidgetFilter } from "@/types/dashboard";
@@ -477,7 +477,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
   const addFilter = () => setConfig({ filters: [...(draft.config.filters || []), { column: "", op: "eq", value: "" }] });
   const removeFilter = (index: number) => setConfig({ filters: (draft.config.filters || []).filter((_, idx) => idx !== index) });
 
-  const buildNormalizedDraft = useCallback((): DashboardWidget => {
+  const save = () => {
     let normalizedDraft = draft;
     if (normalizedDraft.config.widget_type === "kpi") {
       const kpiType = normalizedDraft.config.kpi_type === "derived" ? "derived" : "atomic";
@@ -533,33 +533,9 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
         props: normalizedDraft.config,
       };
     }
-    return normalizedDraft;
-  }, [draft]);
-
-  const save = useCallback(() => {
-    const normalizedDraft = buildNormalizedDraft();
     onUpdate(normalizedDraft);
-  }, [buildNormalizedDraft, onUpdate]);
-
-  const saveAndClose = useCallback(() => {
-    save();
     onClose();
-  }, [onClose, save]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (event.shiftKey) {
-        saveAndClose();
-        return;
-      }
-      save();
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [save, saveAndClose]);
+  };
 
   return (
     <aside className="h-full border-l border-border/60 bg-[hsl(var(--card)/0.28)] flex flex-col">
@@ -1245,10 +1221,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
       </ScrollArea>
 
       <div className="h-14 border-t border-border/60 bg-[hsl(var(--card)/0.6)] backdrop-blur-sm px-3 flex items-center gap-2 shrink-0">
-        <Button type="button" size="sm" variant="outline" className="h-9 text-caption gap-1.5 rounded-xl" onClick={save}>
-          Salvar
-        </Button>
-        <Button className="flex-1 h-9 text-caption rounded-xl bg-accent text-accent-foreground hover:bg-accent/90" onClick={saveAndClose}>Salvar e Fechar</Button>
+        <Button className="flex-1 h-9 text-caption rounded-xl bg-accent text-accent-foreground hover:bg-accent/90" onClick={save}>Concluir</Button>
         <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
       </div>
     </aside>

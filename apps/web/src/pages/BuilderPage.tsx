@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef, type ChangeEvent, type CSSProperties } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { LayoutDashboard, Plus, Trash2, Keyboard, Wand2, CalendarIcon, Sparkles, X, SlidersHorizontal, Eye, EyeOff, Hash, BarChart3, LineChart, PieChart, Table2, Columns3 } from "lucide-react";
@@ -43,6 +43,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { DashboardCanvas } from "@/components/builder/DashboardCanvas";
 import BuilderTopBar from "@/components/builder/BuilderTopBar";
@@ -445,8 +446,46 @@ const getOnboardingCardStyle = (
   return { left, top };
 };
 
+const BuilderModeTransitionSkeleton = () => (
+  <div className="h-full min-h-0 overflow-hidden">
+    <div className="flex h-full min-h-0">
+      <aside className="hidden h-full w-[240px] shrink-0 border-r border-border/60 bg-card/20 p-4 lg:block">
+        <div className="space-y-4">
+          <Skeleton className="h-8 w-full rounded-md" />
+          <Skeleton className="h-8 w-full rounded-md" />
+          <Skeleton className="h-8 w-full rounded-md" />
+        </div>
+        <div className="mt-6 space-y-2">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <Skeleton key={`builder-left-nav-skeleton-${index}`} className="h-7 w-full rounded-md" />
+          ))}
+        </div>
+      </aside>
+
+      <div className="min-w-0 flex-1 p-4 md:p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Skeleton className="h-8 w-60 rounded-md" />
+          <Skeleton className="ml-auto h-8 w-24 rounded-md" />
+          <Skeleton className="h-8 w-28 rounded-md" />
+        </div>
+        <div className="h-[calc(100%-48px)] min-h-0 rounded-xl border border-border/60 bg-card/10 p-4">
+          <div className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <Skeleton className="h-36 rounded-lg" />
+            <Skeleton className="h-48 rounded-lg" />
+            <Skeleton className="h-28 rounded-lg" />
+            <Skeleton className="h-44 rounded-lg" />
+            <Skeleton className="h-32 rounded-lg" />
+            <Skeleton className="h-52 rounded-lg" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 const BuilderPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { datasetId, dashboardId } = useParams<{ datasetId: string; dashboardId?: string }>();
   const { toast } = useToast();
@@ -483,6 +522,8 @@ const BuilderPage = () => {
   const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
   const [quickWidgetPickerOpen, setQuickWidgetPickerOpen] = useState(false);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [modeTransitionLoading, setModeTransitionLoading] = useState(false);
+  const [routeTransitionLoading, setRouteTransitionLoading] = useState(false);
   const [onboardingActive, setOnboardingActive] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingTargetRect, setOnboardingTargetRect] = useState<DOMRect | null>(null);
@@ -490,6 +531,8 @@ const BuilderPage = () => {
   const hydratedDashboardIdRef = useRef<string | null>(null);
   const savedSnapshotRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const modeTransitionTimeoutRef = useRef<number | null>(null);
+  const routeTransitionTimeoutRef = useRef<number | null>(null);
 
   const viewColumnsQuery = useQuery({
     queryKey: ["view-columns", view?.schema, view?.name],
@@ -880,7 +923,7 @@ const BuilderPage = () => {
   ), [datasetSourceLabel]);
 
   const saveDashboardMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (closeAfterSave: boolean = false) => {
       if (!datasetId) throw new Error("Dataset invalido");
 
       let targetId = activeDashboardId;
@@ -906,9 +949,9 @@ const BuilderPage = () => {
         widgets: buildWidgetsPayload(sections),
       });
 
-      return saved;
+      return { saved, closeAfterSave };
     },
-    onSuccess: async (saved) => {
+    onSuccess: async ({ saved, closeAfterSave }) => {
       const mapped = mapDashboard(saved);
       const normalizedSections = normalizeSectionsForBuilder(mapped.sections);
       setActiveDashboardId(String(saved.id));
@@ -948,9 +991,11 @@ const BuilderPage = () => {
       setIsSaved(true);
 
       await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
-      if (datasetId) {
-        navigate(`/datasets/${datasetId}/dashboard/${saved.id}`);
-      } else {
+      if (datasetId && closeAfterSave) {
+        navigate(`/datasets/${datasetId}/dashboard/${saved.id}`, { state: { dashboardBuilderTransition: true } });
+      } else if (datasetId && !closeAfterSave) {
+        navigate(`/datasets/${datasetId}/builder/${saved.id}`);
+      } else if (closeAfterSave) {
         navigate("/dashboards");
       }
       toast({ title: "Dashboard salvo" });
@@ -973,10 +1018,23 @@ const BuilderPage = () => {
     },
   });
 
-  const handleSaveDashboard = useCallback(() => {
+  const handleSaveDashboard = useCallback((closeAfterSave = false) => {
     if (saveDashboardMutation.isPending) return;
-    saveDashboardMutation.mutate();
+    saveDashboardMutation.mutate(closeAfterSave);
   }, [saveDashboardMutation]);
+
+  const handleTogglePreviewMode = useCallback(() => {
+    if (modeTransitionLoading) return;
+    setModeTransitionLoading(true);
+    if (modeTransitionTimeoutRef.current) {
+      window.clearTimeout(modeTransitionTimeoutRef.current);
+    }
+    modeTransitionTimeoutRef.current = window.setTimeout(() => {
+      setIsPreview((current) => !current);
+      setModeTransitionLoading(false);
+      modeTransitionTimeoutRef.current = null;
+    }, 180);
+  }, [modeTransitionLoading]);
 
   const handleUpdateWidget = useCallback((updatedWidget: DashboardWidget) => {
     setSections((prev) => prev.map((section) => {
@@ -1314,7 +1372,7 @@ const BuilderPage = () => {
     if (!confirmDiscardIfDirty()) return;
     const targetId = activeDashboardId || dashboardId;
     if (datasetId && targetId) {
-      navigate(`/datasets/${datasetId}/dashboard/${targetId}`);
+      navigate(`/datasets/${datasetId}/dashboard/${targetId}`, { state: { dashboardBuilderTransition: true } });
       return;
     }
     if (datasetId) {
@@ -1531,7 +1589,7 @@ const BuilderPage = () => {
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        handleSaveDashboard();
+        handleSaveDashboard(event.shiftKey);
         return;
       }
 
@@ -1550,6 +1608,31 @@ const BuilderPage = () => {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [editingWidget, handleAddSection, handleAddWidgetType, handleSaveDashboard]);
+
+  useEffect(() => () => {
+    if (modeTransitionTimeoutRef.current) {
+      window.clearTimeout(modeTransitionTimeoutRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const state = location.state as { dashboardBuilderTransition?: boolean } | null;
+    if (!state?.dashboardBuilderTransition) return;
+    setRouteTransitionLoading(true);
+    if (routeTransitionTimeoutRef.current) {
+      window.clearTimeout(routeTransitionTimeoutRef.current);
+    }
+    routeTransitionTimeoutRef.current = window.setTimeout(() => {
+      setRouteTransitionLoading(false);
+      routeTransitionTimeoutRef.current = null;
+    }, 220);
+  }, [location.state]);
+
+  useEffect(() => () => {
+    if (routeTransitionTimeoutRef.current) {
+      window.clearTimeout(routeTransitionTimeoutRef.current);
+    }
+  }, []);
 
   const widgetCount = useMemo(
     () => sections.reduce((total, section) => total + section.widgets.length, 0),
@@ -1980,8 +2063,8 @@ const BuilderPage = () => {
                   <span><kbd className="rounded border px-1 py-0.5">S</kbd> nova seção</span>
                   <span><kbd className="rounded border px-1 py-0.5">Ctrl+S</kbd> salvar</span>
                   <span><kbd className="rounded border px-1 py-0.5">Cmd+S</kbd> salvar</span>
-                  <span><kbd className="rounded border px-1 py-0.5">Ctrl+Shift+S</kbd> salvar e fechar widget</span>
-                  <span><kbd className="rounded border px-1 py-0.5">Cmd+Shift+S</kbd> salvar e fechar widget</span>
+                  <span><kbd className="rounded border px-1 py-0.5">Ctrl+Shift+S</kbd> salvar e fechar</span>
+                  <span><kbd className="rounded border px-1 py-0.5">Cmd+Shift+S</kbd> salvar e fechar</span>
                 </div>
               </div>
             </motion.div>
@@ -2020,8 +2103,9 @@ const BuilderPage = () => {
         sectionCount={sections.length}
         isSaved={isSaved}
         isPreview={isPreview}
-        onSave={handleSaveDashboard}
-        onTogglePreview={() => setIsPreview((current) => !current)}
+        onSave={() => handleSaveDashboard(false)}
+        onSaveAndClose={() => handleSaveDashboard(true)}
+        onTogglePreview={handleTogglePreviewMode}
         onBack={handleBack}
         onDelete={() => setDeleteDashboardOpen(true)}
         onShare={() => {
@@ -2038,7 +2122,9 @@ const BuilderPage = () => {
       />
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {isPreview ? (
+        {(modeTransitionLoading || routeTransitionLoading) ? (
+          <BuilderModeTransitionSkeleton />
+        ) : isPreview ? (
           <div className="h-full overflow-auto">
             <div className="container py-6">{renderCanvas()}</div>
           </div>

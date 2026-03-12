@@ -60,6 +60,21 @@ const widgetOptions: WidgetOption[] = WIDGET_CATALOG.map((entry) => ({
   icon: widgetIconsByWidgetType[entry.widgetType] || LayoutGrid,
 }));
 
+const emitNewWidgetDragState = (active: boolean, payload?: { widgetType: VisualizationType; preferredWidgetType?: WidgetType }) => {
+  window.dispatchEvent(new CustomEvent(NEW_WIDGET_DRAG_STATE_EVENT, {
+    detail: active
+      ? {
+          active: true,
+          payload: {
+            kind: "new-widget",
+            widgetType: payload?.widgetType,
+            preferredWidgetType: payload?.preferredWidgetType,
+          },
+        }
+      : { active: false },
+  }));
+};
+
 const patternOptions: Array<{ title: string; description: string; type: VisualizationType; icon: typeof BarChart3 }> = [
   { title: "Metrica Unica", description: "Um valor em destaque com variacao", type: "kpi", icon: Hash },
   { title: "Comparacao", description: "Compare metricas entre categorias", type: "bar", icon: BarChart3 },
@@ -100,10 +115,10 @@ const DraggableItem = ({
         preferredWidgetType,
       }));
       event.dataTransfer.setData("text/plain", title);
-      window.dispatchEvent(new CustomEvent(NEW_WIDGET_DRAG_STATE_EVENT, { detail: { active: true } }));
+      emitNewWidgetDragState(true, { widgetType: type, preferredWidgetType });
     }}
     onDragEndCapture={() => {
-      window.dispatchEvent(new CustomEvent(NEW_WIDGET_DRAG_STATE_EVENT, { detail: { active: false } }));
+      emitNewWidgetDragState(false);
     }}
     whileHover={{ scale: 1.01, x: 2 }}
     className={cn(
@@ -153,10 +168,10 @@ const IconOnlyDraggableItem = ({
         preferredWidgetType,
       }));
       event.dataTransfer.setData("text/plain", title);
-      window.dispatchEvent(new CustomEvent(NEW_WIDGET_DRAG_STATE_EVENT, { detail: { active: true } }));
+      emitNewWidgetDragState(true, { widgetType: type, preferredWidgetType });
     }}
     onDragEndCapture={() => {
-      window.dispatchEvent(new CustomEvent(NEW_WIDGET_DRAG_STATE_EVENT, { detail: { active: false } }));
+      emitNewWidgetDragState(false);
     }}
     whileHover={{ scale: 1.03 }}
     className={cn(

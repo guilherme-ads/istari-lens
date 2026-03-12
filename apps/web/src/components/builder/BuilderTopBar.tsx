@@ -40,6 +40,7 @@ export interface BuilderTopBarProps {
   isSaved: boolean;
   isPreview: boolean;
   onSave: () => void;
+  onSaveAndClose: () => void;
   onTogglePreview: () => void;
   onBack: () => void;
   onDelete: () => void;
@@ -67,6 +68,7 @@ export const BuilderTopBar = ({
   isSaved,
   isPreview,
   onSave,
+  onSaveAndClose,
   onTogglePreview,
   onBack,
   onDelete,
@@ -152,9 +154,14 @@ export const BuilderTopBar = ({
           <span className="hidden sm:inline">{isPreview ? "Editar" : "Preview"}</span>
         </Button>
 
-        <Button type="button" size="sm" className="h-8 text-xs gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90" onClick={onSave}>
+        <Button type="button" size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={onSave}>
           <Save className="h-3 w-3" />
           <span className="hidden sm:inline">Salvar</span>
+        </Button>
+
+        <Button type="button" size="sm" className="h-8 text-xs gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90" onClick={onSaveAndClose}>
+          <Save className="h-3 w-3" />
+          <span className="hidden sm:inline">Salvar e Fechar</span>
         </Button>
 
         <DropdownMenu>

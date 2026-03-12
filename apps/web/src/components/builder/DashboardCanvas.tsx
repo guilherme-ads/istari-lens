@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import GridLayout, { useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
+import GridLayout, { horizontalCompactor, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Plus,
@@ -217,32 +217,51 @@ const resolveSequentialLayout = (
   section: DashboardSection,
   activeItemId?: string,
 ): DashboardLayoutItem[] => {
-  const baseSorted = [...layout].sort((a, b) => {
-    if (a.x !== b.x) return a.x - b.x;
-    return a.y - b.y;
+  const previousById = new Map(
+    (section.layout || [])
+      .map((item) => normalizeLayoutItem(item))
+      .filter((item) => section.widgets.some((widget) => widget.id === item.i))
+      .map((item) => [item.i, item]),
+  );
+  const widgetOrder = new Map(section.widgets.map((widget, index) => [widget.id, index]));
+  const incomingById = new Map(layout.map((item) => [item.i, normalizeLayoutItem(item)]));
+
+  const sortedIds = Array.from(new Set([
+    ...section.widgets.map((widget) => widget.id),
+    ...layout.map((item) => item.i),
+  ])).sort((idA, idB) => {
+    const itemA = incomingById.get(idA) || previousById.get(idA);
+    const itemB = incomingById.get(idB) || previousById.get(idB);
+    const xA = itemA?.x ?? 0;
+    const xB = itemB?.x ?? 0;
+    if (xA !== xB) return xA - xB;
+    return (widgetOrder.get(idA) ?? Number.MAX_SAFE_INTEGER) - (widgetOrder.get(idB) ?? Number.MAX_SAFE_INTEGER);
   });
 
-  let sorted = baseSorted;
-  if (activeItemId) {
-    const activeItem = baseSorted.find((item) => item.i === activeItemId);
-    if (activeItem) {
-      const others = baseSorted.filter((item) => item.i !== activeItemId);
-      const activePreferredX = Math.max(0, Math.min(SECTION_GRID_COLS - activeItem.w, activeItem.x));
-      const insertIndex = others.findIndex((item) => activePreferredX < (item.x + item.w));
-      if (insertIndex >= 0) {
-        sorted = [...others.slice(0, insertIndex), activeItem, ...others.slice(insertIndex)];
-      } else {
-        sorted = [...others, activeItem];
-      }
+  const activeItem = activeItemId ? (incomingById.get(activeItemId) || previousById.get(activeItemId)) : null;
+  const orderedIds = (() => {
+    if (!activeItem || !activeItemId) return sortedIds;
+    const others = sortedIds.filter((id) => id !== activeItemId);
+    const activePreferredX = Math.max(0, Math.min(SECTION_GRID_COLS - activeItem.w, activeItem.x));
+    const insertIndex = others.findIndex((id) => {
+      const item = incomingById.get(id) || previousById.get(id);
+      if (!item) return false;
+      return activePreferredX < (item.x + item.w);
+    });
+    if (insertIndex >= 0) {
+      return [...others.slice(0, insertIndex), activeItemId, ...others.slice(insertIndex)];
     }
-  }
+    return [...others, activeItemId];
+  })();
 
-  let cursor = 0;
+  let cursorX = 0;
   const placed: DashboardLayoutItem[] = [];
-  for (const item of sorted) {
-    const preferredX = Math.max(0, Math.min(SECTION_GRID_COLS - item.w, item.x));
-    const nextX = Math.max(cursor, preferredX);
-    if (nextX + item.w > SECTION_GRID_COLS) {
+  for (const id of orderedIds) {
+    const item = incomingById.get(id) || previousById.get(id);
+    if (!item) continue;
+    const width = Math.max(1, Math.min(SECTION_GRID_COLS, item.w));
+    const height = Math.max(1, item.h);
+    if (cursorX + width > SECTION_GRID_COLS) {
       const fallback = (section.layout || [])
         .map((existing) => normalizeLayoutItem(existing))
         .filter((existing) => section.widgets.some((widget) => widget.id === existing.i))
@@ -252,10 +271,12 @@ const resolveSequentialLayout = (
     }
     placed.push(normalizeLayoutItem({
       ...item,
-      x: nextX,
+      w: width,
+      h: height,
+      x: cursorX,
       y: 0,
     }));
-    cursor = nextX + item.w;
+    cursorX += width;
   }
 
   return placed.sort((a, b) => a.x - b.x);
@@ -270,6 +291,7 @@ const WidgetCard = ({
   readOnly = false,
   builderMode = false,
   isRefreshing = false,
+  shouldSuppressEditClick,
   onEdit,
   onDuplicate,
   onDelete,
@@ -282,6 +304,7 @@ const WidgetCard = ({
   readOnly?: boolean;
   builderMode?: boolean;
   isRefreshing?: boolean;
+  shouldSuppressEditClick?: () => boolean;
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -303,6 +326,7 @@ const WidgetCard = ({
   const forceMinHeight = readOnly;
   const handleCardClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (readOnly) return;
+    if (shouldSuppressEditClick?.()) return;
     const target = event.target as HTMLElement | null;
     if (!target) return;
     if (target.closest(".widget-resize-handle,button,input,textarea,select,a,[role='button']")) {
@@ -481,11 +505,15 @@ const SectionBlock = ({
   const [editingTitle, setEditingTitle] = useState(false);
   const [isExternalDragOver, setIsExternalDragOver] = useState(false);
   const [isCatalogDragActive, setIsCatalogDragActive] = useState(false);
+  const [catalogDragPayload, setCatalogDragPayload] = useState<NewWidgetDragPayload | null>(null);
   const [externalDropPreview, setExternalDropPreview] = useState<Pick<DashboardLayoutItem, "x" | "y" | "w" | "h"> | null>(null);
   const isEditing = !readOnly;
   const isSectionTitleVisible = section.showTitle !== false;
   const { containerRef, width } = useContainerWidth({ initialWidth: 1280 });
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const suppressEditClickUntilRef = useRef(0);
+  const draggingItemIdRef = useRef<string | undefined>(undefined);
+  const externalDropStabilizeUntilRef = useRef(0);
   const sectionLayoutById = useMemo(() => toLayoutById(section), [section]);
   const sectionRglLayout = useMemo<Layout>(
     () => section.widgets.map((widget) => {
@@ -534,9 +562,10 @@ const SectionBlock = ({
   useEffect(() => {
     if (readOnly) return undefined;
     const handleCatalogDragState = (event: Event) => {
-      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+      const detail = (event as CustomEvent<{ active?: boolean; payload?: NewWidgetDragPayload }>).detail;
       const active = !!detail?.active;
       setIsCatalogDragActive(active);
+      setCatalogDragPayload(active ? (detail?.payload || null) : null);
       if (!active) {
         setIsExternalDragOver(false);
         setExternalDropPreview(null);
@@ -547,6 +576,10 @@ const SectionBlock = ({
       window.removeEventListener(NEW_WIDGET_DRAG_STATE_EVENT, handleCatalogDragState as EventListener);
     };
   }, [readOnly]);
+
+  const resolveIncomingDragPayload = (dataTransfer?: DataTransfer | null): NewWidgetDragPayload | null => (
+    parseNewWidgetDragPayload(dataTransfer) || catalogDragPayload
+  );
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="group/section">
@@ -630,6 +663,27 @@ const SectionBlock = ({
             setExternalDropPreview(null);
           }
         }}
+        onDragOver={(event) => {
+          if (readOnly) return;
+          const payload = resolveIncomingDragPayload(event.dataTransfer);
+          if (!payload) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          const catalog = payload.preferredWidgetType
+            ? getWidgetCatalogByType(payload.preferredWidgetType)
+            : getWidgetCatalogByVisualization(payload.widgetType);
+          const gridRect = gridRef.current?.getBoundingClientRect();
+          const dropX = gridRect
+            ? getDropXFromClientPoint(event.clientX, gridRect, width, catalog.minW)
+            : 0;
+          setIsExternalDragOver(true);
+          setExternalDropPreview({
+            x: dropX,
+            y: 0,
+            w: catalog.minW,
+            h: catalog.minH,
+          });
+        }}
       >
         {isEditing && (
           <div className="builder-grid-guides pointer-events-none absolute inset-1.5 z-0 grid grid-cols-6 gap-4">
@@ -642,6 +696,7 @@ const SectionBlock = ({
         <GridLayout
           innerRef={gridRef}
           width={width}
+          compactor={horizontalCompactor}
           className={cn(
             "builder-section-grid relative z-10",
             isEditing && "builder-section-grid--edit",
@@ -685,7 +740,7 @@ const SectionBlock = ({
             defaultItem: { w: 1, h: 1 },
           }}
           onDropDragOver={(event) => {
-            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+            const payload = resolveIncomingDragPayload(event.dataTransfer);
             if (!payload) return false;
             setIsExternalDragOver(true);
             const catalog = payload.preferredWidgetType
@@ -705,7 +760,9 @@ const SectionBlock = ({
             return { w: catalog.minW, h: catalog.minH };
           }}
           onDrop={(_layout, item, event) => {
-            const payload = parseNewWidgetDragPayload((event as DragEvent).dataTransfer);
+            const payload = resolveIncomingDragPayload((event as DragEvent).dataTransfer);
+            draggingItemIdRef.current = undefined;
+            externalDropStabilizeUntilRef.current = Date.now() + 220;
             setIsExternalDragOver(false);
             setExternalDropPreview(null);
             if (!payload) return;
@@ -726,12 +783,23 @@ const SectionBlock = ({
               h: catalog.minH,
             }, payload.preferredWidgetType);
           }}
-          onLayoutChange={(nextLayout) => onLayoutChange(nextLayout)}
-          onDragStart={() => {
+          onLayoutChange={(nextLayout) => {
+            if (!draggingItemIdRef.current && Date.now() < externalDropStabilizeUntilRef.current) return;
+            onLayoutChange(nextLayout, draggingItemIdRef.current);
+          }}
+          onDragStart={(_layout, oldItem, newItem) => {
+            externalDropStabilizeUntilRef.current = 0;
+            draggingItemIdRef.current = newItem?.i || oldItem?.i || undefined;
+            suppressEditClickUntilRef.current = Date.now() + 250;
             setIsExternalDragOver(false);
             setExternalDropPreview(null);
           }}
+          onDrag={(_layout, oldItem, newItem) => {
+            draggingItemIdRef.current = newItem?.i || oldItem?.i || draggingItemIdRef.current;
+          }}
           onDragStop={(nextLayout, _oldItem, newItem) => {
+            draggingItemIdRef.current = undefined;
+            suppressEditClickUntilRef.current = Date.now() + 250;
             onLayoutCommit(nextLayout, newItem?.i);
           }}
           onResizeStop={(nextLayout, _oldItem, newItem) => onLayoutCommit(nextLayout, newItem?.i)}
@@ -753,6 +821,7 @@ const SectionBlock = ({
                 readOnly={readOnly}
                 builderMode={builderMode}
                 isRefreshing={refreshingWidgetIds.has(widget.id)}
+                shouldSuppressEditClick={() => Date.now() < suppressEditClickUntilRef.current}
                 onEdit={() => onEditWidget(widget)}
                 onDelete={() => onDeleteWidget(widget)}
                 onDuplicate={() => onDuplicateWidget(widget)}
@@ -786,7 +855,7 @@ const SectionBlock = ({
                           )}
                           aria-label={`Adicionar widget na coluna ${columnIndex + 1}`}
                           onDragEnter={(event) => {
-                            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+                            const payload = resolveIncomingDragPayload(event.dataTransfer);
                             if (!payload) return;
                             event.preventDefault();
                             const catalog = payload.preferredWidgetType
@@ -802,7 +871,7 @@ const SectionBlock = ({
                             });
                           }}
                           onDragOver={(event) => {
-                            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+                            const payload = resolveIncomingDragPayload(event.dataTransfer);
                             if (!payload) return;
                             event.preventDefault();
                             event.stopPropagation();
@@ -825,7 +894,7 @@ const SectionBlock = ({
                             setExternalDropPreview(null);
                           }}
                           onDrop={(event) => {
-                            const payload = parseNewWidgetDragPayload(event.dataTransfer);
+                            const payload = resolveIncomingDragPayload(event.dataTransfer);
                             if (!payload) return;
                             event.preventDefault();
                             event.stopPropagation();

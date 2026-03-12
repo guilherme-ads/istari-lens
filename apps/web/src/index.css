@@ -443,14 +443,14 @@
         transparent 16px
       ) !important;
     opacity: 1;
-    z-index: 8;
+    z-index: 30;
     box-shadow: inset 0 0 0 1px hsl(var(--accent) / 0.35);
     animation: builder-grid-pulse 0.9s ease-in-out infinite alternate;
   }
 
   .builder-section-external-drop-preview {
     position: absolute;
-    z-index: 8;
+    z-index: 30;
   }
 
   .builder-section-grid .react-resizable-handle {
