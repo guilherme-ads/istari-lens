@@ -11,13 +11,6 @@ import { ArrowUpDown, Download, ChevronLeft, ChevronRight, TrendingUp, TrendingD
 import type { DashboardWidget } from "@/types/dashboard";
 import { api, type ApiDashboardWidgetDataResponse, type ApiQuerySpec } from "@/lib/api";
 
-const tooltipStyle = {
-  borderRadius: 8,
-  border: "1px solid hsl(214, 20%, 88%)",
-  fontSize: 12,
-  boxShadow: "0 4px 12px -2px rgba(0,0,0,0.08)",
-};
-
 const aggLabelMap = {
   count: "CONTAGEM",
   distinct_count: "CONTAGEM ÚNICA",
@@ -1782,11 +1775,34 @@ export const WidgetRenderer = ({
               tickFormatter={(value) => formatChartValueCompact(value)}
             />
             <Tooltip
-              contentStyle={tooltipStyle}
-              labelFormatter={(label) => {
-                return formatLineTooltipLabel(label);
+              content={(props) => {
+                const payload = (props.payload || []) as Array<{ value?: unknown; name?: unknown; color?: string; dataKey?: unknown }>;
+                const points = payload.filter((item) => item && item.value !== undefined && item.value !== null);
+                if (!props.active || points.length === 0) return null;
+                return (
+                  <div
+                    className="min-w-[160px] rounded-xl border border-border/60 bg-[hsl(var(--card)/0.72)] px-3 py-2 shadow-xl backdrop-blur-md"
+                    style={{ boxShadow: "0 14px 30px -16px rgba(2,6,23,0.65)" }}
+                  >
+                    <p className="text-[11px] font-semibold text-foreground/95">{formatLineTooltipLabel(props.label)}</p>
+                    <div className="mt-1 space-y-1">
+                      {points.map((item, index) => {
+                        const seriesKey = String(item.dataKey || item.name || "");
+                        const seriesLabel = lineSeriesLabelByKey[seriesKey] || String(item.name || seriesKey);
+                        return (
+                          <div key={`${seriesKey}-${index}`} className="flex items-center justify-between gap-3 text-[11px]">
+                            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color || chartPalette[index % chartPalette.length] }} />
+                              {seriesLabel}
+                            </span>
+                            <span className="font-semibold tabular-nums text-foreground">{formatChartValueFull(item.value)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
               }}
-              formatter={(value, name) => [formatChartValueCompact(value), lineSeriesLabelByKey[String(name)] || String(name)]}
             />
             {lineSeriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: 10 }} />}
             {lineSeriesKeys.map((seriesKey, index) => (
