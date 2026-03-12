@@ -389,9 +389,6 @@ const WidgetCard = ({
               <p className={cn("truncate font-semibold", isNarrowWidget ? "text-xs" : "text-sm")}>
                 {displayWidget.title || "Sem titulo"}
               </p>
-              {!isNarrowWidget && displayWidget.props.widget_type !== "line" && (
-                <p className="truncate text-[11px] text-muted-foreground">{displayWidget.props.view_name}</p>
-              )}
             </div>
             {!readOnly && (
               <div className={actionGroupClass}>

@@ -508,14 +508,10 @@ const DashboardViewPage = () => {
       setAppliedFilters([]);
       return;
     }
-    const temporalColumnNames = new Set(
-      effectiveColumns.filter((column) => normalizeSemanticColumnType(column.type) === "temporal").map((column) => column.name),
-    );
     const nextDrafts: DraftGlobalFilter[] = [];
     const nextApplied: AppliedGlobalFilter[] = [];
     visibleNativeFilters.forEach((filter, index) => {
       if (!filter.column) return;
-      const isTemporal = temporalColumnNames.has(filter.column);
       const relativePreset = typeof filter.value === "object" && filter.value !== null && "relative" in filter.value
         ? (String((filter.value as Record<string, unknown>).relative) as RelativeDatePreset)
         : undefined;
@@ -533,7 +529,7 @@ const DashboardViewPage = () => {
         column: filter.column,
         op: op,
         value,
-        dateValue: isTemporal && !isBetween && !relativePreset && typeof filter.value === "string" ? new Date(filter.value) : undefined,
+        dateValue: !isBetween && !relativePreset && typeof filter.value === "string" ? new Date(filter.value) : undefined,
         dateRange: isBetween ? { from, to } : undefined,
         relativePreset: relativePreset || "last_7_days",
       });
@@ -541,7 +537,7 @@ const DashboardViewPage = () => {
         nextApplied.push({ column: filter.column, op: filter.op as FilterOp, value: "" });
         return;
       }
-      if (isTemporal && relativePreset) {
+      if (relativePreset) {
         nextApplied.push({
           column: filter.column,
           op: "between",
@@ -549,7 +545,7 @@ const DashboardViewPage = () => {
         });
         return;
       }
-      if (isTemporal && isBetween && Array.isArray(filter.value)) {
+      if (isBetween && Array.isArray(filter.value)) {
         nextApplied.push({
           column: filter.column,
           op: "between",
@@ -575,7 +571,7 @@ const DashboardViewPage = () => {
     });
     setDraftFilters(nextDrafts.length > 0 ? nextDrafts : [{ id: `gf-${Date.now()}`, column: "", op: "eq", value: "" }]);
     setAppliedFilters(nextApplied);
-  }, [dashboard?.id, dashboard?.updatedAt, effectiveColumns]);
+  }, [dashboard?.id, dashboard?.updatedAt]);
 
   const canLoadWidgetData = shouldUsePublicApi ? !!publicDashboardQuery.data : hasToken;
   const kpiWidgetIds = useMemo(

@@ -95,6 +95,7 @@ export interface WidgetConfig {
   line_show_grid?: boolean;
   bar_data_labels_enabled?: boolean;
   bar_show_grid?: boolean;
+  bar_show_percent_of_total?: boolean;
   line_data_labels_percent?: number;
   line_label_window?: number;
   line_label_min_gap?: number;
@@ -295,6 +296,9 @@ export const createDefaultWidgetConfig = (params: {
   }
 
   if (type === "bar" || type === "column" || type === "donut") {
+    const defaultDimension = type === "column"
+      ? (temporal?.name ? `__time_month__:${temporal.name}` : (categorical?.name || fallback?.name || ""))
+      : (categorical?.name || fallback?.name || "");
     return {
       widget_type: type,
       view_name: viewName,
@@ -303,6 +307,7 @@ export const createDefaultWidgetConfig = (params: {
       visual_palette: "default",
       bar_data_labels_enabled: type === "bar" || type === "column" ? false : undefined,
       bar_show_grid: type === "bar" || type === "column" ? false : undefined,
+      bar_show_percent_of_total: type === "bar" || type === "column" ? false : undefined,
       donut_show_legend: type === "donut" ? true : undefined,
       donut_data_labels_enabled: type === "donut" ? false : undefined,
       donut_data_labels_min_percent: type === "donut" ? 6 : undefined,
@@ -311,9 +316,13 @@ export const createDefaultWidgetConfig = (params: {
       donut_group_others_top_n: type === "donut" ? 3 : undefined,
       size: { width: 1, height: 1 },
       metrics: [{ op: "count", column: fallback?.name }],
-      dimensions: [categorical?.name || fallback?.name || ""],
+      dimensions: [defaultDimension],
       filters: [],
-      order_by: [],
+      order_by: type === "bar"
+        ? [{ metric_ref: "m0", direction: "desc" }]
+        : type === "column"
+          ? [{ column: defaultDimension, direction: "asc" }]
+        : [],
     };
   }
 

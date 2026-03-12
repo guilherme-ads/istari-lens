@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ElementType, type ReactNode } from "react";
 import { ArrowUpDown, BarChart3, Calendar, ChevronDown, Columns3, Filter, Hash, LineChart, MousePointer, Palette, PieChart, Sparkles, Table2, Type, Wand2, X, Trash2, Plus } from "lucide-react";
+import type { DateRange } from "react-day-picker";
 
 import type { DashboardWidget, MetricOp, WidgetFilter } from "@/types/dashboard";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,8 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as DatePicker } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 
 export interface BuilderRightPanelProps {
@@ -45,20 +48,59 @@ const metricLabelByOp: Record<MetricOp, string> = {
   min: "MÍNIMO",
   max: "MÁXIMO",
 };
-const filterOps: Array<{ value: WidgetFilter["op"]; label: string }> = [
+const commonFilterOps: Array<{ value: WidgetFilter["op"]; label: string }> = [
   { value: "eq", label: "=" },
   { value: "neq", label: "!=" },
   { value: "gt", label: ">" },
   { value: "lt", label: "<" },
   { value: "gte", label: ">=" },
   { value: "lte", label: "<=" },
-  { value: "contains", label: "contem" },
-  { value: "between", label: "entre" },
   { value: "in", label: "in" },
   { value: "not_in", label: "not in" },
+  { value: "contains", label: "contem" },
+  { value: "between", label: "entre" },
   { value: "is_null", label: "nulo" },
   { value: "not_null", label: "nao nulo" },
 ];
+type TemporalFilterOpUi = WidgetFilter["op"] | "__relative__";
+const temporalFilterOps: Array<{ value: TemporalFilterOpUi; label: string }> = [
+  { value: "eq", label: "=" },
+  { value: "neq", label: "!=" },
+  { value: "gt", label: ">" },
+  { value: "lt", label: "<" },
+  { value: "gte", label: ">=" },
+  { value: "lte", label: "<=" },
+  { value: "in", label: "in" },
+  { value: "not_in", label: "not in" },
+  { value: "between", label: "entre datas" },
+  { value: "__relative__", label: "relativa" },
+  { value: "is_null", label: "nulo" },
+  { value: "not_null", label: "nao nulo" },
+];
+const nullOps = new Set<WidgetFilter["op"]>(["is_null", "not_null"]);
+const listOps = new Set<WidgetFilter["op"]>(["in", "not_in"]);
+const relativeDateOptions = [
+  { value: "today", label: "Hoje" },
+  { value: "yesterday", label: "Ontem" },
+  { value: "last_7_days", label: "Ultimos 7 dias" },
+  { value: "last_30_days", label: "Ultimos 30 dias" },
+  { value: "this_year", label: "Este ano" },
+  { value: "this_month", label: "Este mes" },
+  { value: "last_month", label: "Mes passado" },
+] as const;
+
+const dateToApi = (date: Date) => date.toISOString().slice(0, 10);
+
+const parseDateValue = (value: unknown): Date | undefined => {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const raw = value.trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00`) : new Date(raw);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date;
+};
+
+const formatDateLabel = (date: Date) =>
+  new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 
 const paletteByName: Record<"default" | "warm" | "cool" | "mono" | "vivid", string[]> = {
   default: ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5"],
@@ -117,6 +159,26 @@ const normalizeColumnType = (rawType: string): "numeric" | "temporal" | "text" |
   if (value.includes("bool")) return "boolean";
   return "text";
 };
+
+const parseTemporalDimensionToken = (value: string): { column: string; granularity: "day" | "month" | "week" | "weekday" | "hour" } | null => {
+  if (value.startsWith("__time_day__:")) return { column: value.slice("__time_day__:".length), granularity: "day" };
+  if (value.startsWith("__time_month__:")) return { column: value.slice("__time_month__:".length), granularity: "month" };
+  if (value.startsWith("__time_week__:")) return { column: value.slice("__time_week__:".length), granularity: "week" };
+  if (value.startsWith("__time_weekday__:")) return { column: value.slice("__time_weekday__:".length), granularity: "weekday" };
+  if (value.startsWith("__time_hour__:")) return { column: value.slice("__time_hour__:".length), granularity: "hour" };
+  return null;
+};
+
+const buildTemporalDimensionToken = (column: string, granularity: "day" | "month" | "week" | "weekday" | "hour"): string =>
+  `__time_${granularity}__:${column}`;
+
+const temporalDimensionGranularityOptions: Array<{ value: "day" | "month" | "week" | "weekday" | "hour"; label: string }> = [
+  { value: "day", label: "Dia" },
+  { value: "month", label: "Mês" },
+  { value: "week", label: "Semana" },
+  { value: "weekday", label: "Dia da semana" },
+  { value: "hour", label: "Hora" },
+];
 
 const inferColumns = (widget: DashboardWidget): Array<{ name: string; type: string }> => {
   const names = new Set<string>();
@@ -233,7 +295,7 @@ const SentenceTokenSelect = ({
   value: string;
   onChange: (value: string) => void;
   options: Array<{ value: string; label: string; disabled?: boolean }>;
-  tone: "agg" | "column" | "time";
+  tone: "agg" | "column" | "time" | "segment";
   placeholder?: string;
   showCalendarIcon?: boolean;
 }) => {
@@ -241,7 +303,9 @@ const SentenceTokenSelect = ({
     ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
     : tone === "column"
       ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-      : "border-sky-500/40 bg-sky-500/10 text-sky-300";
+      : tone === "time"
+        ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+        : "border-orange-500/40 bg-orange-500/10 text-orange-300";
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className={cn("h-7 w-auto min-w-[92px] rounded-md px-1.5 text-[11px] font-semibold", toneClass)}>
@@ -381,8 +445,40 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
   const kpiSentencePreview = isCompositeSentence
     ? `${metricLabelByOp[kpiSentenceFinalAgg]} de (${metricLabelByOp[kpiSentenceBaseAgg]} de ${kpiSentenceColumn === "__none__" ? "*" : kpiSentenceColumn} por ${kpiPreviewTimeColumn}[${kpiGranularityLabelByValue[kpiPreviewTimeGranularity]}])`
     : `${metricLabelByOp[kpiSentenceBaseAgg]} de ${kpiSentenceColumn === "__none__" ? "*" : kpiSentenceColumn}`;
+  const barSentenceAgg = metric.op as MetricOp;
+  const barSentenceColumn = metric.column || "__none__";
+  const barAllowedColumns = countLikeOps.has(barSentenceAgg) ? resolvedColumns : numericColumns;
+  const barSentenceColumnOptions = [
+    ...(countLikeOps.has(barSentenceAgg) ? [{ value: "__none__", label: "sem coluna" }] : []),
+    ...barAllowedColumns.map((column) => ({
+      value: column.name,
+      label: column.name,
+    })),
+  ];
+  const barSentencePreview = `${metricLabelByOp[barSentenceAgg]} de ${barSentenceColumn === "__none__" ? "*" : barSentenceColumn}`;
+  const lineMetrics = (draft.config.metrics.length > 0
+    ? draft.config.metrics
+    : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }]).slice(0, 2);
+  const primaryLineMetric = lineMetrics[0] || { op: "count" as const, column: undefined, line_y_axis: "left" as const };
+  const primaryLineMetricColumn = primaryLineMetric.column || "__none__";
+  const primaryLineAllowedColumns = countLikeOps.has(primaryLineMetric.op) ? resolvedColumns : numericColumns;
   const currentOrder = draft.config.order_by[0];
   const orderTargetValue = currentOrder?.metric_ref ? "__metric__" : currentOrder?.column || "__none__";
+  const currentDimensionRaw = draft.config.dimensions[0] || "";
+  const parsedTemporalDimension = parseTemporalDimensionToken(currentDimensionRaw);
+  const barLikeDimensionColumn = parsedTemporalDimension?.column || currentDimensionRaw;
+  const barLikeDimensionGranularity = parsedTemporalDimension?.granularity || "day";
+  const barLikeDimensionIsTemporal = !!barLikeDimensionColumn && temporalColumns.some((column) => column.name === barLikeDimensionColumn);
+  const barLikeDimensionPreview = barLikeDimensionColumn
+    ? `${barLikeDimensionColumn}${barLikeDimensionIsTemporal ? `[${barLikeDimensionGranularity}]` : ""}`
+    : "Sem dimensao";
+  const lineTimeColumnValue = draft.config.time?.column || "__none__";
+  const lineTimeGranularityValue = draft.config.time?.granularity || "day";
+  const lineSeriesDimensionValue = draft.config.dimensions[0] || "__none__";
+  const lineDimensionPreview = lineTimeColumnValue === "__none__"
+    ? "Sem tempo"
+    : `${lineTimeColumnValue}[${lineTimeGranularityValue}]${lineSeriesDimensionValue !== "__none__" ? ` segmentado por ${lineSeriesDimensionValue}` : ""}`;
+  const lineSentencePreview = `${metricLabelByOp[primaryLineMetric.op]} de ${primaryLineMetricColumn === "__none__" ? "*" : primaryLineMetricColumn} por ${lineDimensionPreview}`;
 
   const setConfig = (patch: Partial<DashboardWidget["config"]>) => {
     setDraft((current) => {
@@ -401,6 +497,14 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
     const nextMetrics = [...(draft.config.metrics || [{ op: "count", column: resolvedColumns[0]?.name }])];
     nextMetrics[0] = { ...nextMetrics[0], ...patch };
     setConfig({ metrics: nextMetrics });
+  };
+  const setLineMetrics = (nextMetrics: Array<{ op: MetricOp; column?: string; alias?: string; line_y_axis?: "left" | "right" }>) => {
+    setConfig({
+      metrics: nextMetrics.map((item, index) => ({
+        ...item,
+        line_y_axis: item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right",
+      })),
+    });
   };
   const setKpiSentenceBaseAgg = (value: string) => {
     const nextAgg = value as MetricOp;
@@ -447,6 +551,18 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
       return;
     }
     setMetric({ column: nextColumn });
+  };
+  const setBarSentenceAgg = (value: string) => {
+    const nextAgg = value as MetricOp;
+    const nextColumn = countLikeOps.has(nextAgg)
+      ? metric.column
+      : (metric.column && numericColumns.some((column) => column.name === metric.column)
+        ? metric.column
+        : numericColumns[0]?.name);
+    setMetric({ op: nextAgg, column: nextColumn });
+  };
+  const setBarSentenceColumn = (value: string) => {
+    setMetric({ column: value === "__none__" ? undefined : value });
   };
   const setKpiSentenceTimeToken = (value: string) => {
     if (!isCompositeSentence || !compositeMetric) return;
@@ -572,13 +688,57 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
         type: normalizedDraft.config.widget_type,
         props: normalizedDraft.config,
       };
+    } else if (normalizedDraft.config.widget_type === "line") {
+      const draftLineMetrics = (normalizedDraft.config.metrics.length > 0
+        ? normalizedDraft.config.metrics
+        : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }]).slice(0, 2);
+      const lineLabelWindow = [3, 5, 7].includes(Number(normalizedDraft.config.line_label_window))
+        ? Number(normalizedDraft.config.line_label_window)
+        : 3;
+      normalizedDraft = {
+        ...normalizedDraft,
+        config: {
+          ...normalizedDraft.config,
+          metrics: draftLineMetrics.map((item, index) => ({
+            op: item.op,
+            column: item.column,
+            alias: item.alias,
+            line_y_axis: item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right",
+          })),
+          line_show_grid: !!normalizedDraft.config.line_show_grid,
+          line_data_labels_percent: Math.max(25, Math.min(100, Number(normalizedDraft.config.line_data_labels_percent) || 60)),
+          line_label_window: lineLabelWindow,
+          line_label_min_gap: Math.max(1, Math.trunc(Number(normalizedDraft.config.line_label_min_gap) || 2)),
+          line_label_mode: normalizedDraft.config.line_label_mode === "peak" || normalizedDraft.config.line_label_mode === "valley"
+            ? normalizedDraft.config.line_label_mode
+            : "both",
+        },
+      };
+      normalizedDraft = {
+        ...normalizedDraft,
+        type: normalizedDraft.config.widget_type,
+        props: normalizedDraft.config,
+      };
     }
     onUpdate(normalizedDraft);
     onClose();
   };
 
+  const handlePanelKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.isComposing) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    const tagName = target.tagName.toLowerCase();
+    if (tagName === "textarea") return;
+    if (target.isContentEditable) return;
+    if (target.closest("button,[role='button'],[role='combobox'],[data-radix-select-trigger]")) return;
+    event.preventDefault();
+    save();
+  };
+
   return (
-    <aside className="h-full border-l border-border/60 bg-[hsl(var(--card)/0.28)] flex flex-col">
+    <aside className="h-full border-l border-border/60 bg-[hsl(var(--card)/0.28)] flex flex-col" onKeyDownCapture={handlePanelKeyDown}>
       <div className="h-14 border-b border-border/60 px-3 flex items-center justify-between gap-2 shrink-0 bg-gradient-to-b from-[hsl(var(--card)/0.65)] to-[hsl(var(--card)/0.4)]">
         <div className="min-w-0 flex items-center gap-2">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-accent/20 bg-accent/10 text-accent">
@@ -849,65 +1009,329 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
-                    <Select value={metric.op} onValueChange={(value) => setMetric({ op: value as MetricOp })}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>{metricOps.map((op) => <SelectItem key={op} value={op}>{op}</SelectItem>)}</SelectContent>
-                    </Select>
-                    <Select value={metric.column || "__none__"} onValueChange={(value) => setMetric({ column: value === "__none__" ? undefined : value })}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">Sem coluna</SelectItem>
-                        {(countLikeOps.has(metric.op) ? resolvedColumns : numericColumns).map((column) => (
-                          <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  isLineWidget ? (
+                    <div className="space-y-2">
+                      <div className="rounded-lg border border-border/60 bg-background/70 p-2.5">
+                        <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                          <SentenceTokenSelect
+                            tone="agg"
+                            value={primaryLineMetric.op}
+                            onChange={(value) => {
+                              const nextOp = value as MetricOp;
+                              const nextColumn = countLikeOps.has(nextOp)
+                                ? primaryLineMetric.column
+                                : (primaryLineMetric.column && numericColumns.some((column) => column.name === primaryLineMetric.column)
+                                  ? primaryLineMetric.column
+                                  : numericColumns[0]?.name);
+                              const nextMetrics = [...lineMetrics];
+                              nextMetrics[0] = { ...primaryLineMetric, op: nextOp, column: nextColumn };
+                              setLineMetrics(nextMetrics);
+                            }}
+                            options={metricOps.map((op) => ({
+                              value: op,
+                              label: metricLabelByOp[op],
+                              disabled: (op === "sum" || op === "avg" || op === "min" || op === "max") && numericColumns.length === 0,
+                            }))}
+                          />
+                          <span>de</span>
+                          <SentenceTokenSelect
+                            tone="column"
+                            value={primaryLineMetricColumn}
+                            onChange={(value) => {
+                              const nextMetrics = [...lineMetrics];
+                              nextMetrics[0] = { ...primaryLineMetric, column: value === "__none__" ? undefined : value };
+                              setLineMetrics(nextMetrics);
+                            }}
+                            options={[
+                              ...(countLikeOps.has(primaryLineMetric.op) ? [{ value: "__none__", label: "sem coluna" }] : []),
+                              ...primaryLineAllowedColumns.map((column) => ({ value: column.name, label: column.name })),
+                            ]}
+                            placeholder="coluna"
+                          />
+                          <span>por</span>
+                          <SentenceTokenSelect
+                            tone="time"
+                            value={lineTimeColumnValue}
+                            onChange={(value) => setConfig({ time: { column: value === "__none__" ? "" : value, granularity: draft.config.time?.granularity || "day" } })}
+                            options={[
+                              { value: "__none__", label: "sem tempo" },
+                              ...temporalColumns.map((column) => ({ value: column.name, label: column.name })),
+                            ]}
+                            placeholder="tempo"
+                            showCalendarIcon
+                          />
+                          {lineTimeColumnValue !== "__none__" && (
+                            <>
+                              <span>como</span>
+                              <SentenceTokenSelect
+                                tone="time"
+                                value={lineTimeGranularityValue}
+                                onChange={(value) =>
+                                  setConfig({
+                                    time: {
+                                      column: draft.config.time?.column || "",
+                                      granularity: value as "day" | "week" | "month" | "hour" | "timestamp",
+                                    },
+                                  })}
+                                options={[
+                                  { value: "day", label: "dia" },
+                                  { value: "week", label: "semana" },
+                                  { value: "month", label: "mês" },
+                                  { value: "hour", label: "hora" },
+                                  { value: "timestamp", label: "instante" },
+                                ]}
+                              />
+                            </>
+                          )}
+                          <span>segmentado por</span>
+                          <SentenceTokenSelect
+                            tone="segment"
+                            value={lineSeriesDimensionValue}
+                            onChange={(value) => setConfig({ dimensions: value === "__none__" ? [] : [value] })}
+                            options={[
+                              { value: "__none__", label: "sem legenda" },
+                              ...categoricalColumns.map((column) => ({ value: column.name, label: column.name })),
+                            ]}
+                            placeholder="legenda"
+                          />
+                        </div>
+                      </div>
+                      {lineMetrics.length > 1 && (
+                        <div className="space-y-1.5">
+                          <Label className="text-caption text-muted-foreground">Metricas adicionais</Label>
+                          {lineMetrics.slice(1).map((item, offsetIndex) => {
+                            const index = offsetIndex + 1;
+                            return (
+                              <div key={`line-metric-${index}`} className="grid grid-cols-[112px_minmax(0,1fr)_30px] gap-1.5 items-center">
+                          <Select
+                            value={item.op}
+                            onValueChange={(value) => {
+                              const nextOp = value as MetricOp;
+                              const nextColumn = countLikeOps.has(nextOp)
+                                ? item.column
+                                : (item.column && numericColumns.some((column) => column.name === item.column)
+                                  ? item.column
+                                  : numericColumns[0]?.name);
+                              const nextMetrics = [...lineMetrics];
+                              nextMetrics[index] = { ...item, op: nextOp, column: nextColumn };
+                              setLineMetrics(nextMetrics);
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {metricOps.map((op) => <SelectItem key={`line-op-${index}-${op}`} value={op}>{metricLabelByOp[op]}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={item.column || "__none__"}
+                            onValueChange={(value) => {
+                              const nextMetrics = [...lineMetrics];
+                              nextMetrics[index] = { ...item, column: value === "__none__" ? undefined : value };
+                              setLineMetrics(nextMetrics);
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
+                            <SelectContent>
+                              {item.op === "count" && <SelectItem value="__none__">contagem(*)</SelectItem>}
+                              {(countLikeOps.has(item.op) ? resolvedColumns : numericColumns).map((column) => (
+                                <SelectItem key={`line-col-${index}-${column.name}`} value={column.name}>{column.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => setLineMetrics(lineMetrics.filter((_, metricIndex) => metricIndex !== index))}
+                            disabled={lineMetrics.length <= 1}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-caption"
+                          onClick={() => setLineMetrics([...lineMetrics, { op: "count", column: undefined, line_y_axis: "right" }])}
+                          disabled={lineMetrics.length >= 2}
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />Adicionar metrica
+                        </Button>
+                      </div>
+                      <p className="text-caption text-muted-foreground">Preview: {lineSentencePreview}</p>
+                    </div>
+                  ) : isBarLikeWidget ? (
+                    <div className="space-y-2">
+                      <Label className="text-caption text-muted-foreground">Calculo</Label>
+                      <div className="rounded-lg border border-border/60 bg-background/70 p-2.5">
+                        <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                          <SentenceTokenSelect
+                            tone="agg"
+                            value={barSentenceAgg}
+                            onChange={setBarSentenceAgg}
+                            options={metricOps.map((op) => ({
+                              value: op,
+                              label: metricLabelByOp[op] || op,
+                              disabled: (op === "sum" || op === "avg" || op === "min" || op === "max") && numericColumns.length === 0,
+                            }))}
+                          />
+                          <span>de</span>
+                          <SentenceTokenSelect
+                            tone="column"
+                            value={barSentenceColumn}
+                            onChange={setBarSentenceColumn}
+                            options={barSentenceColumnOptions.length > 0
+                              ? barSentenceColumnOptions
+                              : [{ value: "__none__", label: "sem coluna disponivel", disabled: true }]}
+                          />
+                          <span>por</span>
+                          <SentenceTokenSelect
+                            tone={barLikeDimensionIsTemporal ? "time" : "column"}
+                            value={barLikeDimensionColumn || "__none__"}
+                            onChange={(value) => {
+                              if (value === "__none__") {
+                                setConfig({ dimensions: [] });
+                                return;
+                              }
+                              const isTemporal = temporalColumns.some((column) => column.name === value);
+                              const nextDimension = isTemporal ? buildTemporalDimensionToken(value, "day") : value;
+                              if (draft.config.widget_type === "column") {
+                                setConfig({
+                                  dimensions: [nextDimension],
+                                  order_by: [{ column: nextDimension, direction: "asc" }],
+                                });
+                                return;
+                              }
+                              setConfig({ dimensions: [nextDimension] });
+                            }}
+                            options={[
+                              { value: "__none__", label: "sem dimensao" },
+                              ...categoricalColumns.map((column) => ({ value: column.name, label: column.name })),
+                              ...temporalColumns.map((column) => ({ value: column.name, label: column.name })),
+                            ]}
+                            placeholder="dimensao"
+                            showCalendarIcon={barLikeDimensionIsTemporal}
+                          />
+                          {barLikeDimensionIsTemporal && (
+                            <>
+                              <span>como</span>
+                              <SentenceTokenSelect
+                                tone="time"
+                                value={barLikeDimensionGranularity}
+                                onChange={(value) => {
+                                  if (!barLikeDimensionColumn) return;
+                                  const nextDimension = buildTemporalDimensionToken(
+                                    barLikeDimensionColumn,
+                                    value as "day" | "month" | "week" | "weekday" | "hour",
+                                  );
+                                  if (draft.config.widget_type === "column") {
+                                    setConfig({
+                                      dimensions: [nextDimension],
+                                      order_by: [{ column: nextDimension, direction: "asc" }],
+                                    });
+                                    return;
+                                  }
+                                  setConfig({ dimensions: [nextDimension] });
+                                }}
+                                options={temporalDimensionGranularityOptions.map((option) => ({ value: option.value, label: option.label.toLowerCase() }))}
+                              />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-caption text-muted-foreground">Preview: {barSentencePreview} por {barLikeDimensionPreview}</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+                      <Select value={metric.op} onValueChange={(value) => setMetric({ op: value as MetricOp })}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>{metricOps.map((op) => <SelectItem key={op} value={op}>{op}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Select value={metric.column || "__none__"} onValueChange={(value) => setMetric({ column: value === "__none__" ? undefined : value })}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Sem coluna</SelectItem>
+                          {(countLikeOps.has(metric.op) ? resolvedColumns : numericColumns).map((column) => (
+                            <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )
                 )}
               </ConfigSection>
 
-              {(isCategoricalChart || isLineWidget) && (
+              {isDonutWidget && (
                 <ConfigSection title="Dimensao" icon={Hash} badge={draft.config.dimensions.length || undefined}>
-                  {isLineWidget ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Select value={draft.config.time?.column || "__none__"} onValueChange={(value) => setConfig({ time: { column: value === "__none__" ? "" : value, granularity: draft.config.time?.granularity || "day" } })}>
-                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Tempo" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Sem tempo</SelectItem>
-                            {temporalColumns.map((column) => <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <Select value={draft.config.time?.granularity || "day"} onValueChange={(value) => setConfig({ time: { column: draft.config.time?.column || "", granularity: value as "day" | "week" | "month" | "hour" | "timestamp" } })}>
-                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="day">Dia</SelectItem>
-                            <SelectItem value="week">Semana</SelectItem>
-                            <SelectItem value="month">Mês</SelectItem>
-                            <SelectItem value="hour">Hora</SelectItem>
-                            <SelectItem value="timestamp">Timestamp</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Select value={draft.config.dimensions[0] || "__none__"} onValueChange={(value) => setConfig({ dimensions: value === "__none__" ? [] : [value] })}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Legenda (series)" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Sem legenda</SelectItem>
-                          {categoricalColumns.map((column) => <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </>
-                  ) : (
+                  {
                     <Select value={draft.config.dimensions[0] || "__none__"} onValueChange={(value) => setConfig({ dimensions: value === "__none__" ? [] : [value] })}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Dimensão" /></SelectTrigger>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Dimensao" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__none__">Sem dimensão</SelectItem>
+                        <SelectItem value="__none__">Sem dimensao</SelectItem>
                         {categoricalColumns.map((column) => <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>)}
                         {temporalColumns.map((column) => <SelectItem key={`temporal-${column.name}`} value={column.name}>{column.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                  }
+                </ConfigSection>
+              )}
+
+              {(isBarLikeWidget || isLineWidget) && (
+                <ConfigSection title="Formatação" icon={Type} defaultOpen={false}>
+                  {isBarLikeWidget && (
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
+                      <Label className="text-caption text-muted-foreground">Alias da métrica</Label>
+                      <Input
+                        className="h-8 text-xs"
+                        value={metric.alias || ""}
+                        placeholder="Ex: Recargas"
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setMetric({ alias: value.trim() ? value : undefined });
+                        }}
+                      />
+                    </div>
                   )}
+                  {isLineWidget && (
+                    <div className="space-y-2">
+                      {lineMetrics.map((item, index) => (
+                        <div key={`line-alias-${index}`} className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
+                          <Label className="text-caption text-muted-foreground">Alias m{index + 1}</Label>
+                          <Input
+                            className="h-8 text-xs"
+                            value={item.alias || ""}
+                            placeholder={`Ex: Serie ${index + 1}`}
+                            onChange={(event) => {
+                              const nextMetrics = [...lineMetrics];
+                              nextMetrics[index] = { ...item, alias: event.target.value || undefined };
+                              setLineMetrics(nextMetrics);
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      className="h-8 text-xs"
+                      value={draft.config.kpi_prefix || ""}
+                      placeholder="Prefixo (ex: R$)"
+                      onChange={(event) => setConfig({ kpi_prefix: event.target.value || undefined })}
+                    />
+                    <Input
+                      className="h-8 text-xs"
+                      value={draft.config.kpi_suffix || ""}
+                      placeholder="Sufixo (ex: %)"
+                      onChange={(event) => setConfig({ kpi_suffix: event.target.value || undefined })}
+                    />
+                  </div>
                 </ConfigSection>
               )}
 
@@ -915,7 +1339,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                 <ConfigSection title="Ordenação" icon={ArrowUpDown} badge={currentOrder ? 1 : undefined}>
                   {isCategoricalChart ? (
                     <div className="space-y-2">
-                      <div className="grid grid-cols-[minmax(0,1fr)_88px] gap-2">
+                      <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2">
                         <Select
                           value={orderTargetValue}
                           onValueChange={(value) => {
@@ -976,7 +1400,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                       )}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-[minmax(0,1fr)_88px] gap-2">
+                    <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2">
                       <Select
                         value={currentOrder?.column || "__none__"}
                         onValueChange={(value) => {
@@ -1099,34 +1523,48 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                       </div>
                       <div className="flex items-center justify-between">
                         <Label className="text-caption text-muted-foreground">Mostrar rotulos de dados</Label>
-                        <Switch checked={!!draft.config.line_data_labels_enabled} onCheckedChange={(checked) => setConfig({ line_data_labels_enabled: checked })} />
+                        <Switch
+                          checked={!!draft.config.line_data_labels_enabled}
+                          onCheckedChange={(checked) =>
+                            setConfig({
+                              line_data_labels_enabled: checked,
+                              line_data_labels_percent: Math.max(25, Math.min(100, draft.config.line_data_labels_percent || 60)),
+                              line_label_window: [3, 5, 7].includes(Number(draft.config.line_label_window)) ? draft.config.line_label_window : 3,
+                              line_label_min_gap: Math.max(1, Number(draft.config.line_label_min_gap) || 2),
+                              line_label_mode: draft.config.line_label_mode || "both",
+                            })}
+                        />
                       </div>
                       <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-2">
                         <Label className="text-caption text-muted-foreground">Sensibilidade (%)</Label>
-                        <Input
-                          type="number"
-                          min={25}
-                          max={100}
-                          className="h-8 text-xs"
-                          value={draft.config.line_data_labels_percent ?? 60}
-                          onChange={(event) => {
-                            const nextValue = Math.max(25, Math.min(100, Number(event.target.value) || 60));
-                            setConfig({ line_data_labels_percent: nextValue });
-                          }}
+                        <Select
+                          value={String(draft.config.line_data_labels_percent ?? 60)}
+                          onValueChange={(value) => setConfig({ line_data_labels_percent: Math.max(25, Math.min(100, Number(value) || 60)) })}
                           disabled={!draft.config.line_data_labels_enabled}
-                        />
+                        >
+                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="25">25%</SelectItem>
+                            <SelectItem value="50">50%</SelectItem>
+                            <SelectItem value="75">75%</SelectItem>
+                            <SelectItem value="100">100%</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-2">
                         <Label className="text-caption text-muted-foreground">Janela (pontos)</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={12}
-                          className="h-8 text-xs"
-                          value={draft.config.line_label_window ?? 3}
-                          onChange={(event) => setConfig({ line_label_window: Math.max(1, Math.min(12, Math.trunc(Number(event.target.value) || 1))) })}
+                        <Select
+                          value={String(([3, 5, 7].includes(Number(draft.config.line_label_window)) ? draft.config.line_label_window : 3))}
+                          onValueChange={(value) => setConfig({ line_label_window: Number(value) as 3 | 5 | 7 })}
                           disabled={!draft.config.line_data_labels_enabled}
-                        />
+                        >
+                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="3">3</SelectItem>
+                            <SelectItem value="5">5</SelectItem>
+                            <SelectItem value="7">7</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-2">
                         <Label className="text-caption text-muted-foreground">Gap minimo</Label>
@@ -1167,6 +1605,10 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                       <div className="flex items-center justify-between">
                         <Label className="text-caption text-muted-foreground">Mostrar rótulos de dados</Label>
                         <Switch checked={draft.config.bar_data_labels_enabled !== false} onCheckedChange={(checked) => setConfig({ bar_data_labels_enabled: checked })} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-caption text-muted-foreground">Mostrar % junto ao valor</Label>
+                        <Switch checked={!!draft.config.bar_show_percent_of_total} onCheckedChange={(checked) => setConfig({ bar_show_percent_of_total: checked })} />
                       </div>
                     </>
                   )}
@@ -1251,23 +1693,176 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                 </div>
                 {(draft.config.filters || []).map((filter, index) => (
                   <div key={`filter-${index}`} className="rounded-xl border border-border/60 bg-background/45 p-2 space-y-2">
-                    <div className="grid grid-cols-[minmax(0,1fr)_120px_30px] gap-1.5">
-                      <Select value={filter.column || "__none__"} onValueChange={(value) => updateFilter(index, { column: value === "__none__" ? "" : value })}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Sem coluna</SelectItem>
-                          {resolvedColumns.map((column) => <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Select value={filter.op} onValueChange={(value) => updateFilter(index, { op: value as WidgetFilter["op"] })}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>{filterOps.map((op) => <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>)}</SelectContent>
-                      </Select>
-                      <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => removeFilter(index)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                    </div>
-                    {filter.op !== "is_null" && filter.op !== "not_null" && (
-                      <Input className="h-8 text-xs" value={String(filter.value ?? "")} onChange={(event) => updateFilter(index, { value: event.target.value })} placeholder="Valor" />
-                    )}
+                    {(() => {
+                      const selectedColumn = resolvedColumns.find((column) => column.name === filter.column);
+                      const isTemporal = normalizeColumnType(selectedColumn?.type || "") === "temporal";
+                      const operatorOptions = isTemporal ? temporalFilterOps : commonFilterOps;
+                      const isRelativeTemporalFilter = isTemporal
+                        && filter.op === "between"
+                        && typeof filter.value === "object"
+                        && !!filter.value
+                        && !Array.isArray(filter.value)
+                        && "relative" in (filter.value as Record<string, unknown>);
+                      const temporalOpUiValue = isRelativeTemporalFilter ? "__relative__" : filter.op;
+                      const scalarValue = Array.isArray(filter.value) ? String(filter.value[0] || "") : String(filter.value || "");
+                      const listValue = Array.isArray(filter.value)
+                        ? filter.value.map((item) => String(item)).join(", ")
+                        : String(filter.value || "");
+                      const betweenValues = Array.isArray(filter.value)
+                        ? [String(filter.value[0] || ""), String(filter.value[1] || "")]
+                        : ["", ""];
+                      const singleDate = parseDateValue(scalarValue);
+                      const rangeValue: DateRange = {
+                        from: parseDateValue(betweenValues[0]),
+                        to: parseDateValue(betweenValues[1]),
+                      };
+
+                      return (
+                        <>
+                          <div className="grid grid-cols-[minmax(0,1fr)_120px_30px] gap-1.5">
+                            <Select
+                              value={filter.column || "__none__"}
+                              onValueChange={(value) => updateFilter(index, { column: value === "__none__" ? "" : value, op: "eq", value: "" })}
+                            >
+                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Coluna" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Sem coluna</SelectItem>
+                                {resolvedColumns.map((column) => <SelectItem key={column.name} value={column.name}>{column.name}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                            <Select
+                              value={isTemporal ? temporalOpUiValue : filter.op}
+                              onValueChange={(value) => updateFilter(index, {
+                                op: (value === "__relative__" ? "between" : value) as WidgetFilter["op"],
+                                value: value === "__relative__"
+                                  ? { relative: "last_7_days" }
+                                  : value === "between"
+                                    ? ["", ""]
+                                    : nullOps.has(value as WidgetFilter["op"])
+                                      ? undefined
+                                      : "",
+                              })}
+                              disabled={!filter.column}
+                            >
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>{operatorOptions.map((op) => <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>)}</SelectContent>
+                            </Select>
+                            <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => removeFilter(index)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
+
+                          {!isTemporal && !nullOps.has(filter.op) && !listOps.has(filter.op) && filter.op !== "between" && (
+                            <Input
+                              className="h-8 text-xs"
+                              value={scalarValue}
+                              onChange={(event) => updateFilter(index, { value: event.target.value })}
+                              placeholder="Valor"
+                              disabled={!filter.column}
+                            />
+                          )}
+
+                          {!isTemporal && listOps.has(filter.op) && (
+                            <Input
+                              className="h-8 text-xs"
+                              value={listValue}
+                              onChange={(event) => updateFilter(index, { value: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })}
+                              placeholder="Ex: A, B, C"
+                              disabled={!filter.column}
+                            />
+                          )}
+
+                          {!isTemporal && filter.op === "between" && (
+                            <div className="flex items-center gap-1.5">
+                              <Input
+                                className="h-8 text-xs"
+                                value={betweenValues[0]}
+                                onChange={(event) => updateFilter(index, { value: [event.target.value, betweenValues[1]] })}
+                                placeholder="De"
+                                disabled={!filter.column}
+                              />
+                              <Input
+                                className="h-8 text-xs"
+                                value={betweenValues[1]}
+                                onChange={(event) => updateFilter(index, { value: [betweenValues[0], event.target.value] })}
+                                placeholder="Ate"
+                                disabled={!filter.column}
+                              />
+                            </div>
+                          )}
+
+                          {isTemporal && listOps.has(filter.op) && (
+                            <Input
+                              className="h-8 text-xs"
+                              value={listValue}
+                              onChange={(event) => updateFilter(index, { value: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })}
+                              placeholder="Ex: 2026-01-01, 2026-01-15"
+                              disabled={!filter.column}
+                            />
+                          )}
+
+                          {isTemporal && isRelativeTemporalFilter && (
+                            <Select
+                              value={String((filter.value as Record<string, unknown>)?.relative || "last_7_days")}
+                              onValueChange={(value) => updateFilter(index, { op: "between", value: { relative: value } })}
+                              disabled={!filter.column}
+                            >
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {relativeDateOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          )}
+
+                          {isTemporal && filter.op !== "between" && !nullOps.has(filter.op) && !listOps.has(filter.op) && (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className={cn("h-8 w-full justify-start text-left text-xs font-normal", !singleDate && "text-muted-foreground")}
+                                  disabled={!filter.column}
+                                >
+                                  <Calendar className="mr-2 h-3.5 w-3.5" />
+                                  {singleDate ? formatDateLabel(singleDate) : "Selecionar data"}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <DatePicker
+                                  mode="single"
+                                  selected={singleDate}
+                                  onSelect={(date) => updateFilter(index, { value: date ? dateToApi(date) : "" })}
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          )}
+
+                          {isTemporal && filter.op === "between" && !isRelativeTemporalFilter && (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className={cn("h-8 w-full justify-start text-left text-xs font-normal", (!rangeValue.from || !rangeValue.to) && "text-muted-foreground")}
+                                  disabled={!filter.column}
+                                >
+                                  <Calendar className="mr-2 h-3.5 w-3.5" />
+                                  {rangeValue.from && rangeValue.to
+                                    ? `${formatDateLabel(rangeValue.from)} - ${formatDateLabel(rangeValue.to)}`
+                                    : "Selecionar intervalo"}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <DatePicker
+                                  mode="range"
+                                  selected={rangeValue}
+                                  onSelect={(range) => updateFilter(index, { value: [range?.from ? dateToApi(range.from) : "", range?.to ? dateToApi(range.to) : ""] })}
+                                  numberOfMonths={2}
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ))}
               </ConfigSection>

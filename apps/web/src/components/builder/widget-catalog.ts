@@ -57,6 +57,7 @@ const ENTRY_BAR: WidgetCatalogEntry = {
     visual_palette: "default",
     bar_data_labels_enabled: false,
     bar_show_grid: false,
+    bar_show_percent_of_total: false,
   },
 };
 
@@ -148,6 +149,7 @@ const ENTRY_COLUMN: WidgetCatalogEntry = {
     visual_palette: "default",
     bar_data_labels_enabled: false,
     bar_show_grid: false,
+    bar_show_percent_of_total: false,
   },
 };
 
@@ -192,6 +194,7 @@ const ENTRY_DRE: WidgetCatalogEntry = {
 export const WIDGET_CATALOG: WidgetCatalogEntry[] = [
   ENTRY_KPI,
   ENTRY_BAR,
+  ENTRY_COLUMN,
   ENTRY_LINE,
   ENTRY_PIE,
   ENTRY_TABLE,

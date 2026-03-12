@@ -189,6 +189,9 @@ const toTitleToken = (value?: string): string => {
   return normalized.toUpperCase();
 };
 
+const buildTemporalDimensionValue = (column: string, granularity: "month" | "week" | "weekday" | "hour" | "day"): string =>
+  `__time_${granularity}__:${column}`;
+
 const summarizeKpiTitle = (config: WidgetConfig): string => {
   if (config.kpi_type === "derived" && (config.formula || "").trim()) {
     return `FORMULA: ${(config.formula || "").trim().toUpperCase()}`;
@@ -204,6 +207,37 @@ const summarizeKpiTitle = (config: WidgetConfig): string => {
   const op = metric.op || "count";
   const columnToken = toTitleToken(metric.column);
   return `${metricOpTitleMap[op]} DE ${columnToken}`;
+};
+
+const summarizeBarLikeTitle = (config: WidgetConfig): string => {
+  const metric = config.metrics[0];
+  const op = metric?.op || "count";
+  const metricToken = toTitleToken(metric?.column);
+  const dimensionToken = toTitleToken(config.dimensions[0]);
+  return `${metricOpTitleMap[op]} DE ${metricToken} POR ${dimensionToken}`;
+};
+
+const summarizeAutoWidgetTitle = (type: WidgetType, config: WidgetConfig): string | null => {
+  if (type === "kpi") return summarizeKpiTitle(config);
+  if (type === "bar" || type === "column") return summarizeBarLikeTitle(config);
+  return null;
+};
+
+const normalizeTitleToken = (value: string): string =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+const isGenericChartTitle = (title: string): boolean => {
+  const normalized = normalizeTitleToken(title);
+  return normalized === ""
+    || normalized === "BARRA"
+    || normalized === "BAR"
+    || normalized === "COLUNA"
+    || normalized === "COLUMN";
 };
 
 const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
@@ -1041,8 +1075,17 @@ const BuilderPage = () => {
       const target = section.widgets.find((widget) => widget.id === updatedWidget.id);
       if (!target) return section;
       const nextProps = updatedWidget.config || updatedWidget.props;
+      const previousAutoTitle = summarizeAutoWidgetTitle(target.type, target.config || target.props);
+      const nextAutoTitle = summarizeAutoWidgetTitle(nextProps.widget_type, nextProps);
+      const normalizedUpdatedTitle = updatedWidget.title || "";
+      const shouldAutoRename = !!nextAutoTitle
+        && (
+          isGenericChartTitle(normalizedUpdatedTitle)
+          || (previousAutoTitle ? normalizeTitleToken(normalizedUpdatedTitle) === normalizeTitleToken(previousAutoTitle) : false)
+        );
       const normalizedWidget: DashboardWidget = {
         ...updatedWidget,
+        title: shouldAutoRename && nextAutoTitle ? nextAutoTitle : updatedWidget.title,
         sectionId: section.id,
         type: nextProps.widget_type,
         props: nextProps,
@@ -1055,13 +1098,23 @@ const BuilderPage = () => {
       };
     }));
     const nextProps = updatedWidget.config || updatedWidget.props;
+    const nextAutoTitle = summarizeAutoWidgetTitle(nextProps.widget_type, nextProps);
+    const previousAutoTitle = (editingWidget && editingWidget.id === updatedWidget.id)
+      ? summarizeAutoWidgetTitle(editingWidget.type, editingWidget.config || editingWidget.props)
+      : null;
+    const shouldAutoRename = !!nextAutoTitle
+      && (
+        isGenericChartTitle(updatedWidget.title || "")
+        || (previousAutoTitle ? normalizeTitleToken(updatedWidget.title || "") === normalizeTitleToken(previousAutoTitle) : false)
+      );
     setEditingWidget({
       ...updatedWidget,
+      title: shouldAutoRename && nextAutoTitle ? nextAutoTitle : updatedWidget.title,
       type: nextProps.widget_type,
       props: nextProps,
       config: nextProps,
     });
-  }, []);
+  }, [editingWidget]);
 
   const handleDeleteWidgetById = useCallback((widgetId: string) => {
     setSections((prev) => prev.map((section) => ({
@@ -1213,6 +1266,7 @@ const BuilderPage = () => {
     const viewName = view ? `${view.schema}.${view.name}` : "__dataset_base";
     const numericColumn = datasetColumns.find((column) => column.type === "numeric")?.name;
     const temporalColumn = datasetColumns.find((column) => column.type === "temporal")?.name;
+    const nonTemporalDimensionColumn = datasetColumns.find((column) => column.type === "text" || column.type === "boolean")?.name;
     const dimensionColumn = datasetColumns.find((column) => column.type === "text" || column.type === "boolean" || column.type === "temporal")?.name;
     const fallbackColumn = datasetColumns[0]?.name;
 
@@ -1247,10 +1301,25 @@ const BuilderPage = () => {
       };
     }
 
-    if (widgetType === "bar" || widgetType === "column" || widgetType === "donut") {
-      if (dimensionColumn) {
-        nextConfig.dimensions = [dimensionColumn];
+    if (widgetType === "bar") {
+      const barDimension = nonTemporalDimensionColumn || dimensionColumn;
+      if (barDimension) {
+        nextConfig.dimensions = [barDimension];
       }
+    }
+
+    if (widgetType === "column") {
+      const columnDimension = temporalColumn
+        ? buildTemporalDimensionValue(temporalColumn, "month")
+        : (dimensionColumn || "");
+      if (columnDimension) {
+        nextConfig.dimensions = [columnDimension];
+        nextConfig.order_by = [{ column: columnDimension, direction: "asc" }];
+      }
+    }
+
+    if (widgetType === "donut" && dimensionColumn) {
+      nextConfig.dimensions = [dimensionColumn];
     }
 
     if (widgetType === "table" && (!nextConfig.columns || nextConfig.columns.length === 0)) {
@@ -1279,7 +1348,7 @@ const BuilderPage = () => {
         const sectionIndex = next.findIndex((section) => section.id === sectionId);
         if (sectionIndex < 0) return false;
         const section = next[sectionIndex];
-        const defaultTitle = widgetType === "kpi" ? summarizeKpiTitle(nextConfig) : catalog.title;
+        const defaultTitle = summarizeAutoWidgetTitle(widgetType, nextConfig) || catalog.title;
         const newWidget: DashboardWidget = {
           id: makeTempWidgetId(),
           title: defaultTitle,

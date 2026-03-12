@@ -177,6 +177,8 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     line_data_labels_enabled: typeof raw.line_data_labels_enabled === "boolean" ? raw.line_data_labels_enabled : false,
     line_show_grid: typeof raw.line_show_grid === "boolean" ? raw.line_show_grid : true,
     bar_data_labels_enabled: typeof raw.bar_data_labels_enabled === "boolean" ? raw.bar_data_labels_enabled : true,
+    bar_show_grid: typeof raw.bar_show_grid === "boolean" ? raw.bar_show_grid : false,
+    bar_show_percent_of_total: typeof raw.bar_show_percent_of_total === "boolean" ? raw.bar_show_percent_of_total : false,
     line_data_labels_percent: Math.max(25, Math.min(100, asNumber(raw.line_data_labels_percent, 60))),
     line_label_window: [3, 5, 7].includes(asNumber(raw.line_label_window, 3)) ? asNumber(raw.line_label_window, 3) : 3,
     line_label_min_gap: Math.max(1, Math.min(6, asNumber(raw.line_label_min_gap, 2))),

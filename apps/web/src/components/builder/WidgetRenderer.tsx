@@ -195,6 +195,76 @@ const formatPercentOfTotal = (value: number, total: number): string => {
   return `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(percent)}%`;
 };
 
+const splitLabelIntoTwoLines = (value: unknown, maxCharsPerLine: number): { lines: string[]; full: string } => {
+  const full = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!full) return { lines: [""], full: "" };
+  if (full.length <= maxCharsPerLine) return { lines: [full], full };
+
+  const words = full.split(" ");
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxCharsPerLine) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      lines.push(current);
+      current = word;
+    } else {
+      lines.push(word.slice(0, maxCharsPerLine));
+      current = word.slice(maxCharsPerLine);
+    }
+    if (lines.length >= 2) break;
+  }
+  if (lines.length < 2 && current) lines.push(current);
+
+  const trimmed = lines.slice(0, 2).map((line) => line.trim());
+  const joinedLength = trimmed.join(" ").length;
+  if (joinedLength < full.length && trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1];
+    trimmed[trimmed.length - 1] = last.length >= maxCharsPerLine
+      ? `${last.slice(0, Math.max(1, maxCharsPerLine - 1))}…`
+      : `${last}…`;
+  }
+  return { lines: trimmed.filter((line) => !!line), full };
+};
+
+const GlassTooltip = ({
+  active,
+  payload,
+  label,
+  categoryLabel,
+  metricLabel,
+  valueLabel,
+}: {
+  active?: boolean;
+  payload?: Array<{ value?: unknown }>;
+  label?: unknown;
+  categoryLabel: (value: unknown) => string;
+  metricLabel: string;
+  valueLabel: (value: unknown) => string;
+}) => {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0];
+  const category = categoryLabel(label);
+  const value = valueLabel(point.value);
+  return (
+    <div
+      className="min-w-[160px] rounded-xl border border-border/60 bg-[hsl(var(--card)/0.72)] px-3 py-2 shadow-xl backdrop-blur-md"
+      style={{ boxShadow: "0 14px 30px -16px rgba(2,6,23,0.65)" }}
+    >
+      <p className="text-[11px] font-semibold text-foreground/95">{category}</p>
+      <div className="mt-1 flex items-center justify-between gap-3 text-[11px]">
+        <span className="text-muted-foreground">{metricLabel}</span>
+        <span className="font-semibold tabular-nums text-foreground">{value}</span>
+      </div>
+    </div>
+  );
+};
+
 const computePeakValleyEvents = (params: {
   series: number[];
   sensitivityPercent: number;
@@ -272,21 +342,32 @@ const computePeakValleyEvents = (params: {
 
 const renderGlassLabel = (params: { x: number; y: number; text: string; fontSize?: number }) => {
   const { x, y, text, fontSize = 10 } = params;
-  const labelWidth = Math.max(28, text.length * 6 + 10);
-  const labelHeight = 16;
+  const labelWidth = Math.max(34, Math.ceil(text.length * (fontSize * 0.62) + 14));
+  const labelHeight = Math.max(18, Math.ceil(fontSize + 8));
+  const left = x - (labelWidth / 2);
+  const top = y - (labelHeight / 2);
   return (
     <g>
       <rect
-        x={x - (labelWidth / 2)}
-        y={y - (labelHeight / 2)}
+        x={left}
+        y={top}
         width={labelWidth}
         height={labelHeight}
-        rx={6}
-        ry={6}
-        fill="rgba(200,200,200,0.75)"
-        stroke="rgba(255,255,255,0.18)"
+        rx={7}
+        ry={7}
+        fill="hsl(var(--card) / 0.62)"
+        stroke="hsl(var(--border) / 0.55)"
+        strokeWidth={0.8}
       />
-      <text x={x} y={y + 3} fill="hsl(0, 0%, 30%)" fontSize={fontSize} textAnchor="middle">
+      <text
+        x={x}
+        y={y}
+        dy={Math.ceil(fontSize * 0.34)}
+        fill="hsl(var(--foreground) / 0.72)"
+        fontSize={fontSize}
+        fontWeight={500}
+        textAnchor="middle"
+      >
         {text}
       </text>
     </g>
@@ -768,6 +849,74 @@ const formatDateBR = (date: Date, includeTime = false, includeSeconds = false): 
     minute: "2-digit",
     second: includeSeconds ? "2-digit" : undefined,
   }).format(date);
+};
+
+const isoWeekNumber = (date: Date): number => {
+  const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  return Math.ceil((((utc.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+};
+
+const formatTemporalBucket = (
+  value: unknown,
+  granularity: "day" | "month" | "week" | "weekday" | "hour",
+): string => {
+  const parsed = parseDateLike(value);
+  if (granularity === "week") {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (/^S\d+$/i.test(trimmed)) return trimmed.toUpperCase();
+    }
+    if (parsed) return `S${isoWeekNumber(parsed)}`;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return `S${Math.max(1, Math.trunc(numeric))}`;
+    return `S${String(value ?? "").trim()}`;
+  }
+  if (granularity === "weekday") {
+    if (parsed) return new Intl.DateTimeFormat("pt-BR", { weekday: "short" }).format(parsed).replace(".", "");
+    const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      const normalized = Math.trunc(numeric);
+      const idx = normalized >= 1 && normalized <= 7 ? normalized % 7 : Math.max(0, Math.min(6, normalized));
+      return weekdays[idx];
+    }
+    return String(value ?? "");
+  }
+  if (granularity === "hour") {
+    if (parsed) return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(parsed);
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return `${String(Math.max(0, Math.min(23, Math.trunc(numeric)))).padStart(2, "0")}:00`;
+    return String(value ?? "");
+  }
+  if (granularity === "month") {
+    if (parsed) return new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit" }).format(parsed);
+    return String(value ?? "");
+  }
+  if (parsed) return formatDateBR(parsed, false);
+  return String(value ?? "");
+};
+
+const niceNumber = (value: number): number => {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const fraction = value / (10 ** exponent);
+  let niceFraction = 10;
+  if (fraction <= 1) niceFraction = 1;
+  else if (fraction <= 2) niceFraction = 2;
+  else if (fraction <= 2.5) niceFraction = 2.5;
+  else if (fraction <= 5) niceFraction = 5;
+  return niceFraction * (10 ** exponent);
+};
+
+const computeNiceAxisMax = (maxValue: number, tickCount = 4): number => {
+  if (!Number.isFinite(maxValue) || maxValue <= 0) return 1;
+  const safeTickCount = Math.max(2, tickCount);
+  const roughStep = maxValue / (safeTickCount - 1);
+  const niceStep = niceNumber(roughStep);
+  return niceStep * (safeTickCount - 1);
 };
 
 const formatByTableConfig = (value: unknown, format: string): string => {
@@ -1360,14 +1509,9 @@ export const WidgetRenderer = ({
   };
   const chartPrefix = widget.config.kpi_prefix || "";
   const chartSuffix = widget.config.kpi_suffix || "";
+  const showPercentOfTotal = !!widget.config.bar_show_percent_of_total;
   const formatChartValueCompact = (value: unknown): string => `${chartPrefix}${formatCompactNumber(value)}${chartSuffix}`;
-  const formatCategoryLabel = (value: unknown): string => {
-    const parsed = parseDateLike(value);
-    const raw = parsed ? formatDateBR(parsed) : String(value ?? "");
-    const singleLine = raw.replace(/\s+/g, " ").trim();
-    if (singleLine.length <= 18) return singleLine;
-    return `${singleLine.slice(0, 17)}...`;
-  };
+  const formatChartValueFull = (value: unknown): string => `${chartPrefix}${formatFullNumber(value)}${chartSuffix}`;
 
   if (forcedLoading) {
     return <WidgetLoadingSkeleton type={widget.config.widget_type} chartHeight={chartHeight} />;
@@ -1687,25 +1831,61 @@ export const WidgetRenderer = ({
 
   const dim = widget.config.dimensions[0];
   const dimKey = dim || "__dim";
+  const parsedTemporalCategoryDimension = dim ? parseTemporalDimensionToken(dim) : null;
+  const categoryTemporalGranularity = parsedTemporalCategoryDimension?.granularity;
   const metricKey = resolvePrimaryMetricKey(widget, rows);
   const chartRows = rows.map((row) => ({ ...row, [metricKey]: toFiniteNumber(row[metricKey]) }));
+  const formatCategoricalBucketLabel = (value: unknown): string => {
+    if (categoryTemporalGranularity) {
+      return formatTemporalBucket(value, categoryTemporalGranularity);
+    }
+    const parsed = parseDateLike(value);
+    return parsed ? formatDateBR(parsed) : String(value ?? "");
+  };
 
   if (type === "bar") {
     const showBarLabels = widget.config.bar_data_labels_enabled !== false;
     const showBarGrid = !!widget.config.bar_show_grid;
-    const fixedBarHeight = 22;
     const barGap = 8;
-    const barDataMax = chartRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
-    const barAxisMax = barDataMax > 0 ? barDataMax * 1.18 : 1;
-    const axisFooterHeight = 28;
+    const barRows = [...chartRows].sort((left, right) => {
+      const metricDiff = toFiniteNumber(right[metricKey]) - toFiniteNumber(left[metricKey]);
+      if (metricDiff !== 0) return metricDiff;
+      return String(left[dimKey] ?? "").localeCompare(String(right[dimKey] ?? ""), "pt-BR");
+    });
+    const barTotal = barRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
+    const formatBarMetricLabel = (value: unknown, compact = true): string => {
+      const numericValue = toFiniteNumber(value);
+      const absolute = compact ? formatChartValueCompact(numericValue) : formatChartValueFull(numericValue);
+      if (!showPercentOfTotal) return absolute;
+      return `${absolute} (${formatPercentOfTotal(numericValue, barTotal)})`;
+    };
+    const barDataMax = barRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
+    const barAxisMax = computeNiceAxisMax(barDataMax, 4);
+    const barRightMargin = showBarLabels
+      ? (showPercentOfTotal ? 76 : 56)
+      : 28;
+    const axisFooterHeight = 26;
     const plotViewportHeight = Math.max(96, chartHeight - axisFooterHeight);
-    const barChartHeight = Math.max(plotViewportHeight, rows.length * (fixedBarHeight + barGap) + 24);
+    const barsCount = Math.max(1, barRows.length);
+    const adaptiveBarHeight = clamp(
+      Math.floor((plotViewportHeight - 20 - ((barsCount - 1) * barGap)) / barsCount),
+      16,
+      42,
+    );
+    const barChartHeight = Math.max(plotViewportHeight, barsCount * (adaptiveBarHeight + barGap) + 16);
     return (
-      <div className="h-full w-full">
-        <div className="w-full overflow-y-auto" style={{ maxHeight: `${plotViewportHeight}px` }}>
-          <div style={{ height: `${barChartHeight}px` }}>
+      <div className="relative flex h-full w-full flex-col">
+        <div
+          className="w-full overflow-y-auto pr-1"
+          style={{
+            height: `calc(100% - ${axisFooterHeight}px)`,
+            scrollbarWidth: "thin",
+            scrollbarColor: "hsl(var(--border)) transparent",
+          }}
+        >
+          <div style={{ minHeight: "100%", height: `${barChartHeight}px` }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartRows} margin={{ top: 8, right: 64, bottom: 6, left: 8 }} layout="vertical" barCategoryGap={barGap}>
+              <BarChart data={barRows} margin={{ top: 8, right: barRightMargin, bottom: 6, left: 4 }} layout="vertical" barCategoryGap={barGap}>
                 {showBarGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />}
                 <XAxis
                   type="number"
@@ -1717,14 +1897,47 @@ export const WidgetRenderer = ({
                 <YAxis
                   type="category"
                   dataKey={dimKey}
-                  tick={{ fontSize: 11 }}
+                  tick={(props: { x?: number; y?: number; payload?: { value?: unknown } }) => {
+                    const x = Number(props.x || 0);
+                    const y = Number(props.y || 0);
+                    const { lines, full } = splitLabelIntoTwoLines(formatCategoricalBucketLabel(props.payload?.value), 18);
+                    const startY = lines.length > 1 ? -5 : 4;
+                    return (
+                      <g transform={`translate(${x},${y})`}>
+                        <title>{full}</title>
+                        <text
+                          x={0}
+                          y={0}
+                          dy={startY}
+                          textAnchor="end"
+                          fill="hsl(var(--muted-foreground))"
+                          fontSize={11}
+                        >
+                          {lines.map((line, index) => (
+                            <tspan key={`${line}-${index}`} x={0} dy={index === 0 ? 0 : 12}>{line}</tspan>
+                          ))}
+                        </text>
+                      </g>
+                    );
+                  }}
                   axisLine={false}
                   tickLine={false}
-                  width={110}
-                  tickFormatter={(value) => formatCategoryLabel(value)}
+                  width={118}
                 />
-                <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
-                <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={fixedBarHeight}>
+                <Tooltip
+                  cursor={{ fill: "hsl(var(--muted)/0.28)" }}
+                  content={(props) => (
+                    <GlassTooltip
+                      active={props.active}
+                      payload={props.payload as Array<{ value?: unknown }> | undefined}
+                      label={props.label}
+                      categoryLabel={formatCategoricalBucketLabel}
+                      metricLabel={metricLabel}
+                      valueLabel={(value) => formatBarMetricLabel(value, false)}
+                    />
+                  )}
+                />
+                <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={adaptiveBarHeight}>
                   {showBarLabels && (
                     <LabelList
                       dataKey={metricKey}
@@ -1735,9 +1948,9 @@ export const WidgetRenderer = ({
                         const width = Number(props.width || 0);
                         const height = Number(props.height || 0);
                         if (value === undefined || value === null) return null;
-                        const labelX = x + width + 18;
+                        const labelX = x + width + 12;
                         const labelY = y + (height / 2);
-                        return renderGlassLabel({ x: labelX, y: labelY, text: formatChartValueCompact(value), fontSize: 10 });
+                        return renderGlassLabel({ x: labelX, y: labelY, text: formatBarMetricLabel(value, true), fontSize: 9 });
                       }}
                     />
                   )}
@@ -1746,16 +1959,18 @@ export const WidgetRenderer = ({
             </ResponsiveContainer>
           </div>
         </div>
-        <div style={{ height: `${axisFooterHeight}px` }}>
+        <div className="shrink-0" style={{ height: `${axisFooterHeight}px` }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartRows.length > 0 ? [chartRows[0]] : [{ [metricKey]: 0 }]} margin={{ top: 0, right: 64, bottom: 2, left: 8 }}>
+            <BarChart data={barRows.length > 0 ? [barRows[0]] : [{ [metricKey]: 0 }]} margin={{ top: 0, right: barRightMargin, bottom: 0, left: 4 }}>
               <XAxis
                 type="number"
                 dataKey={metricKey}
                 tick={{ fontSize: 10 }}
+                height={20}
                 axisLine={false}
                 tickLine={false}
                 domain={[0, barAxisMax]}
+                tickCount={4}
                 allowDataOverflow={false}
                 tickFormatter={(value) => formatChartValueCompact(value)}
               />
@@ -1769,28 +1984,86 @@ export const WidgetRenderer = ({
   if (type === "column") {
     const showColumnLabels = widget.config.bar_data_labels_enabled !== false;
     const showColumnGrid = !!widget.config.bar_show_grid;
+    const columnRows = [...chartRows].sort((left, right) => {
+      const leftDim = left[dimKey];
+      const rightDim = right[dimKey];
+      const leftDate = parseDateLike(leftDim);
+      const rightDate = parseDateLike(rightDim);
+      if (leftDate && rightDate) return leftDate.getTime() - rightDate.getTime();
+      const leftNumeric = Number(leftDim);
+      const rightNumeric = Number(rightDim);
+      if (Number.isFinite(leftNumeric) && Number.isFinite(rightNumeric)) {
+        return leftNumeric - rightNumeric;
+      }
+      return String(leftDim ?? "").localeCompare(String(rightDim ?? ""), "pt-BR");
+    });
+    const columnTotal = columnRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
+    const columnDataMax = columnRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
+    const columnAxisMax = computeNiceAxisMax(columnDataMax, 5);
+    const hasMultilineColumnTicks = columnRows.some((row) => splitLabelIntoTwoLines(formatCategoricalBucketLabel(row[dimKey]), 12).lines.length > 1);
+    const columnXAxisHeight = hasMultilineColumnTicks ? 40 : 26;
+    const formatColumnMetricLabel = (value: unknown, compact = true): string => {
+      const numericValue = toFiniteNumber(value);
+      const absolute = compact ? formatChartValueCompact(numericValue) : formatChartValueFull(numericValue);
+      if (!showPercentOfTotal) return absolute;
+      return `${absolute} (${formatPercentOfTotal(numericValue, columnTotal)})`;
+    };
     return (
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={chartRows} margin={{ top: 16, right: 8, bottom: 8, left: 0 }}>
+        <BarChart data={columnRows} margin={{ top: 8, right: 8, bottom: 0, left: 2 }}>
           {showColumnGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />}
           <XAxis
             dataKey={dimKey}
-            tick={{ fontSize: 10 }}
+            interval={0}
+            height={columnXAxisHeight}
+            tickMargin={6}
+            tick={(props: { x?: number; y?: number; payload?: { value?: unknown } }) => {
+              const x = Number(props.x || 0);
+              const y = Number(props.y || 0);
+              const { lines, full } = splitLabelIntoTwoLines(formatCategoricalBucketLabel(props.payload?.value), 12);
+              return (
+                <g transform={`translate(${x},${y})`}>
+                  <title>{full}</title>
+                  <text
+                    x={0}
+                    y={0}
+                    dy={hasMultilineColumnTicks ? 13 : 10}
+                    textAnchor="middle"
+                    fill="hsl(var(--muted-foreground))"
+                    fontSize={10}
+                  >
+                    {lines.map((line, index) => (
+                      <tspan key={`${line}-${index}`} x={0} dy={index === 0 ? 0 : 11}>{line}</tspan>
+                    ))}
+                  </text>
+                </g>
+              );
+            }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(value) => {
-              const parsed = parseDateLike(value);
-              return parsed ? formatDateBR(parsed) : String(value);
-            }}
           />
           <YAxis
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
-            width={34}
+            width={50}
+            domain={[0, columnAxisMax]}
+            tickCount={5}
             tickFormatter={(value) => formatChartValueCompact(value)}
           />
-          <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatChartValueCompact(value), metricLabel]} />
+          <Tooltip
+            cursor={{ fill: "hsl(var(--muted)/0.28)" }}
+            content={(props) => (
+              <GlassTooltip
+                active={props.active}
+                payload={props.payload as Array<{ value?: unknown }> | undefined}
+                label={props.label}
+                categoryLabel={formatCategoricalBucketLabel}
+                metricLabel={metricLabel}
+                valueLabel={(value) => formatColumnMetricLabel(value, false)}
+              />
+            )}
+          />
           <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[6, 6, 0, 0]}>
             {showColumnLabels && (
               <LabelList
@@ -1803,8 +2076,8 @@ export const WidgetRenderer = ({
                   const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
                   if (value === undefined || value === null) return null;
                   const plotTop = Number(viewBox?.y ?? 0);
-                  const safeY = Math.max(plotTop + 10, y - 8);
-                  return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatChartValueCompact(value), fontSize: 10 });
+                  const safeY = Math.max(plotTop + 10, y - 12);
+                  return renderGlassLabel({ x: x + (width / 2), y: safeY, text: formatColumnMetricLabel(value, true), fontSize: 9 });
                 }}
               />
             )}
