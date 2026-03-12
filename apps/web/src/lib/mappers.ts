@@ -24,6 +24,20 @@ const asString = (value: unknown, fallback = ""): string =>
 const asNumber = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+const normalizeWidgetDependencyId = (value: unknown): number | string | undefined => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return trimmed;
+};
+
 const normalizeColumnType = (rawType: string): "numeric" | "temporal" | "text" | "boolean" => {
   const value = (rawType || "").toLowerCase();
   if (value === "numeric" || value === "temporal" || value === "text" || value === "boolean") {
@@ -99,13 +113,20 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
     kpi_dependencies: Array.isArray(raw.kpi_dependencies)
       ? raw.kpi_dependencies
           .filter(isObject)
-          .map((item) => ({
-            source_type: (asString(item.source_type, "widget") === "column" ? "column" : "widget") as "widget" | "column",
-            widget_id: typeof item.widget_id === "number" ? item.widget_id : asNumber(item.widget_id, 0),
-            column: asString(item.column) || undefined,
-            alias: asString(item.alias),
-          }))
-          .filter((item) => item.alias.length > 0 && (item.source_type === "column" ? !!item.column : (item.widget_id || 0) > 0))
+          .map((item) => {
+            const normalizedWidgetId = normalizeWidgetDependencyId(item.widget_id);
+            return {
+              source_type: (asString(item.source_type, "widget") === "column" ? "column" : "widget") as "widget" | "column",
+              widget_id: normalizedWidgetId,
+              column: asString(item.column) || undefined,
+              alias: asString(item.alias),
+            };
+          })
+          .filter((item) => item.alias.length > 0 && (
+            item.source_type === "column"
+              ? !!item.column
+              : normalizeWidgetDependencyId(item.widget_id) !== undefined
+          ))
       : [],
     composite_metric: isObject(raw.composite_metric)
       ? {

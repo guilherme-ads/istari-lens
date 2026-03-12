@@ -395,6 +395,7 @@ def _apply_dashboard_snapshot(
     existing_by_id = {widget.id: widget for widget in dashboard.widgets or []}
     retained_ids: set[int] = set()
     remapped_widget_ids: dict[str, int] = {}
+    widgets_by_source_key: dict[str, DashboardWidget] = {}
     created_widget_ids_in_order: list[int] = []
     for index, item in enumerate(incoming):
         if not isinstance(item, dict):
@@ -428,11 +429,51 @@ def _apply_dashboard_snapshot(
         retained_ids.add(widget.id)
         if source_widget_key is not None:
             remapped_widget_ids[source_widget_key] = widget.id
+            widgets_by_source_key[source_widget_key] = widget
         created_widget_ids_in_order.append(widget.id)
 
     for widget in list(dashboard.widgets or []):
         if widget.id not in retained_ids:
             db.delete(widget)
+
+    # Remap temporary KPI dependency IDs to their persisted widget IDs in the same save snapshot.
+    for widget in widgets_by_source_key.values():
+        raw_config = widget.query_config if isinstance(widget.query_config, dict) else None
+        if not isinstance(raw_config, dict):
+            continue
+        resolved_widget_type = str(raw_config.get("widget_type") or widget.widget_type or "")
+        if resolved_widget_type != "kpi":
+            continue
+        if str(raw_config.get("kpi_type") or "atomic") != "derived":
+            continue
+        raw_dependencies = raw_config.get("kpi_dependencies")
+        if not isinstance(raw_dependencies, list):
+            continue
+
+        changed = False
+        remapped_dependencies: list = []
+        for dep in raw_dependencies:
+            if not isinstance(dep, dict):
+                remapped_dependencies.append(dep)
+                continue
+            source_type = str(dep.get("source_type") or "widget")
+            if source_type != "widget":
+                remapped_dependencies.append(dep)
+                continue
+            raw_dep_widget_id = dep.get("widget_id")
+            mapped_dep_widget_id = remapped_widget_ids.get(str(raw_dep_widget_id)) if raw_dep_widget_id is not None else None
+            if mapped_dep_widget_id is None:
+                remapped_dependencies.append(dep)
+                continue
+            next_dep = dict(dep)
+            next_dep["widget_id"] = mapped_dep_widget_id
+            remapped_dependencies.append(next_dep)
+            changed = True
+
+        if changed:
+            next_config = dict(raw_config)
+            next_config["kpi_dependencies"] = remapped_dependencies
+            widget.query_config = next_config
 
     # Preserve section/row placement while adapting source widget IDs to persisted IDs.
     normalized_layout: list[dict] = []

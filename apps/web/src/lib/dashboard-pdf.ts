@@ -176,7 +176,7 @@ export const exportDashboardToPdf = async (params: ExportDashboardPdfParams): Pr
       ensureSpace(10);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
-      doc.text(section.title || `Secao ${sectionIndex + 1}`, marginX, y);
+      doc.text(section.title || `Seção ${sectionIndex + 1}`, marginX, y);
       y += 5;
     }
 

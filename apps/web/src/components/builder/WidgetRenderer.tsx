@@ -312,7 +312,7 @@ type RendererProps = {
 };
 
 const EmptyWidgetState = ({ text }: { text: string }) => (
-  <div className="text-xs text-muted-foreground text-center">{text}</div>
+  <div className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">{text}</div>
 );
 
 const parseTemporalDimensionToken = (value: string): { column: string; granularity: "day" | "month" | "week" | "weekday" | "hour" } | null => {
@@ -425,7 +425,7 @@ const buildDraftPreviewSpec = ({
   const isTable = widgetType === "table";
   const isDre = widgetType === "dre";
   if (!isKpi && !isCategorical && !isLine && !isTable && !isDre) return null;
-  if (isKpi && (widget.config.kpi_type === "derived" || !!widget.config.composite_metric)) return null;
+  if (isKpi && widget.config.kpi_type === "derived") return null;
 
   let metrics = (widget.config.metrics || [])
     .filter((metric) => !!metric.op)
@@ -433,6 +433,14 @@ const buildDraftPreviewSpec = ({
       field: metric.column || "*",
       agg: metric.op,
     }));
+  if (isKpi && widget.config.composite_metric) {
+    const cfg = widget.config.composite_metric;
+    if (!cfg.time_column) return null;
+    metrics = [{
+      field: cfg.value_column || "*",
+      agg: cfg.inner_agg || "count",
+    }];
+  }
   if ((isKpi || isCategorical) && metrics.length !== 1) return null;
   if (isLine && (metrics.length < 1 || metrics.length > 2)) return null;
   const dreRowMetricKeys: Record<string, string[]> = {};
@@ -462,7 +470,18 @@ const buildDraftPreviewSpec = ({
   const dimensionAliasMap: Record<string, string> = {};
   let dimensions: string[] = [];
   let lineTimeColumn: string | undefined;
-  if (isCategorical) {
+  if (isKpi && widget.config.composite_metric) {
+    const cfg = widget.config.composite_metric;
+    const lineGranularity = cfg.granularity || "day";
+    const timeDimension = lineGranularity === "timestamp"
+      ? cfg.time_column
+      : buildTemporalDimensionToken(
+          cfg.time_column,
+          lineGranularity === "week" || lineGranularity === "month" || lineGranularity === "hour" ? lineGranularity : "day",
+        );
+    dimensions = [timeDimension];
+    lineTimeColumn = timeDimension;
+  } else if (isCategorical) {
     const rawDimension = (widget.config.dimensions || [])[0];
     if (!rawDimension) return null;
     const parsedTemporalDimension = parseTemporalDimensionToken(rawDimension);
@@ -524,7 +543,7 @@ const buildDraftPreviewSpec = ({
   const rawLimit = isLine
     ? (widget.config.limit || 500)
     : isKpi
-    ? 1
+    ? (widget.config.composite_metric ? (widget.config.limit || 500) : 1)
     : isDre
     ? 1
     : isTable
@@ -1156,6 +1175,9 @@ export const WidgetRenderer = ({
   // Draft preview path (builder mode for all widgets, or non-persisted widgets in any mode)
   // "Configure" message only for new (non-persisted) widgets with incomplete config
   if (!disableFetch && !hasPersistedWidgetId && !shouldFetchDraftPreview) {
+    if (widget.config.widget_type === "kpi" && widget.config.kpi_type === "derived") {
+      return <EmptyWidgetState text="Preview da KPI por formula aparece apos salvar o dashboard." />;
+    }
     return <EmptyWidgetState text="Configure o widget para visualizar o preview." />;
   }
   if (shouldFetchDraftPreview && draftWidgetQuery.isLoading) {
@@ -1264,7 +1286,20 @@ export const WidgetRenderer = ({
 
   if (type === "kpi") {
     const metricKey = resolvePrimaryMetricKey(widget, rows);
-    const value = Number(rows[0]?.[metricKey] || 0);
+    const value = (() => {
+      if (widget.config.composite_metric && shouldFetchDraftPreview) {
+        const outerAgg = widget.config.composite_metric.outer_agg || "avg";
+        const values = rows.map((row) => toFiniteNumber(row[metricKey]));
+        if (values.length === 0) return 0;
+        if (outerAgg === "sum") return values.reduce((acc, item) => acc + item, 0);
+        if (outerAgg === "max") return Math.max(...values);
+        if (outerAgg === "min") return Math.min(...values);
+        if (outerAgg === "count") return values.length;
+        if (outerAgg === "distinct_count") return new Set(values.map((item) => String(item))).size;
+        return values.reduce((acc, item) => acc + item, 0) / Math.max(1, values.length);
+      }
+      return Number(rows[0]?.[metricKey] || 0);
+    })();
     const showAs = widget.config.kpi_show_as || "number_2";
     const decimals = widget.config.kpi_decimals ?? 2;
     const prefix = widget.config.kpi_prefix;

@@ -82,7 +82,7 @@ class MetricConfig(BaseModel):
 
 class KpiDependencyRefConfig(BaseModel):
     source_type: Literal["widget", "column"] = "widget"
-    widget_id: int | None = None
+    widget_id: int | str | None = None
     column: str | None = None
     agg: MetricOp | None = None
     alias: str
@@ -90,7 +90,22 @@ class KpiDependencyRefConfig(BaseModel):
     @model_validator(mode="after")
     def validate_source(self) -> "KpiDependencyRefConfig":
         if self.source_type == "widget":
-            if self.widget_id is None or self.widget_id <= 0:
+            if self.widget_id is None:
+                raise ValueError("KPI dependency widget_id is required for widget source")
+            if isinstance(self.widget_id, str):
+                normalized_widget_id = self.widget_id.strip()
+                if not normalized_widget_id:
+                    raise ValueError("KPI dependency widget_id is required for widget source")
+                if normalized_widget_id.isdigit():
+                    numeric_widget_id = int(normalized_widget_id)
+                    if numeric_widget_id <= 0:
+                        raise ValueError("KPI dependency widget_id is required for widget source")
+                    self.widget_id = numeric_widget_id
+                elif not normalized_widget_id.startswith("tmp-"):
+                    raise ValueError("KPI dependency widget_id is invalid for widget source")
+                else:
+                    self.widget_id = normalized_widget_id
+            elif self.widget_id <= 0:
                 raise ValueError("KPI dependency widget_id is required for widget source")
             if self.column is not None or self.agg is not None:
                 raise ValueError("Widget source dependency does not support column/agg")

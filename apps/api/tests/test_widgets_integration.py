@@ -717,6 +717,123 @@ def test_save_dashboard_keeps_distinct_layout_ids_for_temp_widgets(client: TestC
     assert len(set(layout_widget_ids)) == 2
 
 
+def test_save_dashboard_remaps_temp_widget_ids_inside_derived_kpi_dependencies(client: TestClient) -> None:
+    existing_base = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "kpi",
+            "title": "Base existente",
+            "position": 0,
+            "config_version": 1,
+            "config": {
+                "widget_type": "kpi",
+                "view_name": "public.vw_recargas",
+                "metrics": [{"op": "count", "column": "id_recarga"}],
+                "dimensions": [],
+                "filters": [],
+                "order_by": [],
+            },
+        },
+    ).json()["id"]
+
+    response = client.post(
+        "/dashboards/1/save",
+        json={
+            "name": "Main",
+            "layout_config": [
+                {
+                    "id": "sec-1",
+                    "title": "Geral",
+                    "columns": 3,
+                    "widgets": [
+                        {"widget_id": existing_base},
+                        {"widget_id": "tmp-base-1"},
+                        {"widget_id": "tmp-derived-1"},
+                    ],
+                }
+            ],
+            "native_filters": [],
+            "widgets": [
+                {
+                    "id": existing_base,
+                    "widget_type": "kpi",
+                    "title": "Base existente",
+                    "position": 0,
+                    "config_version": 1,
+                    "config": {
+                        "widget_type": "kpi",
+                        "view_name": "public.vw_recargas",
+                        "metrics": [{"op": "count", "column": "id_recarga"}],
+                        "dimensions": [],
+                        "filters": [],
+                        "order_by": [],
+                    },
+                },
+                {
+                    "id": "tmp-base-1",
+                    "widget_type": "kpi",
+                    "title": "Base nova",
+                    "position": 1,
+                    "config_version": 1,
+                    "config": {
+                        "widget_type": "kpi",
+                        "view_name": "public.vw_recargas",
+                        "metrics": [{"op": "count", "column": "id_recarga"}],
+                        "dimensions": [],
+                        "filters": [],
+                        "order_by": [],
+                    },
+                },
+                {
+                    "id": "tmp-derived-1",
+                    "widget_type": "kpi",
+                    "title": "Derivada temp",
+                    "position": 2,
+                    "config_version": 1,
+                    "config": {
+                        "widget_type": "kpi",
+                        "view_name": "public.vw_recargas",
+                        "kpi_type": "derived",
+                        "formula": "existente + nova",
+                        "dependencies": ["existente", "nova"],
+                        "kpi_dependencies": [
+                            {"source_type": "widget", "widget_id": existing_base, "alias": "existente"},
+                            {"source_type": "widget", "widget_id": "tmp-base-1", "alias": "nova"},
+                        ],
+                        "metrics": [],
+                        "dimensions": [],
+                        "filters": [],
+                        "order_by": [],
+                    },
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    existing_base_widget = next(item for item in payload["widgets"] if item.get("title") == "Base existente")
+    derived_widget = next(item for item in payload["widgets"] if item.get("title") == "Derivada temp")
+    new_base_widget = next(item for item in payload["widgets"] if item.get("title") == "Base nova")
+    remapped_dependencies = derived_widget["query_config"]["kpi_dependencies"]
+    assert len(remapped_dependencies) == 2
+    dep_widget_ids = {str(dep.get("widget_id")) for dep in remapped_dependencies}
+    assert all(not widget_id.startswith("tmp-") for widget_id in dep_widget_ids)
+    assert str(new_base_widget["id"]) in dep_widget_ids
+
+    data_response = client.post(
+        "/dashboards/1/widgets/data",
+        json={"widget_ids": [existing_base_widget["id"], new_base_widget["id"], derived_widget["id"]], "global_filters": []},
+    )
+    assert data_response.status_code == 200, data_response.text
+    data_payload = data_response.json()
+    result_by_widget_id = {item["widget_id"]: item for item in data_payload["results"]}
+    existing_value = result_by_widget_id[existing_base_widget["id"]]["rows"][0]["m0"]
+    new_base_value = result_by_widget_id[new_base_widget["id"]]["rows"][0]["m0"]
+    derived_value = result_by_widget_id[derived_widget["id"]]["rows"][0]["m0"]
+    assert derived_value == (existing_value + new_base_value)
+
+
 def test_debug_queries_dashboard_mode_returns_single_execution_units(client: TestClient) -> None:
     kpi_1 = client.post(
         "/dashboards/1/widgets",

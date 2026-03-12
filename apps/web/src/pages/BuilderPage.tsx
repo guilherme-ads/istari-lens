@@ -18,6 +18,7 @@ import {
   type DashboardLayoutItem,
   type DashboardSection,
   type DashboardWidget,
+  type WidgetConfig,
   type WidgetType,
 } from "@/types/dashboard";
 import { api, ApiError } from "@/lib/api";
@@ -166,6 +167,42 @@ const insertLayoutItemWithShift = (
 const mapVisualizationToWidgetType = (type: VisualizationType): WidgetType => {
   if (type === "pie") return "donut";
   return type;
+};
+
+const metricOpTitleMap: Record<"count" | "distinct_count" | "sum" | "avg" | "min" | "max", string> = {
+  count: "CONTAGEM",
+  distinct_count: "CONTAGEM UNICA",
+  sum: "SOMA",
+  avg: "MEDIA",
+  min: "MINIMO",
+  max: "MAXIMO",
+};
+
+const toTitleToken = (value?: string): string => {
+  const normalized = String(value || "")
+    .replace(/^__time_[^:]+:/, "")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "TOTAL";
+  return normalized.toUpperCase();
+};
+
+const summarizeKpiTitle = (config: WidgetConfig): string => {
+  if (config.kpi_type === "derived" && (config.formula || "").trim()) {
+    return `FORMULA: ${(config.formula || "").trim().toUpperCase()}`;
+  }
+  if (config.composite_metric) {
+    const inner = config.composite_metric.inner_agg || "count";
+    const outer = config.composite_metric.outer_agg || "avg";
+    const columnToken = toTitleToken(config.composite_metric.value_column);
+    return `${metricOpTitleMap[outer]} DE ${metricOpTitleMap[inner]} DE ${columnToken}`;
+  }
+  const metric = config.metrics[0];
+  if (!metric) return "KPI";
+  const op = metric.op || "count";
+  const columnToken = toTitleToken(metric.column);
+  return `${metricOpTitleMap[op]} DE ${columnToken}`;
 };
 
 const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
@@ -953,21 +990,10 @@ const BuilderPage = () => {
         props: nextProps,
         config: nextProps,
       };
-      const nextLayout = section.layout.map((item) => {
-        if (item.i !== updatedWidget.id) return item;
-        const nextWidth = nextProps.size?.width ?? item.w;
-        const nextHeightMultiplier = nextProps.size?.height;
-        const nextHeight = nextHeightMultiplier === 0.5 ? 2 : nextHeightMultiplier === 2 ? 8 : nextHeightMultiplier === 1 ? 4 : item.h;
-        return normalizeLayoutItem({
-          ...item,
-          w: nextWidth,
-          h: nextHeight,
-        });
-      });
       return {
         ...section,
         widgets: section.widgets.map((widget) => (widget.id === updatedWidget.id ? normalizedWidget : widget)),
-        layout: nextLayout,
+        layout: section.layout,
       };
     }));
     const nextProps = updatedWidget.config || updatedWidget.props;
@@ -1101,7 +1127,7 @@ const BuilderPage = () => {
   const handleAddSection = useCallback((afterIndex?: number) => {
     setSections((prev) => {
       const section = createSection();
-      section.title = `Secao ${prev.length + 1}`;
+      section.title = `Seção ${prev.length + 1}`;
 
       if (afterIndex === undefined || afterIndex < 0 || afterIndex >= prev.length) {
         return [...prev, section];
@@ -1180,7 +1206,7 @@ const BuilderPage = () => {
       let next = [...prev];
       const ensureSection = (): DashboardSection => {
         const appended = createSection();
-        appended.title = `Secao ${next.length + 1}`;
+        appended.title = `Seção ${next.length + 1}`;
         next = [...next, appended];
         return appended;
       };
@@ -1195,9 +1221,10 @@ const BuilderPage = () => {
         const sectionIndex = next.findIndex((section) => section.id === sectionId);
         if (sectionIndex < 0) return false;
         const section = next[sectionIndex];
+        const defaultTitle = widgetType === "kpi" ? summarizeKpiTitle(nextConfig) : catalog.title;
         const newWidget: DashboardWidget = {
           id: makeTempWidgetId(),
-          title: catalog.title,
+          title: defaultTitle,
           position: section.widgets.length,
           configVersion: 1,
           type: widgetType,
@@ -1262,7 +1289,7 @@ const BuilderPage = () => {
       }
 
       if (!inserted) {
-        blockedReason = "Nao foi possivel alocar o widget em nenhuma secao.";
+        blockedReason = "Nao foi possivel alocar o widget em nenhuma seção.";
       }
 
       return next;
@@ -1422,7 +1449,7 @@ const BuilderPage = () => {
     const assistantMessage: ChatMessageData = {
       id: `assistant-${Date.now() + 1}`,
       role: "assistant",
-      content: "Posso ajudar a gerar widgets, secoes e filtros. Use os atalhos W, S e Cmd/Ctrl+S para agilizar o fluxo.",
+      content: "Posso ajudar a gerar widgets, secoes e filtros. Use os atalhos W, S, Cmd/Ctrl+S e Cmd/Ctrl+Shift+S para agilizar o fluxo.",
       status: "done",
     };
     setAssistantMessages((prev) => [...prev, userMessage, assistantMessage]);
@@ -1487,6 +1514,7 @@ const BuilderPage = () => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         if (editingWidget) {
           event.preventDefault();
@@ -1936,7 +1964,7 @@ const BuilderPage = () => {
               <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                 <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                   <Button className="h-8 text-xs rounded-xl bg-accent text-accent-foreground" onClick={() => handleAddSection()}>
-                    <Plus className="mr-1.5 h-4 w-4" /> Criar Secao
+                    <Plus className="mr-1.5 h-4 w-4" /> Criar seção
                   </Button>
                 </motion.div>
               </div>
@@ -1949,9 +1977,11 @@ const BuilderPage = () => {
                 </p>
                 <div className="grid grid-cols-1 gap-1 text-caption text-muted-foreground sm:grid-cols-2">
                   <span><kbd className="rounded border px-1 py-0.5">W</kbd> novo widget</span>
-                  <span><kbd className="rounded border px-1 py-0.5">S</kbd> nova secao</span>
+                  <span><kbd className="rounded border px-1 py-0.5">S</kbd> nova seção</span>
                   <span><kbd className="rounded border px-1 py-0.5">Ctrl+S</kbd> salvar</span>
                   <span><kbd className="rounded border px-1 py-0.5">Cmd+S</kbd> salvar</span>
+                  <span><kbd className="rounded border px-1 py-0.5">Ctrl+Shift+S</kbd> salvar e fechar widget</span>
+                  <span><kbd className="rounded border px-1 py-0.5">Cmd+Shift+S</kbd> salvar e fechar widget</span>
                 </div>
               </div>
             </motion.div>
@@ -2041,6 +2071,7 @@ const BuilderPage = () => {
                   <BuilderRightPanel
                     widget={editingWidget}
                     columns={datasetColumns}
+                    dashboardWidgets={sections.flatMap((section) => section.widgets)}
                     onUpdate={handleUpdateWidget}
                     onDelete={handleDeleteWidgetFromRightPanel}
                     onClose={() => setEditingWidget(null)}

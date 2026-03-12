@@ -560,7 +560,7 @@ const SectionBlock = ({
               onBlur={() => setEditingTitle(false)}
               onKeyDown={(event) => event.key === "Enter" && setEditingTitle(false)}
               className="h-7 max-w-[300px] text-sm font-semibold"
-              placeholder="Nome da secao"
+              placeholder="Nome da seção"
             />
           ) : isSectionTitleVisible ? (
             <button
@@ -568,11 +568,11 @@ const SectionBlock = ({
               onClick={() => !readOnly && setEditingTitle(true)}
               className="flex items-center gap-1 text-sm font-semibold"
             >
-              {section.title || "Secao sem titulo"}
+              {section.title || "Seção sem título"}
               {!readOnly && <Pencil className="h-3 w-3 opacity-0 transition-opacity group-hover/section:opacity-100" />}
             </button>
           ) : (
-            !readOnly && <span className="text-xs font-medium text-muted-foreground">Titulo da secao oculto</span>
+            !readOnly && <span className="text-xs font-medium text-muted-foreground">Título da seção oculto</span>
           )}
 
           <div className="flex-1" />
@@ -604,7 +604,7 @@ const SectionBlock = ({
                 )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
-                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir secao
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir seção
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

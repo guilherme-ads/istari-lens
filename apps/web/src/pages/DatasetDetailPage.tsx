@@ -257,7 +257,7 @@ const DashboardCard = ({
       <div className="space-y-1">
         <h3 className="font-bold text-foreground leading-tight">{dashboard.title}</h3>
         <p className="text-caption">
-          {sectionCount} {sectionCount === 1 ? "secao" : "secoes"} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
+          {sectionCount} {sectionCount === 1 ? "seção" : "seções"} . {widgetCount} {widgetCount === 1 ? "widget" : "widgets"}
         </p>
       </div>
 

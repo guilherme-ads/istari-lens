@@ -412,7 +412,7 @@ export type ApiWidgetConfig = {
   dependencies?: string[];
   kpi_dependencies?: Array<{
     source_type?: "widget" | "column";
-    widget_id?: number;
+    widget_id?: number | string;
     column?: string;
     alias: string;
   }>;

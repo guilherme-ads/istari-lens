@@ -186,15 +186,29 @@ const extractKpiFormulaRefs = (formula: string): string[] => {
 
 const isValidFormulaIdentifier = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 
+const normalizeKpiDependencyWidgetId = (value: unknown): number | string | undefined => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return trimmed;
+};
+
 const normalizeKpiDependencies = (
-  deps: Array<{ source_type?: "widget" | "column"; widget_id?: number; column?: string; alias?: string }> = [],
-): Array<{ source_type: "widget" | "column"; widget_id?: number; column?: string; alias: string }> =>
+  deps: Array<{ source_type?: "widget" | "column"; widget_id?: number | string; column?: string; alias?: string }> = [],
+): Array<{ source_type: "widget" | "column"; widget_id?: number | string; column?: string; alias: string }> =>
   deps
     .map((item, index) => {
       const alias = (item.alias || "").trim() || `kpi_${index}`;
       const column = (item.column || "").trim();
-      const widgetId = Number(item.widget_id);
-      const hasValidWidgetId = Number.isFinite(widgetId) && widgetId > 0;
+      const widgetId = normalizeKpiDependencyWidgetId(item.widget_id);
+      const hasValidWidgetId = widgetId !== undefined;
       const inferredSource: "widget" | "column" = item.source_type === "column"
         ? "column"
         : item.source_type === "widget"
@@ -212,11 +226,11 @@ const normalizeKpiDependencies = (
           }
         : {
             source_type: "widget" as const,
-            widget_id: hasValidWidgetId ? widgetId : undefined,
+            widget_id: widgetId,
             alias,
           };
     })
-    .filter((item) => (item.source_type === "column" ? !!item.column : (item.widget_id || 0) > 0));
+    .filter((item) => (item.source_type === "column" ? !!item.column : normalizeKpiDependencyWidgetId(item.widget_id) !== undefined));
 
 const resolveDrePercentBaseRowIndex = (
   rows: Array<{ row_type: "result" | "deduction" | "detail" }>,
@@ -1137,7 +1151,8 @@ export const WidgetConfigPanel = ({
                             : {
                                 alias: item.alias,
                                 source_type: "widget",
-                                widget_id: item.widget_id || Number(availableDashboardKpiWidgets[0]?.id || 0),
+                                widget_id: normalizeKpiDependencyWidgetId(item.widget_id)
+                                  ?? normalizeKpiDependencyWidgetId(availableDashboardKpiWidgets[0]?.id),
                               };
                           update({ config: { ...draft.config, kpi_dependencies: nextDeps } });
                         }}
@@ -1155,7 +1170,11 @@ export const WidgetConfigPanel = ({
                           if (item.source_type === "column") {
                             nextDeps[index] = { ...item, source_type: "column", column: value };
                           } else {
-                            nextDeps[index] = { ...item, source_type: "widget", widget_id: Number(value) };
+                            nextDeps[index] = {
+                              ...item,
+                              source_type: "widget",
+                              widget_id: normalizeKpiDependencyWidgetId(value),
+                            };
                           }
                           update({ config: { ...draft.config, kpi_dependencies: nextDeps } });
                         }}
@@ -1207,7 +1226,7 @@ export const WidgetConfigPanel = ({
                               (
                                 availableDashboardKpiWidgets.length > 0
                                   ? {
-                                      widget_id: Number(availableDashboardKpiWidgets[0]?.id || 0),
+                                      widget_id: normalizeKpiDependencyWidgetId(availableDashboardKpiWidgets[0]?.id),
                                       source_type: "widget" as const,
                                       alias: `kpi_${(draft.config.kpi_dependencies || []).length}`,
                                     }
