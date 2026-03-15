@@ -396,6 +396,9 @@ export type ApiWidgetMetric = {
   op: "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
   column?: string;
   alias?: string;
+  prefix?: string;
+  suffix?: string;
+  line_style?: "solid" | "dashed" | "dotted";
   line_y_axis?: "left" | "right";
 };
 
@@ -465,8 +468,27 @@ export type ApiWidgetConfig = {
   }>;
   dre_percent_base_row_index?: number;
   columns?: string[];
+  table_column_instances?: Array<{
+    id: string;
+    source: string;
+    label?: string;
+    aggregation?: "none" | "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
+    format?: string;
+    prefix?: string;
+    suffix?: string;
+  }>;
+  table_column_labels?: Record<string, string>;
+  table_column_aggs?: Record<string, "none" | "count" | "sum" | "avg" | "min" | "max" | "distinct_count">;
   table_column_formats?: Record<string, string>;
+  table_column_prefixes?: Record<string, string>;
+  table_column_suffixes?: Record<string, string>;
   table_page_size?: number;
+  table_density?: "compact" | "normal" | "comfortable";
+  table_zebra_rows?: boolean;
+  table_sticky_header?: boolean;
+  table_borders?: boolean;
+  table_default_text_align?: "left" | "center" | "right";
+  table_default_number_align?: "left" | "center" | "right";
   filters: Array<{ column: string; op: string; value?: unknown }>;
   order_by: Array<{ column?: string; metric_ref?: string; direction: "asc" | "desc" }>;
   top_n?: number;

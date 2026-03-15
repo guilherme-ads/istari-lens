@@ -8,8 +8,9 @@ import {
   LineChart as ReLineChart, Line, LabelList, Legend, PieChart as RePieChart, Pie, Cell,
 } from "recharts";
 import { ArrowUpDown, Download, ChevronLeft, ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
-import type { DashboardWidget } from "@/types/dashboard";
+import type { DashboardWidget, MetricOp, TableColumnAggregation } from "@/types/dashboard";
 import { api, type ApiDashboardWidgetDataResponse, type ApiQuerySpec } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const aggLabelMap = {
   count: "CONTAGEM",
@@ -482,11 +483,35 @@ const normalizePreviewFilterValue = (op: string, rawValue: unknown): unknown[] |
   return [rawValue];
 };
 
+const getTableColumnAggregation = (widget: DashboardWidget, columnName: string): TableColumnAggregation => {
+  const rawValue = widget.config.table_column_aggs?.[columnName];
+  if (rawValue === "count" || rawValue === "sum" || rawValue === "avg" || rawValue === "min" || rawValue === "max") {
+    return rawValue;
+  }
+  return "none";
+};
+
+const getTableColumnLabel = (widget: DashboardWidget, columnName: string): string => {
+  const rawLabel = widget.config.table_column_labels?.[columnName];
+  return typeof rawLabel === "string" && rawLabel.trim() ? rawLabel.trim() : columnName;
+};
+
+const getTableColumnPrefix = (widget: DashboardWidget, columnName: string): string => {
+  const rawPrefix = widget.config.table_column_prefixes?.[columnName];
+  return typeof rawPrefix === "string" ? rawPrefix : "";
+};
+
+const getTableColumnSuffix = (widget: DashboardWidget, columnName: string): string => {
+  const rawSuffix = widget.config.table_column_suffixes?.[columnName];
+  return typeof rawSuffix === "string" ? rawSuffix : "";
+};
+
 type DraftPreviewPlan = {
   spec: ApiQuerySpec;
   lineTimeColumn?: string;
   dimensionAliasMap?: Record<string, string>;
   dreRowMetricKeys?: Record<string, string[]>;
+  tableMetricKeyByColumn?: Record<string, string>;
 };
 
 type ComparableDateWindow = {
@@ -596,6 +621,9 @@ const normalizeDraftRowsForWidget = (
     Object.entries(draftPreviewPlan.dreRowMetricKeys || {}).forEach(([target, sourceKeys]) => {
       row[target] = sourceKeys.reduce((acc, sourceKey) => acc + toFiniteNumber(row[sourceKey]), 0);
     });
+    Object.entries(draftPreviewPlan.tableMetricKeyByColumn || {}).forEach(([target, sourceKey]) => {
+      row[target] = row[sourceKey];
+    });
     return row;
   });
 };
@@ -612,6 +640,7 @@ const buildDraftPreviewSpec = ({
   const widgetType = widget.config.widget_type;
   const isKpi = widgetType === "kpi";
   const isLine = widgetType === "line";
+  const isDonut = widgetType === "donut";
   const isCategorical = widgetType === "bar" || widgetType === "column" || widgetType === "donut";
   const isTable = widgetType === "table";
   const isDre = widgetType === "dre";
@@ -635,27 +664,42 @@ const buildDraftPreviewSpec = ({
   if ((isKpi || isCategorical) && metrics.length !== 1) return null;
   if (isLine && (metrics.length < 1 || metrics.length > 2)) return null;
   const dreRowMetricKeys: Record<string, string[]> = {};
+  const tableMetricKeyByColumn: Record<string, string> = {};
   if (isDre) {
     const dreRows = widget.config.dre_rows || [];
     if (dreRows.length === 0) return null;
     metrics = [];
+    const dreMetricRefs: Array<{ targetKey: string; metric: { field: string; agg: MetricOp } }> = [];
     for (let rowIndex = 0; rowIndex < dreRows.length; rowIndex += 1) {
       const row = dreRows[rowIndex];
       const rowMetrics = (row.metrics || [])
         .filter((metric) => !!metric.op && (metric.op === "count" || !!metric.column))
         .map((metric) => ({
           field: metric.column || "*",
-          agg: metric.op,
+          agg: metric.op as MetricOp,
         }));
       if (rowMetrics.length === 0) return null;
       const targetKey = `m${rowIndex}`;
-      dreRowMetricKeys[targetKey] = [];
       rowMetrics.forEach((metric) => {
-        const sourceKey = `m${metrics.length}`;
-        metrics.push(metric);
-        dreRowMetricKeys[targetKey].push(sourceKey);
+        dreMetricRefs.push({ targetKey, metric });
       });
     }
+    const metricCanonicalKey = (metric: { field: string; agg: MetricOp }) =>
+      JSON.stringify({ agg: metric.agg, field: metric.field });
+    const uniqueByKey = new Map<string, { field: string; agg: MetricOp }>();
+    dreMetricRefs.forEach(({ metric }) => {
+      const key = metricCanonicalKey(metric);
+      if (!uniqueByKey.has(key)) uniqueByKey.set(key, metric);
+    });
+    const orderedEntries = Array.from(uniqueByKey.entries()).sort(([left], [right]) => left.localeCompare(right));
+    metrics = orderedEntries.map(([, metric]) => metric);
+    const sourceIndexByKey = new Map<string, number>(orderedEntries.map(([key], index) => [key, index]));
+    dreMetricRefs.forEach(({ targetKey, metric }) => {
+      const sourceIndex = sourceIndexByKey.get(metricCanonicalKey(metric));
+      if (sourceIndex === undefined) return;
+      if (!dreRowMetricKeys[targetKey]) dreRowMetricKeys[targetKey] = [];
+      dreRowMetricKeys[targetKey].push(`m${sourceIndex}`);
+    });
   }
 
   const dimensionAliasMap: Record<string, string> = {};
@@ -698,10 +742,25 @@ const buildDraftPreviewSpec = ({
     dimensions = [lineTimeDimension, ...legendDimension];
     lineTimeColumn = lineTimeDimension;
   } else if (isTable) {
-    dimensions = (widget.config.columns || [])
+    const configuredColumns = (widget.config.columns || [])
       .map((column) => column.trim())
       .filter((column) => !!column);
-    if (dimensions.length === 0) return null;
+    if (configuredColumns.length === 0) return null;
+    metrics = [];
+    dimensions = [];
+    configuredColumns.forEach((columnName) => {
+      const aggregation = getTableColumnAggregation(widget, columnName);
+      if (aggregation === "none") {
+        dimensions.push(columnName);
+        return;
+      }
+      tableMetricKeyByColumn[columnName] = `m${metrics.length}`;
+      metrics.push({
+        field: columnName,
+        agg: aggregation,
+      });
+    });
+    if (dimensions.length === 0 && metrics.length === 0) return null;
   }
 
   const mergedFilters = [
@@ -736,9 +795,11 @@ const buildDraftPreviewSpec = ({
     : isKpi
     ? (widget.config.composite_metric ? (widget.config.limit || 500) : 1)
     : isDre
-    ? 1
+    ? 5000
     : isTable
     ? (widget.config.limit || widget.config.table_page_size || 25)
+    : isDonut && widget.config.donut_group_others_enabled
+    ? (widget.config.limit || 5000)
     : (widget.config.top_n || widget.config.limit || 200);
   const limit = Math.max(1, Math.min(5000, Number(rawLimit) || 200));
   const offset = Math.max(0, Number(widget.config.offset) || 0);
@@ -756,6 +817,7 @@ const buildDraftPreviewSpec = ({
     lineTimeColumn,
     dimensionAliasMap: Object.keys(dimensionAliasMap).length > 0 ? dimensionAliasMap : undefined,
     dreRowMetricKeys: Object.keys(dreRowMetricKeys).length > 0 ? dreRowMetricKeys : undefined,
+    tableMetricKeyByColumn: Object.keys(tableMetricKeyByColumn).length > 0 ? tableMetricKeyByColumn : undefined,
   };
 };
 
@@ -950,21 +1012,68 @@ const MiniTable = ({
   widget: DashboardWidget;
   hideExport?: boolean;
 }) => {
-  const [sortBy, setSortBy] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
+  const [sortBy, setSortBy] = useState<{ column_id: string; source: string; direction: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(1);
   const configured = widget.config.columns || [];
   const rowKeys = Object.keys(rows[0] || {});
   const pageSize = Math.max(1, widget.config.table_page_size || 25);
-  const tableColumns = configured.length > 0
-    ? [...configured.filter((column) => rowKeys.includes(column)), ...rowKeys.filter((column) => !configured.includes(column))]
-    : rowKeys;
+  const tableColumnDefs = (Array.isArray(widget.config.table_column_instances) && widget.config.table_column_instances.length > 0
+    ? widget.config.table_column_instances
+      .filter((item) => !!item.source)
+      .map((item, index) => ({
+        id: item.id || `${item.source}__${index}`,
+        source: item.source,
+        label: (item.label && item.label.trim()) || item.source,
+        format: item.format || widget.config.table_column_formats?.[item.source] || "native",
+        aggregation: item.aggregation || getTableColumnAggregation(widget, item.source),
+        prefix: item.prefix ?? getTableColumnPrefix(widget, item.source),
+        suffix: item.suffix ?? getTableColumnSuffix(widget, item.source),
+      }))
+    : (() => {
+      const tableColumns = configured.length > 0
+        ? [...configured.filter((column) => rowKeys.includes(column)), ...rowKeys.filter((column) => !configured.includes(column))]
+        : rowKeys;
+      return tableColumns.map((key, index) => ({
+        id: `${key}__${index}`,
+        source: key,
+        label: getTableColumnLabel(widget, key),
+        format: widget.config.table_column_formats?.[key] || "native",
+        aggregation: getTableColumnAggregation(widget, key),
+        prefix: getTableColumnPrefix(widget, key),
+        suffix: getTableColumnSuffix(widget, key),
+      }));
+    })());
+  const tableDensity = widget.config.table_density || "normal";
+  const densityClassByMode = {
+    compact: {
+      head: "py-1.5",
+      cell: "py-1 text-[11px]",
+    },
+    normal: {
+      head: "py-2",
+      cell: "py-1.5 text-xs",
+    },
+    comfortable: {
+      head: "py-2.5",
+      cell: "py-2 text-sm",
+    },
+  } as const;
+  const densityClass = densityClassByMode[tableDensity];
+  const stickyHeaderClass = widget.config.table_sticky_header !== false ? "sticky top-0 z-10 bg-muted/40 backdrop-blur-sm" : "bg-muted/30";
+  const tableFrameClass = widget.config.table_borders !== false ? "rounded-lg border border-border" : "";
+  const rowBorderClass = widget.config.table_borders !== false ? "border-b border-border/60 last:border-b-0" : "";
+  const textAlignClass = {
+    left: "text-left",
+    center: "text-center",
+    right: "text-right",
+  } as const;
 
   const sortedRows = useMemo(() => {
     if (!sortBy) return rows;
     const copy = [...rows];
     copy.sort((a, b) => {
-      const av = a[sortBy.column];
-      const bv = b[sortBy.column];
+      const av = a[sortBy.source];
+      const bv = b[sortBy.source];
       if (av === bv) return 0;
       if (av === null || av === undefined) return 1;
       if (bv === null || bv === undefined) return -1;
@@ -996,10 +1105,10 @@ const MiniTable = ({
       }
       return value;
     };
-    const header = tableColumns.map(escapeCsv).join(",");
+    const header = tableColumnDefs.map((column) => escapeCsv(column.label)).join(",");
     const body = sortedRows.map((row) =>
-      tableColumns
-        .map((key) => escapeCsv(formatByTableConfig(row[key], widget.config.table_column_formats?.[key] || "native")))
+      tableColumnDefs
+        .map((column) => escapeCsv(`${column.prefix}${formatByTableConfig(row[column.source], column.format)}${column.suffix}`))
         .join(","))
       .join("\n");
     const csv = `${header}\n${body}`;
@@ -1026,25 +1135,26 @@ const MiniTable = ({
         )}
       </div>
 
-      <div className="flex-1 overflow-auto rounded-lg border border-border">
+      <div className={cn("flex-1 overflow-auto", tableFrameClass)}>
         <div className="min-w-max">
           <Table>
-            <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
-              <TableRow className="hover:bg-muted/30">
-                {tableColumns.map((key) => (
-                  <TableHead key={key} className="text-xs font-semibold whitespace-nowrap py-2 min-w-[120px]">
+            <TableHeader className={stickyHeaderClass}>
+              <TableRow className={cn("hover:bg-muted/30", rowBorderClass)}>
+                {tableColumnDefs.map((column) => (
+                  <TableHead key={column.id} className={cn("min-w-[120px] whitespace-nowrap text-xs font-semibold", densityClass.head)}>
                     <button
                       className="inline-flex items-center gap-1 hover:text-foreground"
                       onClick={() => {
                         setPage(1);
                         setSortBy((prev) => {
-                          if (!prev || prev.column !== key) return { column: key, direction: "asc" };
-                          if (prev.direction === "asc") return { column: key, direction: "desc" };
+                          if (!prev || prev.column_id !== column.id) return { column_id: column.id, source: column.source, direction: "asc" };
+                          if (prev.direction === "asc") return { column_id: column.id, source: column.source, direction: "desc" };
                           return null;
                         });
                       }}
                     >
-                      {key}
+                      {column.label}
+                      {column.aggregation !== "none" && <span className="text-[10px] text-muted-foreground">{column.aggregation.toUpperCase()}</span>}
                       <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </TableHead>
@@ -1053,12 +1163,33 @@ const MiniTable = ({
             </TableHeader>
             <TableBody>
               {pageRows.map((row, idx) => (
-                <TableRow key={`${safePage}-${idx}`} className="even:bg-muted/20">
-                  {tableColumns.map((key) => (
-                    <TableCell key={key} className={`py-1.5 text-xs whitespace-nowrap ${typeof row[key] === "number" ? "font-mono text-right tabular-nums" : ""}`}>
-                      {formatByTableConfig(row[key], widget.config.table_column_formats?.[key] || "native")}
-                    </TableCell>
-                  ))}
+                <TableRow
+                  key={`${safePage}-${idx}`}
+                  className={cn(
+                    rowBorderClass,
+                    widget.config.table_zebra_rows !== false && "even:bg-muted/20",
+                  )}
+                >
+                  {tableColumnDefs.map((column) => {
+                    const value = row[column.source];
+                    const isNumericValue = typeof value === "number" || column.aggregation !== "none";
+                    const alignClass = isNumericValue
+                      ? textAlignClass[widget.config.table_default_number_align || "right"]
+                      : textAlignClass[widget.config.table_default_text_align || "left"];
+                    return (
+                      <TableCell
+                        key={column.id}
+                        className={cn(
+                          "whitespace-nowrap",
+                          densityClass.cell,
+                          alignClass,
+                          isNumericValue && "font-mono tabular-nums",
+                        )}
+                      >
+                        {column.prefix}{formatByTableConfig(value, column.format)}{column.suffix}
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
               ))}
             </TableBody>
@@ -1269,10 +1400,10 @@ export const WidgetRenderer = ({
   ]);
   const effectiveKpiComparison = kpiComparison ?? localKpiComparison;
 
-  const rows = useMemo(
-    () => preloadedData?.rows || widgetQuery.data?.rows || normalizedDraftRows || [],
-    [normalizedDraftRows, preloadedData, widgetQuery.data],
-  );
+  const rows = useMemo(() => {
+    const baseRows = preloadedData?.rows || widgetQuery.data?.rows || normalizedDraftRows || [];
+    return normalizeDraftRowsForWidget(baseRows, draftPreviewPlan);
+  }, [draftPreviewPlan, normalizedDraftRows, preloadedData, widgetQuery.data]);
   useEffect(() => {
     if (widget.config.widget_type !== "kpi") return;
     const containerEl = kpiValueContainerRef.current;
@@ -1350,6 +1481,21 @@ export const WidgetRenderer = ({
   const lineMetricAxisByKey = widget.config.widget_type === "line"
     ? Object.fromEntries(
       widget.config.metrics.map((item, index) => [`m${index}`, item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right"]),
+    )
+    : {};
+  const lineMetricStyleByKey = widget.config.widget_type === "line"
+    ? Object.fromEntries(
+      widget.config.metrics.map((item, index) => [`m${index}`, item.line_style || "solid"]),
+    )
+    : {};
+  const lineMetricPrefixByKey = widget.config.widget_type === "line"
+    ? Object.fromEntries(
+      widget.config.metrics.map((item, index) => [`m${index}`, item.prefix || ""]),
+    )
+    : {};
+  const lineMetricSuffixByKey = widget.config.widget_type === "line"
+    ? Object.fromEntries(
+      widget.config.metrics.map((item, index) => [`m${index}`, item.suffix || ""]),
     )
     : {};
   const lineLegendDimension = widget.config.widget_type === "line" ? widget.config.dimensions[0] : undefined;
@@ -1500,11 +1646,27 @@ export const WidgetRenderer = ({
     if (!parsed) return String(value);
     return formatDateBR(parsed, true, lineGranularity === "timestamp");
   };
-  const chartPrefix = widget.config.kpi_prefix || "";
-  const chartSuffix = widget.config.kpi_suffix || "";
+  const chartPrefix = widget.config.widget_type === "line"
+    ? (widget.config.metrics[0]?.prefix || widget.config.kpi_prefix || "")
+    : (widget.config.kpi_prefix || "");
+  const chartSuffix = widget.config.widget_type === "line"
+    ? (widget.config.metrics[0]?.suffix || widget.config.kpi_suffix || "")
+    : (widget.config.kpi_suffix || "");
   const showPercentOfTotal = !!widget.config.bar_show_percent_of_total;
   const formatChartValueCompact = (value: unknown): string => `${chartPrefix}${formatCompactNumber(value)}${chartSuffix}`;
   const formatChartValueFull = (value: unknown): string => `${chartPrefix}${formatFullNumber(value)}${chartSuffix}`;
+  const formatLineSeriesValueCompact = (seriesKey: string, value: unknown): string => {
+    const baseMetricKey = seriesKey.includes("__") ? seriesKey.split("__")[0] : seriesKey;
+    const prefix = lineMetricPrefixByKey[baseMetricKey] || "";
+    const suffix = lineMetricSuffixByKey[baseMetricKey] || "";
+    return `${prefix}${formatCompactNumber(value)}${suffix}`;
+  };
+  const formatLineSeriesValueFull = (seriesKey: string, value: unknown): string => {
+    const baseMetricKey = seriesKey.includes("__") ? seriesKey.split("__")[0] : seriesKey;
+    const prefix = lineMetricPrefixByKey[baseMetricKey] || "";
+    const suffix = lineMetricSuffixByKey[baseMetricKey] || "";
+    return `${prefix}${formatFullNumber(value)}${suffix}`;
+  };
 
   if (forcedLoading) {
     return <WidgetLoadingSkeleton type={widget.config.widget_type} chartHeight={chartHeight} />;
@@ -1615,25 +1777,34 @@ export const WidgetRenderer = ({
               const isSubtract = row.impact === "subtract";
               const isDetail = row.row_type === "detail";
               const rowTextColorClass = isDetail ? "text-muted-foreground" : "text-foreground";
+              const rowWeightClass = isResult ? "font-semibold" : "";
               const normalizedTitle = row.title.replace(/^\((?:-|\+)\)\s*/i, "");
               const accountLabel = row.row_type === "deduction"
                 ? (isSubtract ? `(-) ${normalizedTitle}` : `(+) ${normalizedTitle}`)
                 : row.title;
-              const valueText = isSubtract
+              const valueText = isDetail
+                ? formatCurrencyBRL(Math.abs(row.effective))
+                : isSubtract
                 ? `(${formatCurrencyBRL(Math.abs(row.effective))})`
                 : formatCurrencyBRL(row.effective);
+              const detailPercentText = formatPercentOfTotal(Math.abs(row.effective), totalBase);
+              const percentText = isDetail
+                ? detailPercentText
+                : formatPercentOfTotal(row.effective, totalBase);
+              const valueColorClass = isDetail ? rowTextColorClass : (isSubtract ? "text-rose-500" : rowTextColorClass);
+              const percentColorClass = isDetail ? rowTextColorClass : (isSubtract ? "text-rose-500" : rowTextColorClass);
               return (
                 <tr key={`dre-${index}`} className="border-b border-border/60 last:border-b-0 transition-colors hover:bg-muted/30">
                   <td
-                    className={`px-3 py-2 text-left ${isResult ? "font-semibold" : ""} ${isDetail ? "pl-7" : ""} ${rowTextColorClass}`}
+                    className={`px-3 py-2 text-left ${rowWeightClass} ${isDetail ? "pl-7" : ""} ${rowTextColorClass}`}
                   >
                     {accountLabel}
                   </td>
-                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isSubtract ? "text-rose-500" : rowTextColorClass}`}>
+                  <td className={`px-3 py-2 text-right tabular-nums ${rowWeightClass} ${valueColorClass}`}>
                     {valueText}
                   </td>
-                  <td className={`px-3 py-2 text-right tabular-nums ${isResult ? "font-semibold" : ""} ${isSubtract ? "text-rose-500" : rowTextColorClass}`}>
-                    {formatPercentOfTotal(row.effective, totalBase)}
+                  <td className={`px-3 py-2 text-right tabular-nums ${rowWeightClass} ${percentColorClass}`}>
+                    {percentText}
                   </td>
                 </tr>
               );
@@ -1795,7 +1966,7 @@ export const WidgetRenderer = ({
                               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color || chartPalette[index % chartPalette.length] }} />
                               {seriesLabel}
                             </span>
-                            <span className="font-semibold tabular-nums text-foreground">{formatChartValueFull(item.value)}</span>
+                            <span className="font-semibold tabular-nums text-foreground">{formatLineSeriesValueFull(seriesKey, item.value)}</span>
                           </div>
                         );
                       })}
@@ -1806,38 +1977,46 @@ export const WidgetRenderer = ({
             />
             {lineSeriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: 10 }} />}
             {lineSeriesKeys.map((seriesKey, index) => (
-              <Line
-                key={seriesKey}
-                type="monotone"
-                dataKey={seriesKey}
-                name={lineSeriesLabelByKey[seriesKey] || seriesKey}
-                yAxisId={lineSeriesAxisByKey[seriesKey] || "left"}
-                stroke={chartPalette[index % chartPalette.length]}
-                strokeWidth={2}
-                dot={false}
-              >
-                {showLineLabels && (
-                  <LabelList
+              (() => {
+                const baseMetricKey = seriesKey.includes("__") ? seriesKey.split("__")[0] : seriesKey;
+                const lineStyle = (lineMetricStyleByKey[baseMetricKey] || "solid") as "solid" | "dashed" | "dotted";
+                const strokeDasharray = lineStyle === "dashed" ? "8 5" : (lineStyle === "dotted" ? "2 6" : undefined);
+                return (
+                  <Line
+                    key={seriesKey}
+                    type="monotone"
                     dataKey={seriesKey}
-                    content={(props: Record<string, unknown>) => {
-                      const value = props.value;
-                      const x = Number(props.x || 0);
-                      const y = Number(props.y || 0);
-                      const indexValue = Number(props.index || 0);
-                      const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
-                      if (value === undefined || value === null) return null;
-                      if (!(lineLabelEventsBySeries[seriesKey]?.has(indexValue))) return null;
-                      const axis = lineSeriesAxisByKey[seriesKey] || "left";
-                      const yOffset = axis === "left" ? -12 : 12;
-                      const baseY = y + yOffset;
-                      const plotTop = Number(viewBox?.y ?? 0);
-                      const plotBottom = plotTop + Number(viewBox?.height ?? chartHeight);
-                      const safeY = clamp(baseY, plotTop + 10, plotBottom - 10);
-                      return renderGlassLabel({ x, y: safeY, text: formatChartValueCompact(value), fontSize: 10 });
-                    }}
-                  />
-                )}
-              </Line>
+                    name={lineSeriesLabelByKey[seriesKey] || seriesKey}
+                    yAxisId={lineSeriesAxisByKey[seriesKey] || "left"}
+                    stroke={chartPalette[index % chartPalette.length]}
+                    strokeWidth={2}
+                    strokeDasharray={strokeDasharray}
+                    dot={false}
+                  >
+                    {showLineLabels && (
+                      <LabelList
+                        dataKey={seriesKey}
+                        content={(props: Record<string, unknown>) => {
+                          const value = props.value;
+                          const x = Number(props.x || 0);
+                          const y = Number(props.y || 0);
+                          const indexValue = Number(props.index || 0);
+                          const viewBox = props.viewBox as { y?: number; height?: number } | undefined;
+                          if (value === undefined || value === null) return null;
+                          if (!(lineLabelEventsBySeries[seriesKey]?.has(indexValue))) return null;
+                          const axis = lineSeriesAxisByKey[seriesKey] || "left";
+                          const yOffset = axis === "left" ? -12 : 12;
+                          const baseY = y + yOffset;
+                          const plotTop = Number(viewBox?.y ?? 0);
+                          const plotBottom = plotTop + Number(viewBox?.height ?? chartHeight);
+                          const safeY = clamp(baseY, plotTop + 10, plotBottom - 10);
+                          return renderGlassLabel({ x, y: safeY, text: formatLineSeriesValueCompact(seriesKey, value), fontSize: 10 });
+                        }}
+                      />
+                    )}
+                  </Line>
+                );
+              })()
             ))}
           </ReLineChart>
         </ResponsiveContainer>
@@ -2105,10 +2284,8 @@ export const WidgetRenderer = ({
 
   const donutShowLegend = widget.config.donut_show_legend !== false;
   const donutDataLabelsEnabled = !!widget.config.donut_data_labels_enabled;
-  const donutLabelMinPercent = Math.max(1, Math.min(100, widget.config.donut_data_labels_min_percent || 6));
-  const donutMetricDisplay = widget.config.donut_metric_display === "percent" ? "percent" : "value";
-  const donutGroupOthersEnabled = widget.config.donut_group_others_enabled !== false;
-  const donutGroupOthersTopN = Math.max(2, Math.min(12, Math.trunc(widget.config.donut_group_others_top_n || 3)));
+  const donutGroupOthersEnabled = !!widget.config.donut_group_others_enabled;
+  const donutGroupOthersTopN = Math.max(2, Math.min(200, Math.trunc(widget.config.donut_group_others_top_n || widget.config.top_n || 3)));
   const donutCanvasHeight = Math.max(160, chartHeight);
   const donutLegendReservedHeight = donutShowLegend ? 34 : 0;
   const donutLabelTopPadding = 12;
@@ -2123,22 +2300,45 @@ export const WidgetRenderer = ({
       })()
     : chartRows;
   const donutTotal = donutRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
-  const shouldShowDonutLabel = (entry: { percent?: number }) =>
-    Number(entry?.percent || 0) * 100 >= donutLabelMinPercent;
+  const shouldShowDonutLabel = (_entry: { percent?: number }) => true;
 
   return (
     <ResponsiveContainer width="100%" height={donutCanvasHeight}>
       <RePieChart>
         <Tooltip
-          contentStyle={tooltipStyle}
-          formatter={(value, _name, item) => {
-            const numericValue = toFiniteNumber(value);
+          content={(props) => {
+            const payload = (props.payload || []) as Array<{ value?: unknown; payload?: Record<string, unknown>; color?: string }>;
+            const point = payload[0];
+            if (!props.active || !point) return null;
+            const category = String(point.payload?.[dimKey] ?? "");
+            const numericValue = toFiniteNumber(point.value);
             const percent = donutTotal > 0 ? (numericValue / donutTotal) * 100 : 0;
-            const formatted = donutMetricDisplay === "percent" ? formatPercent(percent) : formatCompactNumber(numericValue);
-            return [formatted, String(item?.payload?.[dimKey] ?? "")];
+            const valueText = formatChartValueFull(numericValue);
+            return (
+              <div
+                className="min-w-[170px] rounded-xl border border-border/60 bg-[hsl(var(--card)/0.72)] px-3 py-2 shadow-xl backdrop-blur-md"
+                style={{ boxShadow: "0 14px 30px -16px rgba(2,6,23,0.65)" }}
+              >
+                <p className="text-[11px] font-semibold text-foreground/95">{category}</p>
+                <div className="mt-1 flex items-center justify-between gap-3 text-[11px]">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: point.color || "hsl(var(--chart-1))" }} />
+                    {metricLabel}
+                  </span>
+                  <span className="font-semibold tabular-nums text-foreground">{valueText}</span>
+                </div>
+                <p className="mt-0.5 text-right text-[10px] text-muted-foreground">{formatPercent(percent)}</p>
+              </div>
+            );
           }}
         />
-        {donutShowLegend && <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10 }} />}
+        {donutShowLegend && (
+          <Legend
+            verticalAlign="bottom"
+            align="center"
+            wrapperStyle={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}
+          />
+        )}
         <Pie
           data={donutRows}
           dataKey={metricKey}
@@ -2173,7 +2373,7 @@ export const WidgetRenderer = ({
                 const safeY = clamp(y, donutLabelTopPadding, donutCanvasHeight - donutLabelBottomPadding);
                 const numericValue = toFiniteNumber(entry.value);
                 const percent = donutTotal > 0 ? (numericValue / donutTotal) * 100 : 0;
-                const text = donutMetricDisplay === "percent" ? formatPercent(percent) : formatCompactNumber(numericValue);
+                const text = `${formatCompactNumber(numericValue)} (${formatPercent(percent)})`;
                 return (
                   <g>
                     <line
@@ -2181,10 +2381,10 @@ export const WidgetRenderer = ({
                       y1={lineStartY}
                       x2={x}
                       y2={safeY}
-                      stroke="rgba(148,163,184,0.75)"
+                      stroke="hsl(var(--border-default) / 0.8)"
                       strokeWidth={1}
                     />
-                    {renderGlassLabel({ x, y: safeY, text, fontSize: 10 })}
+                    {renderGlassLabel({ x, y: safeY, text, fontSize: 9 })}
                   </g>
                 );
               }

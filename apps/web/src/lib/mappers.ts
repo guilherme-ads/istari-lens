@@ -66,6 +66,11 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
           op: asString(metric.op, "count") as WidgetConfig["metrics"][number]["op"],
           column: typeof metric.column === "string" ? metric.column : undefined,
           alias: typeof metric.alias === "string" ? metric.alias : undefined,
+          prefix: typeof metric.prefix === "string" ? metric.prefix : undefined,
+          suffix: typeof metric.suffix === "string" ? metric.suffix : undefined,
+          line_style: (["solid", "dashed", "dotted"].includes(asString(metric.line_style, "solid"))
+            ? asString(metric.line_style, "solid")
+            : "solid") as "solid" | "dashed" | "dotted",
           line_y_axis: (asString(metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
         }))
     : [];
@@ -206,12 +211,24 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
                   .map((metric) => ({
                     op: asString(metric.op, "count") as WidgetConfig["metrics"][number]["op"],
                     column: typeof metric.column === "string" ? metric.column : undefined,
+                    alias: typeof metric.alias === "string" ? metric.alias : undefined,
+                    prefix: typeof metric.prefix === "string" ? metric.prefix : undefined,
+                    suffix: typeof metric.suffix === "string" ? metric.suffix : undefined,
+                    line_style: (["solid", "dashed", "dotted"].includes(asString(metric.line_style, "solid"))
+                      ? asString(metric.line_style, "solid")
+                      : "solid") as "solid" | "dashed" | "dotted",
                     line_y_axis: (asString(metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
                   }))
               : isObject(item.metric)
                 ? [{
                     op: asString(item.metric.op, "count") as WidgetConfig["metrics"][number]["op"],
                     column: typeof item.metric.column === "string" ? item.metric.column : undefined,
+                    alias: typeof item.metric.alias === "string" ? item.metric.alias : undefined,
+                    prefix: typeof item.metric.prefix === "string" ? item.metric.prefix : undefined,
+                    suffix: typeof item.metric.suffix === "string" ? item.metric.suffix : undefined,
+                    line_style: (["solid", "dashed", "dotted"].includes(asString(item.metric.line_style, "solid"))
+                      ? asString(item.metric.line_style, "solid")
+                      : "solid") as "solid" | "dashed" | "dotted",
                     line_y_axis: (asString(item.metric.line_y_axis, "left") === "right" ? "right" : "left") as "left" | "right",
                   }]
                 : [{ op: "count" as const, column: undefined, line_y_axis: "left" as const }],
@@ -222,13 +239,73 @@ const parseWidgetConfig = (raw: unknown): WidgetConfig | null => {
       : undefined,
     filters,
     order_by: orderBy,
+    table_column_instances: Array.isArray(raw.table_column_instances)
+      ? raw.table_column_instances
+          .filter(isObject)
+          .map((item, index) => {
+            const source = asString(item.source);
+            const id = asString(item.id) || `${source || "column"}__${index}`;
+            const aggregationRaw = asString(item.aggregation, "none");
+            const aggregation = ["none", "count", "sum", "avg", "min", "max", "distinct_count"].includes(aggregationRaw)
+              ? aggregationRaw as "none" | "count" | "sum" | "avg" | "min" | "max" | "distinct_count"
+              : "none";
+            return {
+              id,
+              source,
+              label: asString(item.label) || undefined,
+              aggregation,
+              format: asString(item.format) || undefined,
+              prefix: asString(item.prefix) || undefined,
+              suffix: asString(item.suffix) || undefined,
+            };
+          })
+          .filter((item) => !!item.source)
+      : undefined,
+    table_column_labels: isObject(raw.table_column_labels)
+      ? Object.entries(raw.table_column_labels).reduce<Record<string, string>>((acc, [key, value]) => {
+          if (typeof value === "string" && value.trim()) acc[key] = value;
+          return acc;
+        }, {})
+      : undefined,
+    table_column_aggs: isObject(raw.table_column_aggs)
+      ? Object.entries(raw.table_column_aggs).reduce<Record<string, "none" | "count" | "sum" | "avg" | "min" | "max" | "distinct_count">>((acc, [key, value]) => {
+          if (typeof value === "string" && ["none", "count", "sum", "avg", "min", "max", "distinct_count"].includes(value)) {
+            acc[key] = value as "none" | "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
+          }
+          return acc;
+        }, {})
+      : undefined,
     table_column_formats: isObject(raw.table_column_formats)
       ? Object.entries(raw.table_column_formats).reduce<Record<string, string>>((acc, [key, value]) => {
           if (typeof value === "string") acc[key] = value;
           return acc;
         }, {})
       : undefined,
+    table_column_prefixes: isObject(raw.table_column_prefixes)
+      ? Object.entries(raw.table_column_prefixes).reduce<Record<string, string>>((acc, [key, value]) => {
+          if (typeof value === "string") acc[key] = value;
+          return acc;
+        }, {})
+      : undefined,
+    table_column_suffixes: isObject(raw.table_column_suffixes)
+      ? Object.entries(raw.table_column_suffixes).reduce<Record<string, string>>((acc, [key, value]) => {
+          if (typeof value === "string") acc[key] = value;
+          return acc;
+        }, {})
+      : undefined,
     table_page_size: Math.max(1, asNumber(raw.table_page_size, 25)),
+    table_density: (["compact", "normal", "comfortable"].includes(asString(raw.table_density, "normal"))
+      ? asString(raw.table_density, "normal")
+      : "normal") as "compact" | "normal" | "comfortable",
+    table_zebra_rows: typeof raw.table_zebra_rows === "boolean" ? raw.table_zebra_rows : true,
+    table_sticky_header: typeof raw.table_sticky_header === "boolean" ? raw.table_sticky_header : true,
+    table_borders: typeof raw.table_borders === "boolean" ? raw.table_borders : true,
+    table_default_text_align: (["left", "center", "right"].includes(asString(raw.table_default_text_align, "left"))
+      ? asString(raw.table_default_text_align, "left")
+      : "left") as "left" | "center" | "right",
+    table_default_number_align: (["left", "center", "right"].includes(asString(raw.table_default_number_align, "right"))
+      ? asString(raw.table_default_number_align, "right")
+      : "right") as "left" | "center" | "right",
   };
 
   if (isObject(raw.time) && typeof raw.time.column === "string" && typeof raw.time.granularity === "string") {

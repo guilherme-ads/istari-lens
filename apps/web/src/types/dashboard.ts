@@ -9,6 +9,16 @@ export type WidgetHeight = 0.5 | 1 | 2;
 export type WidgetPadding = "compact" | "normal" | "comfortable";
 export type WidgetPalette = "default" | "warm" | "cool" | "mono" | "vivid";
 export type TextAlign = "left" | "center" | "right";
+export type TableColumnAggregation = "none" | MetricOp;
+export interface TableColumnInstance {
+  id: string;
+  source: string;
+  label?: string;
+  aggregation?: TableColumnAggregation;
+  format?: string;
+  prefix?: string;
+  suffix?: string;
+}
 export type FilterOp =
   | "eq"
   | "neq"
@@ -27,6 +37,9 @@ export interface WidgetMetric {
   op: MetricOp;
   column?: string;
   alias?: string;
+  prefix?: string;
+  suffix?: string;
+  line_style?: "solid" | "dashed" | "dotted";
   line_y_axis?: "left" | "right";
 }
 
@@ -114,8 +127,19 @@ export interface WidgetConfig {
   }>;
   dre_percent_base_row_index?: number;
   columns?: string[];
+  table_column_instances?: TableColumnInstance[];
+  table_column_labels?: Record<string, string>;
+  table_column_aggs?: Record<string, TableColumnAggregation>;
   table_column_formats?: Record<string, string>;
+  table_column_prefixes?: Record<string, string>;
+  table_column_suffixes?: Record<string, string>;
   table_page_size?: number;
+  table_density?: WidgetPadding;
+  table_zebra_rows?: boolean;
+  table_sticky_header?: boolean;
+  table_borders?: boolean;
+  table_default_text_align?: TextAlign;
+  table_default_number_align?: TextAlign;
   filters: WidgetFilter[];
   order_by: WidgetOrderBy[];
   top_n?: number;
@@ -356,15 +380,8 @@ export const createDefaultWidgetConfig = (params: {
       size: { width: 1, height: 1 },
       metrics: [],
       dimensions: [],
-      dre_rows: [
-        {
-          title: "Faturamento",
-          row_type: "result",
-          impact: "add",
-          metrics: [{ op: "sum", column: numeric?.name || fallback?.name }],
-        },
-      ],
-      dre_percent_base_row_index: 0,
+      dre_rows: [],
+      dre_percent_base_row_index: undefined,
       filters: [],
       order_by: [],
     };
@@ -380,8 +397,27 @@ export const createDefaultWidgetConfig = (params: {
     metrics: [],
     dimensions: [],
     columns: columns.slice(0, Math.min(5, columns.length)).map((column) => column.name),
+    table_column_instances: columns.slice(0, Math.min(5, columns.length)).map((column, index) => ({
+      id: `${column.name}__${index}`,
+      source: column.name,
+      label: undefined,
+      aggregation: "none",
+      format: undefined,
+      prefix: undefined,
+      suffix: undefined,
+    })),
+    table_column_labels: {},
+    table_column_aggs: {},
     table_column_formats: {},
+    table_column_prefixes: {},
+    table_column_suffixes: {},
     table_page_size: 25,
+    table_density: "normal",
+    table_zebra_rows: true,
+    table_sticky_header: true,
+    table_borders: true,
+    table_default_text_align: "left",
+    table_default_number_align: "right",
     filters: [],
     order_by: [],
   };

@@ -4,12 +4,18 @@ import { api } from "@/lib/api";
 import { mapDashboard, mapDataset, mapDatasource, mapView } from "@/lib/mappers";
 import { getAuthToken } from "@/lib/auth";
 
+const CORE_DATA_STALE_MS = 60_000;
+const CORE_DATA_GC_MS = 10 * 60_000;
+
 export const useCoreData = () => {
   const hasToken = !!getAuthToken();
   const datasourcesQuery = useQuery({
     queryKey: ["datasources"],
     queryFn: api.listDatasources,
     enabled: hasToken,
+    staleTime: CORE_DATA_STALE_MS,
+    gcTime: CORE_DATA_GC_MS,
+    refetchOnWindowFocus: false,
   });
 
   const viewsQuery = useQuery({
@@ -22,18 +28,27 @@ export const useCoreData = () => {
       }
     },
     enabled: hasToken,
+    staleTime: CORE_DATA_STALE_MS,
+    gcTime: CORE_DATA_GC_MS,
+    refetchOnWindowFocus: false,
   });
 
   const datasetsQuery = useQuery({
     queryKey: ["datasets"],
     queryFn: api.listDatasets,
     enabled: hasToken,
+    staleTime: CORE_DATA_STALE_MS,
+    gcTime: CORE_DATA_GC_MS,
+    refetchOnWindowFocus: false,
   });
 
   const dashboardsQuery = useQuery({
     queryKey: ["dashboards"],
     queryFn: () => api.listDashboards(),
     enabled: hasToken,
+    staleTime: CORE_DATA_STALE_MS,
+    gcTime: CORE_DATA_GC_MS,
+    refetchOnWindowFocus: false,
   });
 
   const datasources = useMemo(

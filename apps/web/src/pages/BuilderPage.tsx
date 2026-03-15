@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef, type ChangeEvent, type CSSProperties } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { LayoutDashboard, Plus, Trash2, Keyboard, Wand2, CalendarIcon, Sparkles, X, SlidersHorizontal, Eye, EyeOff, Hash, BarChart3, LineChart, PieChart, Table2, Columns3 } from "lucide-react";
@@ -209,17 +209,16 @@ const summarizeKpiTitle = (config: WidgetConfig): string => {
   return `${metricOpTitleMap[op]} DE ${columnToken}`;
 };
 
-const summarizeBarLikeTitle = (config: WidgetConfig): string => {
+const summarizeMetricTitle = (config: WidgetConfig): string => {
   const metric = config.metrics[0];
   const op = metric?.op || "count";
-  const metricToken = toTitleToken(metric?.column);
-  const dimensionToken = toTitleToken(config.dimensions[0]);
-  return `${metricOpTitleMap[op]} DE ${metricToken} POR ${dimensionToken}`;
+  const columnToken = toTitleToken(metric?.column);
+  return `${metricOpTitleMap[op]} DE ${columnToken}`;
 };
 
 const summarizeAutoWidgetTitle = (type: WidgetType, config: WidgetConfig): string | null => {
   if (type === "kpi") return summarizeKpiTitle(config);
-  if (type === "bar" || type === "column") return summarizeBarLikeTitle(config);
+  if (type === "bar" || type === "column" || type === "line" || type === "donut") return summarizeMetricTitle(config);
   return null;
 };
 
@@ -237,7 +236,13 @@ const isGenericChartTitle = (title: string): boolean => {
     || normalized === "BARRA"
     || normalized === "BAR"
     || normalized === "COLUNA"
-    || normalized === "COLUMN";
+    || normalized === "COLUMN"
+    || normalized === "LINHA"
+    || normalized === "LINE"
+    || normalized === "ROSCA"
+    || normalized === "DONUT"
+    || normalized === "PIZZA"
+    || normalized === "PIE";
 };
 
 const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
@@ -519,7 +524,6 @@ const BuilderModeTransitionSkeleton = () => (
 
 const BuilderPage = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   const queryClient = useQueryClient();
   const { datasetId, dashboardId } = useParams<{ datasetId: string; dashboardId?: string }>();
   const { toast } = useToast();
@@ -557,7 +561,6 @@ const BuilderPage = () => {
   const [quickWidgetPickerOpen, setQuickWidgetPickerOpen] = useState(false);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [modeTransitionLoading, setModeTransitionLoading] = useState(false);
-  const [routeTransitionLoading, setRouteTransitionLoading] = useState(false);
   const [onboardingActive, setOnboardingActive] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingTargetRect, setOnboardingTargetRect] = useState<DOMRect | null>(null);
@@ -566,7 +569,6 @@ const BuilderPage = () => {
   const savedSnapshotRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const modeTransitionTimeoutRef = useRef<number | null>(null);
-  const routeTransitionTimeoutRef = useRef<number | null>(null);
 
   const viewColumnsQuery = useQuery({
     queryKey: ["view-columns", view?.schema, view?.name],
@@ -1026,7 +1028,7 @@ const BuilderPage = () => {
 
       await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
       if (datasetId && closeAfterSave) {
-        navigate(`/datasets/${datasetId}/dashboard/${saved.id}`, { state: { dashboardBuilderTransition: true } });
+        navigate(`/datasets/${datasetId}/dashboard/${saved.id}`);
       } else if (datasetId && !closeAfterSave) {
         navigate(`/datasets/${datasetId}/builder/${saved.id}`);
       } else if (closeAfterSave) {
@@ -1441,7 +1443,7 @@ const BuilderPage = () => {
     if (!confirmDiscardIfDirty()) return;
     const targetId = activeDashboardId || dashboardId;
     if (datasetId && targetId) {
-      navigate(`/datasets/${datasetId}/dashboard/${targetId}`, { state: { dashboardBuilderTransition: true } });
+      navigate(`/datasets/${datasetId}/dashboard/${targetId}`);
       return;
     }
     if (datasetId) {
@@ -1684,30 +1686,15 @@ const BuilderPage = () => {
     }
   }, []);
 
-  useEffect(() => {
-    const state = location.state as { dashboardBuilderTransition?: boolean } | null;
-    if (!state?.dashboardBuilderTransition) return;
-    setRouteTransitionLoading(true);
-    if (routeTransitionTimeoutRef.current) {
-      window.clearTimeout(routeTransitionTimeoutRef.current);
-    }
-    routeTransitionTimeoutRef.current = window.setTimeout(() => {
-      setRouteTransitionLoading(false);
-      routeTransitionTimeoutRef.current = null;
-    }, 220);
-  }, [location.state]);
-
-  useEffect(() => () => {
-    if (routeTransitionTimeoutRef.current) {
-      window.clearTimeout(routeTransitionTimeoutRef.current);
-    }
-  }, []);
-
   const widgetCount = useMemo(
     () => sections.reduce((total, section) => total + section.widgets.length, 0),
     [sections],
   );
   const isTitleOnboardingStep = onboardingActive && onboardingStep?.id === "dashboard-name";
+  useEffect(() => {
+    if (!datasetId || !(activeDashboardId || dashboardId)) return;
+    void import("./DashboardViewPage");
+  }, [datasetId, activeDashboardId, dashboardId]);
 
   const hasEmptyCanvas = sections.length === 0 && widgetCount === 0;
   const targetDashboardId = activeDashboardId || dashboardId;
@@ -2191,7 +2178,7 @@ const BuilderPage = () => {
       />
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {(modeTransitionLoading || routeTransitionLoading) ? (
+        {modeTransitionLoading ? (
           <BuilderModeTransitionSkeleton />
         ) : isPreview ? (
           <div className="h-full overflow-auto">
