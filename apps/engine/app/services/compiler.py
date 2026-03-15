@@ -172,13 +172,13 @@ def _dimension_order_sql(dimension: str, direction: str) -> str | None:
     granularity, column = temporal_dimension
     col_ident = _quote_ident(column)
     if granularity == "weekday":
-        return f"MIN(EXTRACT(ISODOW FROM {col_ident})) {direction}"
+        return f"MIN(EXTRACT(ISODOW FROM {col_ident})) {direction} NULLS LAST"
     if granularity == "week":
-        return f"MIN(DATE_TRUNC('week', {col_ident})) {direction}"
+        return f"MIN(DATE_TRUNC('week', {col_ident})) {direction} NULLS LAST"
     if granularity == "month":
-        return f"MIN(DATE_TRUNC('month', {col_ident})) {direction}"
+        return f"MIN(DATE_TRUNC('month', {col_ident})) {direction} NULLS LAST"
     if granularity == "hour":
-        return f"MIN(EXTRACT(HOUR FROM {col_ident})) {direction}"
+        return f"MIN(EXTRACT(HOUR FROM {col_ident})) {direction} NULLS LAST"
     return None
 
 
@@ -737,13 +737,13 @@ def compile_query(spec: QuerySpec, *, max_rows: int) -> tuple[str, list[Any], in
                 if dimension_order:
                     order_parts.append(dimension_order)
                 else:
-                    order_parts.append(f"{_quote_ident(item.column)} {direction}")
+                    order_parts.append(f"{_quote_ident(item.column)} {direction} NULLS LAST")
             elif item.metric_ref:
-                order_parts.append(f"{_quote_ident(item.metric_ref)} {direction}")
+                order_parts.append(f"{_quote_ident(item.metric_ref)} {direction} NULLS LAST")
         if order_parts:
             query_parts.append("ORDER BY " + ", ".join(order_parts))
     elif spec.widget_type == "line":
-        query_parts.append(f"ORDER BY {_quote_ident('time_bucket')} ASC")
+        query_parts.append(f"ORDER BY {_quote_ident('time_bucket')} ASC NULLS LAST")
     elif spec.widget_type in {"bar", "column"} and len(spec.dimensions) == 1:
         dimension_order = _dimension_order_sql(spec.dimensions[0], "ASC")
         if dimension_order:

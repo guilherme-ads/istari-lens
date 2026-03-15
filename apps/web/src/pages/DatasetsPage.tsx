@@ -18,7 +18,6 @@ import { api, ApiError } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
 import type { Dataset, View } from "@/types";
 import { useToast } from "@/hooks/use-toast";
-import { useSimulatedLoading } from "@/hooks/use-simulated-loading";
 import SkeletonCard from "@/components/shared/SkeletonCard";
 
 const DatasetsPage = () => {
@@ -30,8 +29,7 @@ const DatasetsPage = () => {
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
   const isAdmin = !!getStoredUser()?.is_admin;
   const { datasets: allDatasets, views, isLoading, isError, errorMessage } = useCoreData();
-  const { isLoading: isSimulatedLoading } = useSimulatedLoading();
-  const showLoadingSkeleton = isLoading || isSimulatedLoading;
+  const showLoadingSkeleton = isLoading;
 
   const datasets = useMemo(() => {
     if (!search) return allDatasets;

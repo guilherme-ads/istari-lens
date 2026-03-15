@@ -17,7 +17,7 @@ import {
   Type,
 } from "lucide-react";
 import type { VisualizationType } from "@/types";
-import type { WidgetType } from "@/types/dashboard";
+import type { BuilderWidgetPresetKey, WidgetType } from "@/types/dashboard";
 import { WIDGET_CATALOG } from "@/components/builder/widget-catalog";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,7 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 export interface BuilderLeftPanelProps {
-  onAddWidget: (type: VisualizationType, preferredWidgetType?: WidgetType) => void;
+  onAddWidget: (type: VisualizationType, preferredWidgetType?: WidgetType, presetKey?: BuilderWidgetPresetKey) => void;
   onGenerateWithAI: (mode: "widget" | "dashboard" | "explore") => void;
   collapsed?: boolean;
 }
@@ -60,7 +60,10 @@ const widgetOptions: WidgetOption[] = WIDGET_CATALOG.map((entry) => ({
   icon: widgetIconsByWidgetType[entry.widgetType] || LayoutGrid,
 }));
 
-const emitNewWidgetDragState = (active: boolean, payload?: { widgetType: VisualizationType; preferredWidgetType?: WidgetType }) => {
+const emitNewWidgetDragState = (
+  active: boolean,
+  payload?: { widgetType: VisualizationType; preferredWidgetType?: WidgetType; presetKey?: BuilderWidgetPresetKey },
+) => {
   window.dispatchEvent(new CustomEvent(NEW_WIDGET_DRAG_STATE_EVENT, {
     detail: active
       ? {
@@ -69,20 +72,29 @@ const emitNewWidgetDragState = (active: boolean, payload?: { widgetType: Visuali
             kind: "new-widget",
             widgetType: payload?.widgetType,
             preferredWidgetType: payload?.preferredWidgetType,
+            presetKey: payload?.presetKey,
           },
         }
       : { active: false },
   }));
 };
 
-const patternOptions: Array<{ title: string; description: string; type: VisualizationType; icon: typeof BarChart3 }> = [
-  { title: "Metrica Unica", description: "Um valor em destaque com variacao", type: "kpi", icon: Hash },
-  { title: "Comparacao", description: "Compare metricas entre categorias", type: "bar", icon: BarChart3 },
-  { title: "Serie Temporal", description: "Evolucao de uma metrica no tempo", type: "line", icon: LineChart },
-  { title: "Ranking", description: "Ordene categorias por valor", type: "bar", icon: BarChart3 },
-  { title: "Distribuicao", description: "Proporcao entre categorias", type: "pie", icon: PieChart },
-  { title: "Decomposicao", description: "Composicao detalhada", type: "bar", icon: Layers3 },
-  { title: "Tabela Detalhada", description: "Explore dados linha a linha", type: "table", icon: Table2 },
+const patternOptions: Array<{
+  title: string;
+  description: string;
+  type: VisualizationType;
+  preferredWidgetType?: WidgetType;
+  presetKey: BuilderWidgetPresetKey;
+  icon: typeof BarChart3;
+}> = [
+  { title: "Metrica Unica", description: "KPI principal para leitura rapida", type: "kpi", presetKey: "kpi_primary", icon: Hash },
+  { title: "KPI com Tendencia", description: "KPI com variacao do periodo anterior", type: "kpi", presetKey: "kpi_trend", icon: LineChart },
+  { title: "Comparacao por Categoria", description: "Compara categorias por valor", type: "bar", presetKey: "category_comparison", icon: BarChart3 },
+  { title: "Top 10 Ranking", description: "Ordena e limita para principais categorias", type: "bar", presetKey: "top_10_ranking", icon: BarChart3 },
+  { title: "Evolucao Mensal", description: "Serie temporal em granularidade mensal", type: "line", presetKey: "temporal_evolution_monthly", icon: LineChart },
+  { title: "Participacao Percentual", description: "Distribuicao percentual por categoria", type: "pie", presetKey: "share_distribution", icon: PieChart },
+  { title: "Composicao no Tempo", description: "Colunas por mes para acompanhar composicao", type: "column", presetKey: "temporal_composition", icon: Layers3 },
+  { title: "Tabela Detalhada", description: "Mais colunas e pagina maior para exploracao", type: "table", presetKey: "detailed_table", icon: Table2 },
 ];
 
 const DraggableItem = ({
@@ -91,6 +103,7 @@ const DraggableItem = ({
   description,
   type,
   preferredWidgetType,
+  presetKey,
   tourTarget,
   onClick,
 }: {
@@ -99,6 +112,7 @@ const DraggableItem = ({
   description: string;
   type: VisualizationType;
   preferredWidgetType?: WidgetType;
+  presetKey?: BuilderWidgetPresetKey;
   tourTarget?: string;
   onClick: () => void;
 }) => (
@@ -113,9 +127,10 @@ const DraggableItem = ({
         kind: "new-widget",
         widgetType: type,
         preferredWidgetType,
+        presetKey,
       }));
       event.dataTransfer.setData("text/plain", title);
-      emitNewWidgetDragState(true, { widgetType: type, preferredWidgetType });
+      emitNewWidgetDragState(true, { widgetType: type, preferredWidgetType, presetKey });
     }}
     onDragEndCapture={() => {
       emitNewWidgetDragState(false);
@@ -144,6 +159,7 @@ const IconOnlyDraggableItem = ({
   title,
   type,
   preferredWidgetType,
+  presetKey,
   tourTarget,
   onClick,
 }: {
@@ -151,6 +167,7 @@ const IconOnlyDraggableItem = ({
   title: string;
   type: VisualizationType;
   preferredWidgetType?: WidgetType;
+  presetKey?: BuilderWidgetPresetKey;
   tourTarget?: string;
   onClick: () => void;
 }) => (
@@ -166,9 +183,10 @@ const IconOnlyDraggableItem = ({
         kind: "new-widget",
         widgetType: type,
         preferredWidgetType,
+        presetKey,
       }));
       event.dataTransfer.setData("text/plain", title);
-      emitNewWidgetDragState(true, { widgetType: type, preferredWidgetType });
+      emitNewWidgetDragState(true, { widgetType: type, preferredWidgetType, presetKey });
     }}
     onDragEndCapture={() => {
       emitNewWidgetDragState(false);
@@ -281,7 +299,9 @@ export const BuilderLeftPanel = ({ onAddWidget, onGenerateWithAI, collapsed = fa
                   title={pattern.title}
                   description={pattern.description}
                   type={pattern.type}
-                  onClick={() => onAddWidget(pattern.type)}
+                  preferredWidgetType={pattern.preferredWidgetType}
+                  presetKey={pattern.presetKey}
+                  onClick={() => onAddWidget(pattern.type, pattern.preferredWidgetType, pattern.presetKey)}
                 />
               ))}
             </div>

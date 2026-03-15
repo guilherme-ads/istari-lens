@@ -1,4 +1,13 @@
 export type WidgetType = "kpi" | "line" | "bar" | "column" | "donut" | "table" | "text" | "dre";
+export type BuilderWidgetPresetKey =
+  | "kpi_primary"
+  | "kpi_trend"
+  | "category_comparison"
+  | "top_10_ranking"
+  | "temporal_evolution_monthly"
+  | "share_distribution"
+  | "temporal_composition"
+  | "detailed_table";
 export type MetricOp = "count" | "sum" | "avg" | "min" | "max" | "distinct_count";
 export type TimeGranularity = "day" | "week" | "month" | "hour" | "timestamp";
 export type WidgetWidth = 1 | 2 | 3 | 4 | 5 | 6;

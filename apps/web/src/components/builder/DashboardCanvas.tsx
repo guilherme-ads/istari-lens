@@ -40,6 +40,7 @@ import {
   type DashboardLayoutItem,
   type DashboardSection,
   type DashboardWidget,
+  type BuilderWidgetPresetKey,
   type WidgetType,
 } from "@/types/dashboard";
 import { getWidgetCatalogByType, getWidgetCatalogByVisualization, WIDGET_CATALOG } from "@/components/builder/widget-catalog";
@@ -65,6 +66,7 @@ interface DashboardCanvasProps {
     type: VisualizationType,
     placement?: Pick<DashboardLayoutItem, "x" | "y" | "w" | "h">,
     preferredWidgetType?: WidgetType,
+    presetKey?: BuilderWidgetPresetKey,
   ) => void;
   onEditWidget: (widget: DashboardWidget) => void;
   onDeleteWidget: (widget: DashboardWidget) => void;
@@ -77,7 +79,12 @@ interface DashboardCanvasProps {
   refreshingWidgetIds?: Set<string>;
 }
 
-type NewWidgetDragPayload = { kind: "new-widget"; widgetType: VisualizationType; preferredWidgetType?: WidgetType };
+type NewWidgetDragPayload = {
+  kind: "new-widget";
+  widgetType: VisualizationType;
+  preferredWidgetType?: WidgetType;
+  presetKey?: BuilderWidgetPresetKey;
+};
 
 const widgetTypeIconByWidget: Record<WidgetType, typeof Hash> = {
   kpi: Hash,
@@ -94,12 +101,18 @@ const parseNewWidgetDragPayload = (dataTransfer?: DataTransfer | null): NewWidge
   const raw = dataTransfer?.getData(DND_MIME);
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { kind?: string; widgetType?: VisualizationType; preferredWidgetType?: WidgetType };
+    const parsed = JSON.parse(raw) as {
+      kind?: string;
+      widgetType?: VisualizationType;
+      preferredWidgetType?: WidgetType;
+      presetKey?: BuilderWidgetPresetKey;
+    };
     if (parsed.kind !== "new-widget" || !parsed.widgetType) return null;
     return {
       kind: "new-widget",
       widgetType: parsed.widgetType,
       preferredWidgetType: parsed.preferredWidgetType,
+      presetKey: parsed.presetKey,
     };
   } catch {
     return null;
@@ -489,6 +502,7 @@ const SectionBlock = ({
     type: VisualizationType,
     placement?: Pick<DashboardLayoutItem, "x" | "y" | "w" | "h">,
     preferredWidgetType?: WidgetType,
+    presetKey?: BuilderWidgetPresetKey,
   ) => void;
   onLayoutChange: (layout: Layout, activeItemId?: string) => void;
   onLayoutCommit: (layout: Layout, activeItemId?: string) => void;
@@ -778,7 +792,7 @@ const SectionBlock = ({
               y: 0,
               w: catalog.minW,
               h: catalog.minH,
-            }, payload.preferredWidgetType);
+            }, payload.preferredWidgetType, payload.presetKey);
           }}
           onLayoutChange={(nextLayout) => {
             if (!draggingItemIdRef.current && Date.now() < externalDropStabilizeUntilRef.current) return;
@@ -906,7 +920,7 @@ const SectionBlock = ({
                               y: 0,
                               w: catalog.minW,
                               h: catalog.minH,
-                            }, payload.preferredWidgetType);
+                            }, payload.preferredWidgetType, payload.presetKey);
                           }}
                         >
                           <span className="sr-only">Adicionar widget</span>
@@ -1039,7 +1053,7 @@ export const DashboardCanvas = ({
             onChange={(next) => updateSection(section.id, next)}
             onDelete={() => deleteSection(section.id)}
             onMove={(dir) => moveSection(index, dir)}
-            onAddWidget={(type, placement, preferredWidgetType) => onAddWidget(section.id, type, placement, preferredWidgetType)}
+            onAddWidget={(type, placement, preferredWidgetType, presetKey) => onAddWidget(section.id, type, placement, preferredWidgetType, presetKey)}
             onLayoutChange={(layout, activeItemId) => applyLayoutToSection(section.id, layout, false, activeItemId)}
             onLayoutCommit={(layout, activeItemId) => applyLayoutToSection(section.id, layout, true, activeItemId)}
             onEditWidget={onEditWidget}

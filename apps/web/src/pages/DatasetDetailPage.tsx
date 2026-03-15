@@ -15,15 +15,13 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCoreData } from "@/hooks/use-core-data";
-import { useSimulatedLoading } from "@/hooks/use-simulated-loading";
 import type { Dashboard } from "@/types/dashboard";
 
 const DatasetDetailPage = () => {
   const navigate = useNavigate();
   const { datasetId } = useParams<{ datasetId: string }>();
   const { datasets, views, dashboards, isLoading, isError, errorMessage } = useCoreData();
-  const { isLoading: isSimulatedLoading } = useSimulatedLoading();
-  const showLoadingSkeleton = isLoading || isSimulatedLoading;
+  const showLoadingSkeleton = isLoading;
 
   const dataset = useMemo(() => datasets.find((d) => d.id === datasetId), [datasets, datasetId]);
   const view = useMemo(() => (dataset ? views.find((v) => v.id === dataset.viewId) : undefined), [dataset, views]);

@@ -18,6 +18,7 @@ import {
   type DashboardLayoutItem,
   type DashboardSection,
   type DashboardWidget,
+  type BuilderWidgetPresetKey,
   type WidgetConfig,
   type WidgetType,
 } from "@/types/dashboard";
@@ -43,7 +44,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 
 import { DashboardCanvas } from "@/components/builder/DashboardCanvas";
 import BuilderTopBar from "@/components/builder/BuilderTopBar";
@@ -168,6 +168,17 @@ const insertLayoutItemWithShift = (
 const mapVisualizationToWidgetType = (type: VisualizationType): WidgetType => {
   if (type === "pie") return "donut";
   return type;
+};
+
+const presetTitleByKey: Record<BuilderWidgetPresetKey, string> = {
+  kpi_primary: "KPI principal",
+  kpi_trend: "KPI com tendencia",
+  category_comparison: "Comparacao por categoria",
+  top_10_ranking: "Top 10 ranking",
+  temporal_evolution_monthly: "Evolucao mensal",
+  share_distribution: "Participacao percentual",
+  temporal_composition: "Composicao no tempo",
+  detailed_table: "Tabela detalhada",
 };
 
 const metricOpTitleMap: Record<"count" | "distinct_count" | "sum" | "avg" | "min" | "max", string> = {
@@ -485,43 +496,6 @@ const getOnboardingCardStyle = (
   return { left, top };
 };
 
-const BuilderModeTransitionSkeleton = () => (
-  <div className="h-full min-h-0 overflow-hidden">
-    <div className="flex h-full min-h-0">
-      <aside className="hidden h-full w-[240px] shrink-0 border-r border-border/60 bg-card/20 p-4 lg:block">
-        <div className="space-y-4">
-          <Skeleton className="h-8 w-full rounded-md" />
-          <Skeleton className="h-8 w-full rounded-md" />
-          <Skeleton className="h-8 w-full rounded-md" />
-        </div>
-        <div className="mt-6 space-y-2">
-          {Array.from({ length: 8 }).map((_, index) => (
-            <Skeleton key={`builder-left-nav-skeleton-${index}`} className="h-7 w-full rounded-md" />
-          ))}
-        </div>
-      </aside>
-
-      <div className="min-w-0 flex-1 p-4 md:p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <Skeleton className="h-8 w-60 rounded-md" />
-          <Skeleton className="ml-auto h-8 w-24 rounded-md" />
-          <Skeleton className="h-8 w-28 rounded-md" />
-        </div>
-        <div className="h-[calc(100%-48px)] min-h-0 rounded-xl border border-border/60 bg-card/10 p-4">
-          <div className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <Skeleton className="h-36 rounded-lg" />
-            <Skeleton className="h-48 rounded-lg" />
-            <Skeleton className="h-28 rounded-lg" />
-            <Skeleton className="h-44 rounded-lg" />
-            <Skeleton className="h-32 rounded-lg" />
-            <Skeleton className="h-52 rounded-lg" />
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-);
-
 const BuilderPage = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -560,7 +534,6 @@ const BuilderPage = () => {
   const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
   const [quickWidgetPickerOpen, setQuickWidgetPickerOpen] = useState(false);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
-  const [modeTransitionLoading, setModeTransitionLoading] = useState(false);
   const [onboardingActive, setOnboardingActive] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingTargetRect, setOnboardingTargetRect] = useState<DOMRect | null>(null);
@@ -568,7 +541,6 @@ const BuilderPage = () => {
   const hydratedDashboardIdRef = useRef<string | null>(null);
   const savedSnapshotRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const modeTransitionTimeoutRef = useRef<number | null>(null);
 
   const viewColumnsQuery = useQuery({
     queryKey: ["view-columns", view?.schema, view?.name],
@@ -1060,17 +1032,8 @@ const BuilderPage = () => {
   }, [saveDashboardMutation]);
 
   const handleTogglePreviewMode = useCallback(() => {
-    if (modeTransitionLoading) return;
-    setModeTransitionLoading(true);
-    if (modeTransitionTimeoutRef.current) {
-      window.clearTimeout(modeTransitionTimeoutRef.current);
-    }
-    modeTransitionTimeoutRef.current = window.setTimeout(() => {
-      setIsPreview((current) => !current);
-      setModeTransitionLoading(false);
-      modeTransitionTimeoutRef.current = null;
-    }, 180);
-  }, [modeTransitionLoading]);
+    setIsPreview((current) => !current);
+  }, []);
 
   const handleUpdateWidget = useCallback((updatedWidget: DashboardWidget) => {
     setSections((prev) => prev.map((section) => {
@@ -1257,6 +1220,7 @@ const BuilderPage = () => {
     targetSectionId?: string,
     placement?: Pick<DashboardLayoutItem, "x" | "y" | "w" | "h">,
     preferredWidgetType?: WidgetType,
+    presetKey?: BuilderWidgetPresetKey,
   ) => {
     if (datasetColumns.length === 0) {
       toast({ title: "Nao foi possivel carregar colunas do dataset", variant: "destructive" });
@@ -1328,6 +1292,87 @@ const BuilderPage = () => {
       nextConfig.columns = datasetColumns.slice(0, Math.min(8, datasetColumns.length)).map((column) => column.name);
     }
 
+    if (presetKey === "kpi_primary" && widgetType === "kpi") {
+      nextConfig.show_title = false;
+      nextConfig.kpi_show_trend = false;
+      nextConfig.kpi_show_as = "number_2";
+      nextConfig.kpi_decimals = 2;
+    }
+
+    if (presetKey === "kpi_trend" && widgetType === "kpi") {
+      nextConfig.show_title = false;
+      nextConfig.kpi_show_trend = true;
+      nextConfig.kpi_show_as = "number_2";
+      nextConfig.kpi_decimals = 2;
+    }
+
+    if (presetKey === "category_comparison" && widgetType === "bar") {
+      const barDimension = nonTemporalDimensionColumn || dimensionColumn;
+      if (barDimension) {
+        nextConfig.dimensions = [barDimension];
+      }
+      nextConfig.order_by = [{ metric_ref: "m0", direction: "desc" }];
+      nextConfig.top_n = undefined;
+      nextConfig.bar_data_labels_enabled = false;
+      nextConfig.bar_show_percent_of_total = false;
+    }
+
+    if (presetKey === "top_10_ranking" && widgetType === "bar") {
+      const rankingDimension = nonTemporalDimensionColumn || dimensionColumn;
+      if (rankingDimension) {
+        nextConfig.dimensions = [rankingDimension];
+      }
+      nextConfig.order_by = [{ metric_ref: "m0", direction: "desc" }];
+      nextConfig.top_n = 10;
+      nextConfig.bar_data_labels_enabled = true;
+      nextConfig.bar_show_percent_of_total = false;
+    }
+
+    if (presetKey === "temporal_evolution_monthly" && widgetType === "line") {
+      nextConfig.time = {
+        column: temporalColumn || dimensionColumn || fallbackColumn || "",
+        granularity: "month",
+      };
+      nextConfig.line_show_grid = true;
+      nextConfig.line_data_labels_enabled = false;
+    }
+
+    if (presetKey === "share_distribution" && widgetType === "donut") {
+      const donutDimension = nonTemporalDimensionColumn || dimensionColumn;
+      if (donutDimension) {
+        nextConfig.dimensions = [donutDimension];
+      }
+      nextConfig.top_n = 6;
+      nextConfig.donut_metric_display = "percent";
+      nextConfig.donut_data_labels_enabled = true;
+      nextConfig.donut_data_labels_min_percent = 3;
+      nextConfig.donut_group_others_enabled = true;
+      nextConfig.donut_group_others_top_n = 6;
+    }
+
+    if (presetKey === "temporal_composition" && widgetType === "column") {
+      const columnDimension = temporalColumn
+        ? buildTemporalDimensionValue(temporalColumn, "month")
+        : (dimensionColumn || "");
+      if (columnDimension) {
+        nextConfig.dimensions = [columnDimension];
+        nextConfig.order_by = [{ column: columnDimension, direction: "asc" }];
+      }
+      nextConfig.bar_show_percent_of_total = true;
+      nextConfig.bar_data_labels_enabled = true;
+      nextConfig.top_n = undefined;
+    }
+
+    if (presetKey === "detailed_table" && widgetType === "table") {
+      nextConfig.columns = datasetColumns.slice(0, Math.min(12, datasetColumns.length)).map((column) => column.name);
+      nextConfig.table_page_size = 50;
+      nextConfig.table_density = "compact";
+      nextConfig.table_sticky_header = true;
+      nextConfig.table_zebra_rows = true;
+      nextConfig.table_borders = true;
+      nextConfig.show_title = true;
+    }
+
     let createdWidget: DashboardWidget | null = null;
     let blockedReason: string | null = null;
 
@@ -1350,7 +1395,8 @@ const BuilderPage = () => {
         const sectionIndex = next.findIndex((section) => section.id === sectionId);
         if (sectionIndex < 0) return false;
         const section = next[sectionIndex];
-        const defaultTitle = summarizeAutoWidgetTitle(widgetType, nextConfig) || catalog.title;
+        const presetTitle = presetKey ? presetTitleByKey[presetKey] : null;
+        const defaultTitle = presetTitle || summarizeAutoWidgetTitle(widgetType, nextConfig) || catalog.title;
         const newWidget: DashboardWidget = {
           id: makeTempWidgetId(),
           title: defaultTitle,
@@ -1679,12 +1725,6 @@ const BuilderPage = () => {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [editingWidget, handleAddSection, handleAddWidgetType, handleSaveDashboard]);
-
-  useEffect(() => () => {
-    if (modeTransitionTimeoutRef.current) {
-      window.clearTimeout(modeTransitionTimeoutRef.current);
-    }
-  }, []);
 
   const widgetCount = useMemo(
     () => sections.reduce((total, section) => total + section.widgets.length, 0),
@@ -2132,7 +2172,7 @@ const BuilderPage = () => {
             nativeFilters={appliedGlobalFilters}
             sections={sections}
             onSectionsChange={handleSectionsChange}
-            onAddWidget={(sectionId, type, placement, preferredWidgetType) => handleAddWidgetType(type, sectionId, placement, preferredWidgetType)}
+            onAddWidget={(sectionId, type, placement, preferredWidgetType, presetKey) => handleAddWidgetType(type, sectionId, placement, preferredWidgetType, presetKey)}
             onEditWidget={handleEditWidget}
             onDeleteWidget={(widget) => handleDeleteWidgetById(widget.id)}
             onDuplicateWidget={handleDuplicateWidget}
@@ -2178,9 +2218,7 @@ const BuilderPage = () => {
       />
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {modeTransitionLoading ? (
-          <BuilderModeTransitionSkeleton />
-        ) : isPreview ? (
+        {isPreview ? (
           <div className="h-full overflow-auto">
             <div className="container py-6">{renderCanvas()}</div>
           </div>
@@ -2194,7 +2232,7 @@ const BuilderPage = () => {
               className="overflow-hidden"
             >
               <BuilderLeftPanel
-                onAddWidget={(type, preferredWidgetType) => handleAddWidgetType(type, undefined, undefined, preferredWidgetType)}
+                onAddWidget={(type, preferredWidgetType, presetKey) => handleAddWidgetType(type, undefined, undefined, preferredWidgetType, presetKey)}
                 onGenerateWithAI={handleGenerateWithAI}
                 collapsed={leftPanelCollapsed}
               />
