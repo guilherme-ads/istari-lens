@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import GridLayout, { horizontalCompactor, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
+import GridLayout, { cloneLayout, useContainerWidth, type Compactor, type Layout, type LayoutItem } from "react-grid-layout";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Plus,
@@ -54,6 +54,13 @@ const NEW_WIDGET_DRAG_STATE_EVENT = "builder:new-widget-drag-state";
 const GRID_ROW_HEIGHT = 36;
 const GRID_MARGIN_X = 16;
 const GRID_MARGIN_Y = 16;
+const HORIZONTAL_PUSH_COMPACTOR: Compactor = {
+  type: "horizontal",
+  allowOverlap: false,
+  compact(layout) {
+    return cloneLayout(layout);
+  },
+};
 
 interface DashboardCanvasProps {
   dashboardId?: string;
@@ -178,7 +185,7 @@ const toDropPreviewStyle = (placement: Pick<DashboardLayoutItem, "x" | "y" | "w"
 };
 
 const toLayoutById = (section: DashboardSection): Record<string, DashboardLayoutItem> => {
-  const fromState = new Map((section.layout || []).map((item) => [item.i, normalizeLayoutItem(item)]));
+  const fromState = new Map((section.layout || []).map((item) => [item.i, normalizeLayoutItem({ ...item, y: 0 })]));
   const byId: Record<string, DashboardLayoutItem> = {};
   section.widgets.forEach((widget, index) => {
     const catalog = getWidgetCatalogByType(widget.props.widget_type);
@@ -217,7 +224,7 @@ const normalizeRglLayout = (layout: Layout, section: DashboardSection): Dashboar
       const clampedHeight = Math.max(catalog.minH, Math.floor(item.h));
       return normalizeLayoutItem({
         i: item.i,
-        x: Math.max(0, Math.min(SECTION_GRID_COLS - 1, Math.floor(item.x))),
+        x: Math.max(0, Math.min(SECTION_GRID_COLS - clampedWidth, Math.floor(item.x))),
         y: 0,
         w: clampedWidth,
         h: clampedHeight,
@@ -225,19 +232,19 @@ const normalizeRglLayout = (layout: Layout, section: DashboardSection): Dashboar
     });
 };
 
-const resolveSequentialLayout = (
+const resolveNonCompactedLayout = (
   layout: DashboardLayoutItem[],
   section: DashboardSection,
   activeItemId?: string,
 ): DashboardLayoutItem[] => {
   const previousById = new Map(
     (section.layout || [])
-      .map((item) => normalizeLayoutItem(item))
+      .map((item) => normalizeLayoutItem({ ...item, y: 0 }))
       .filter((item) => section.widgets.some((widget) => widget.id === item.i))
       .map((item) => [item.i, item]),
   );
   const widgetOrder = new Map(section.widgets.map((widget, index) => [widget.id, index]));
-  const incomingById = new Map(layout.map((item) => [item.i, normalizeLayoutItem(item)]));
+  const incomingById = new Map(layout.map((item) => [item.i, normalizeLayoutItem({ ...item, y: 0 })]));
 
   const sortedIds = Array.from(new Set([
     ...section.widgets.map((widget) => widget.id),
@@ -274,11 +281,12 @@ const resolveSequentialLayout = (
     if (!item) continue;
     const width = Math.max(1, Math.min(SECTION_GRID_COLS, item.w));
     const height = Math.max(1, item.h);
-    if (cursorX + width > SECTION_GRID_COLS) {
+    const preferredX = Math.max(0, Math.min(SECTION_GRID_COLS - width, item.x));
+    const nextX = Math.max(cursorX, preferredX);
+    if (nextX + width > SECTION_GRID_COLS) {
       const fallback = (section.layout || [])
-        .map((existing) => normalizeLayoutItem(existing))
+        .map((existing) => normalizeLayoutItem({ ...existing, y: 0 }))
         .filter((existing) => section.widgets.some((widget) => widget.id === existing.i))
-        .map((existing) => ({ ...existing, y: 0 }))
         .sort((a, b) => a.x - b.x);
       return fallback;
     }
@@ -286,10 +294,10 @@ const resolveSequentialLayout = (
       ...item,
       w: width,
       h: height,
-      x: cursorX,
+      x: nextX,
       y: 0,
     }));
-    cursorX += width;
+    cursorX = nextX + width;
   }
 
   return placed.sort((a, b) => a.x - b.x);
@@ -707,7 +715,7 @@ const SectionBlock = ({
         <GridLayout
           innerRef={gridRef}
           width={width}
-          compactor={horizontalCompactor}
+          compactor={HORIZONTAL_PUSH_COMPACTOR}
           className={cn(
             "builder-section-grid relative z-10",
             isEditing && "builder-section-grid--edit",
@@ -1006,7 +1014,7 @@ export const DashboardCanvas = ({
     const targetSection = sections.find((section) => section.id === sectionId);
     if (!targetSection) return;
     const normalizedLayout = normalizeRglLayout(rglLayout, targetSection);
-    const resolvedLayout = resolveSequentialLayout(normalizedLayout, targetSection, activeItemId);
+    const resolvedLayout = resolveNonCompactedLayout(normalizedLayout, targetSection, activeItemId);
     const layoutById = new Map(resolvedLayout.map((item) => [item.i, item]));
     const nextSections = sections.map((section) => {
       if (section.id !== sectionId) return section;
