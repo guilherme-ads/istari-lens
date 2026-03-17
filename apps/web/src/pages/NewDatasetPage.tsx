@@ -130,21 +130,147 @@ const dimensionToForm = (dimension: ApiCatalogDimension): DimensionFormState => 
   synonyms: toCsv(dimension.synonyms),
 });
 
-const parseFormulaExpr = (formula: string): { op: "add" | "sub" | "mul" | "div"; left: string; right: string } | null => {
-  const parts = formula.trim().split(/\s+/);
-  if (parts.length !== 3) return null;
-  const [left, symbol, right] = parts;
-  const map: Record<string, "add" | "sub" | "mul" | "div"> = { "+": "add", "-": "sub", "*": "mul", "/": "div" };
-  const op = map[symbol];
-  if (!op || !left || !right) return null;
-  return { op, left, right };
+type ComputedExprNode = {
+  column?: string;
+  literal?: string | number | boolean | null;
+  op?: "add" | "sub" | "mul" | "div";
+  args?: ComputedExprNode[];
+};
+
+type FormulaToken =
+  | { type: "identifier"; value: string }
+  | { type: "number"; value: number }
+  | { type: "op"; value: "+" | "-" | "*" | "/" }
+  | { type: "lparen" }
+  | { type: "rparen" };
+
+const tokenizeFormula = (formula: string): FormulaToken[] | null => {
+  const tokens: FormulaToken[] = [];
+  const text = formula.trim();
+  if (!text) return null;
+
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    if (ch === "(") {
+      tokens.push({ type: "lparen" });
+      i += 1;
+      continue;
+    }
+    if (ch === ")") {
+      tokens.push({ type: "rparen" });
+      i += 1;
+      continue;
+    }
+    if (ch === "+" || ch === "-" || ch === "*" || ch === "/") {
+      tokens.push({ type: "op", value: ch });
+      i += 1;
+      continue;
+    }
+
+    const numberMatch = text.slice(i).match(/^\d+(\.\d+)?/);
+    if (numberMatch) {
+      tokens.push({ type: "number", value: Number(numberMatch[0]) });
+      i += numberMatch[0].length;
+      continue;
+    }
+
+    const identMatch = text.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if (identMatch) {
+      tokens.push({ type: "identifier", value: identMatch[0] });
+      i += identMatch[0].length;
+      continue;
+    }
+    return null;
+  }
+  return tokens;
+};
+
+const parseFormulaExpr = (formula: string): ComputedExprNode | null => {
+  const tokens = tokenizeFormula(formula);
+  if (!tokens || tokens.length === 0) return null;
+  let index = 0;
+
+  const parsePrimary = (): ComputedExprNode | null => {
+    const token = tokens[index];
+    if (!token) return null;
+
+    if (token.type === "number") {
+      index += 1;
+      return { literal: token.value };
+    }
+    if (token.type === "identifier") {
+      index += 1;
+      return { column: token.value };
+    }
+    if (token.type === "lparen") {
+      index += 1;
+      const inner = parseExpression(0);
+      if (!inner) return null;
+      if (!tokens[index] || tokens[index].type !== "rparen") return null;
+      index += 1;
+      return inner;
+    }
+    return null;
+  };
+
+  const precedence = (op: "+" | "-" | "*" | "/"): number => (op === "+" || op === "-" ? 1 : 2);
+
+  const toNode = (op: "+" | "-" | "*" | "/", left: ComputedExprNode, right: ComputedExprNode): ComputedExprNode => ({
+    op: op === "+" ? "add" : op === "-" ? "sub" : op === "*" ? "mul" : "div",
+    args: [left, right],
+  });
+
+  const parseExpression = (minPrec: number): ComputedExprNode | null => {
+    let left = parsePrimary();
+    if (!left) return null;
+
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (!token || token.type !== "op") break;
+      const prec = precedence(token.value);
+      if (prec < minPrec) break;
+      index += 1;
+      const right = parseExpression(prec + 1);
+      if (!right) return null;
+      left = toNode(token.value, left, right);
+    }
+
+    return left;
+  };
+
+  const root = parseExpression(0);
+  if (!root) return null;
+  if (index !== tokens.length) return null;
+  return root;
+};
+
+const formulaFromExpr = (node: unknown): string => {
+  if (!node || typeof node !== "object") return "";
+  const typed = node as ComputedExprNode;
+  if (typeof typed.column === "string" && typed.column.trim()) return typed.column;
+  if (Object.prototype.hasOwnProperty.call(typed, "literal")) {
+    return String(typed.literal ?? "");
+  }
+  if (typed.op && Array.isArray(typed.args) && typed.args.length === 2) {
+    const left = formulaFromExpr(typed.args[0]);
+    const right = formulaFromExpr(typed.args[1]);
+    const symbol = typed.op === "add" ? "+" : typed.op === "sub" ? "-" : typed.op === "mul" ? "*" : "/";
+    if (!left || !right) return "";
+    return `(${left} ${symbol} ${right})`;
+  }
+  return "";
 };
 
 const getFormulaQuery = (formula: string): string => {
   const trimmedRight = formula.replace(/\s+$/, "");
   if (!trimmedRight) return "";
-  const lastSpace = trimmedRight.lastIndexOf(" ");
-  return trimmedRight.slice(lastSpace + 1);
+  const match = trimmedRight.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
+  return match?.[1] || "";
 };
 
 const getFormulaSuggestions = (formula: string, options: string[]): string[] => {
@@ -305,13 +431,12 @@ const NewDatasetPage = () => {
       column: item.column,
       alias: item.alias,
     }));
-    computedItems = (baseQuery?.preprocess?.computed_columns || []).map((item, index) => {
-      const left = (item.expr as { args?: Array<{ column?: string }> })?.args?.[0]?.column || "";
-      const right = (item.expr as { args?: Array<{ column?: string }> })?.args?.[1]?.column || "";
-      const op = (item.expr as { op?: string })?.op;
-      const symbol = op === "add" ? "+" : op === "sub" ? "-" : op === "mul" ? "*" : "/";
-      return { id: `hydrated-${index}`, name: item.alias, formula: `${left} ${symbol} ${right}`, description: "" };
-    });
+    computedItems = (baseQuery?.preprocess?.computed_columns || []).map((item, index) => ({
+      id: `hydrated-${index}`,
+      name: item.alias,
+      formula: formulaFromExpr(item.expr),
+      description: "",
+    }));
 
     setForm({
       name: editingDataset.name,
@@ -350,7 +475,7 @@ const NewDatasetPage = () => {
       .map((item) => {
         const expr = parseFormulaExpr(item.formula);
         if (!item.name.trim() || !expr) return null;
-        return { alias: item.name.trim(), expr: { op: expr.op, args: [{ column: expr.left }, { column: expr.right }] }, data_type: "numeric" as const };
+        return { alias: item.name.trim(), expr, data_type: "numeric" as const };
       })
       .filter((item): item is NonNullable<typeof item> => !!item);
     const semantic = [

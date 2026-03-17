@@ -13,15 +13,17 @@ _CAST_SUFFIX_RE = re.compile(r"::[a-zA-Z_][a-zA-Z0-9_]*(?:\[\])?$")
 _DATE_TRUNC_RE = re.compile(r"^date_trunc\(\s*'([a-z]+)'\s*,\s*(.+)\)$", re.IGNORECASE)
 _AT_TZ_RE = re.compile(r"^(.+)\s+at\s+time\s+zone\s+'([^']+)'$", re.IGNORECASE)
 _VALID_TIME_GRANULARITIES = {"day", "week", "month", "hour", "timestamp"}
+_SIMPLE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_QUALIFIED_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 def _normalize_timezone(value: str | None) -> str:
-    normalized = _normalize_column_expr(value or "")
+    normalized = (_normalize_column_expr(value or "") or "").lower()
     return normalized or "utc"
 
 
 def _normalize_time_granularity(value: str | None) -> str:
-    normalized = _normalize_column_expr(value or "day") or "day"
+    normalized = (_normalize_column_expr(value or "day") or "day").lower()
     if normalized in {"d", "daily"}:
         normalized = "day"
     if normalized in {"w", "weekly"}:
@@ -41,13 +43,16 @@ def _normalize_column_expr(value: str | None) -> str | None:
     expr = str(value).strip()
     if not expr:
         return expr
-    lowered = re.sub(r"\s+", " ", expr).strip().lower()
+    normalized = re.sub(r"\s+", " ", expr).strip()
     while True:
-        updated = _CAST_SUFFIX_RE.sub("", lowered).strip()
-        if updated == lowered:
+        updated = _CAST_SUFFIX_RE.sub("", normalized).strip()
+        if updated == normalized:
             break
-        lowered = updated
-    return lowered
+        normalized = updated
+    # Preserve identifier casing; SQL expressions are normalized to lowercase.
+    if _SIMPLE_IDENT_RE.fullmatch(normalized) or _QUALIFIED_IDENT_RE.fullmatch(normalized) or '"' in normalized:
+        return normalized
+    return normalized.lower()
 
 
 def _normalize_time_payload(value: dict[str, Any] | None, timezone: str) -> dict[str, Any] | None:

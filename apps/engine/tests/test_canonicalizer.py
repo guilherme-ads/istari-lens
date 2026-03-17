@@ -152,6 +152,18 @@ def test_canonicalization_preserves_dre_row_order() -> None:
     assert canonical["dre_rows"][1]["title"] == "Deducoes"
 
 
+def test_canonicalization_preserves_metric_field_case_for_identifiers() -> None:
+    spec = QuerySpec.model_validate(
+        {
+            "resource_id": "__dataset_base",
+            "metrics": [{"field": "TTFT", "agg": "count"}],
+        }
+    )
+
+    canonical, _dedupe, _cache = build_query_keys(spec=spec, datasource_url="postgresql://x")
+    assert canonical["metrics"][0]["field"] == "TTFT"
+
+
 def test_canonicalization_dre_row_order_affects_keys() -> None:
     spec_a = QuerySpec.model_validate(
         {

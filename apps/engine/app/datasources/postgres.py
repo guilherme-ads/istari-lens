@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from datetime import timedelta
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -29,6 +30,13 @@ def _validate_sql(sql: str) -> None:
         raise EngineError(status_code=400, code="dangerous_sql", message="Dangerous SQL operation blocked")
 
 
+def _normalize_db_value(value: object) -> object:
+    # PostgreSQL interval values arrive as timedelta; expose them as numeric days.
+    if isinstance(value, timedelta):
+        return value.total_seconds() / 86400.0
+    return value
+
+
 class PostgresAdapter:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
@@ -43,7 +51,7 @@ class PostgresAdapter:
             columns = [desc[0] for desc in result.description]
             dict_rows: list[dict[str, object]] = []
             for row in rows:
-                dict_rows.append({column: row[idx] for idx, column in enumerate(columns)})
+                dict_rows.append({column: _normalize_db_value(row[idx]) for idx, column in enumerate(columns)})
             return columns, dict_rows
         except asyncio.TimeoutError as exc:
             raise EngineError(status_code=504, code="query_timeout", message="Query execution timed out") from exc
