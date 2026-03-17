@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Plus, ChevronLeft, BarChart3, LayoutDashboard, Clock,
-  MoreHorizontal, Trash2, Pencil, FolderOpen, Database,
+  MoreHorizontal, Trash2, Pencil, FolderOpen, Database, Copy,
 } from "lucide-react";
 
 import EmptyState from "@/components/shared/EmptyState";
@@ -15,10 +16,14 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCoreData } from "@/hooks/use-core-data";
+import { api, ApiDatasetBaseQuerySpec, ApiError } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import type { Dashboard } from "@/types/dashboard";
 
 const DatasetDetailPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { datasetId } = useParams<{ datasetId: string }>();
   const { datasets, views, dashboards, isLoading, isError, errorMessage } = useCoreData();
   const showLoadingSkeleton = isLoading;
@@ -35,6 +40,33 @@ const DatasetDetailPage = () => {
     () => dashboards.filter((d) => d.datasetId === datasetId),
     [dashboards, datasetId],
   );
+  const duplicateDataset = useMutation({
+    mutationFn: async () => {
+      if (!dataset) throw new Error("Dataset nao encontrado");
+      return api.createDataset({
+        datasource_id: Number(dataset.datasourceId),
+        name: `${dataset.name} (copia)`,
+        description: dataset.description || "",
+        view_id: dataset.viewId ? Number(dataset.viewId) : undefined,
+        base_query_spec: (dataset.baseQuerySpec || undefined) as ApiDatasetBaseQuerySpec | undefined,
+        semantic_columns: dataset.semanticColumns.map((column) => ({
+          name: column.name,
+          type: column.type,
+          source: column.source,
+          description: column.description,
+        })),
+      });
+    },
+    onSuccess: async (payload) => {
+      await queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      toast({ title: "Dataset duplicado", description: "Abrindo copia para edicao." });
+      navigate(`/datasets/${payload.id}/edit`);
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao duplicar dataset";
+      toast({ title: "Erro ao duplicar dataset", description: message, variant: "destructive" });
+    },
+  });
 
   if (isError) {
     return (
@@ -134,6 +166,14 @@ const DatasetDetailPage = () => {
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       variant="outline"
+                      onClick={() => duplicateDataset.mutate()}
+                      disabled={duplicateDataset.isPending}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      Duplicar Dataset
+                    </Button>
+                    <Button
+                      variant="outline"
                       onClick={() => navigate(`/datasets/${datasetId}/edit`)}
                     >
                       <Pencil className="h-4 w-4 mr-2" />
@@ -221,11 +261,19 @@ const DashboardCard = ({
   const widgetCount = dashboard.sections.reduce((t, s) => t + s.widgets.length, 0);
 
   return (
-    <motion.button
+    <motion.div
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.35 }}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      role="button"
+      tabIndex={0}
       className="group glass-card interactive-card p-5 text-left flex flex-col gap-3"
     >
       <div className="flex items-start justify-between">
@@ -268,7 +316,7 @@ const DashboardCard = ({
           Editar <Pencil className="h-3 w-3" />
         </span>
       </div>
-    </motion.button>
+    </motion.div>
   );
 };
 

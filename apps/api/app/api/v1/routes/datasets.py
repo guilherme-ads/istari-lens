@@ -4,6 +4,7 @@ from typing import Any, List
 
 from app.shared.infrastructure.database import get_db
 from app.modules.core.legacy.models import User, Dataset, View, DataSource
+from app.modules.catalog import SemanticCatalogService
 from app.modules.datasets import build_legacy_base_query_spec, validate_and_resolve_base_query_spec
 from app.modules.core.legacy.schemas import DatasetResponse, DatasetCreateRequest, DatasetUpdateRequest
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
@@ -173,6 +174,8 @@ async def create_dataset(
         is_active=request.is_active,
     )
     db.add(dataset)
+    db.flush()
+    SemanticCatalogService(db).ensure_dataset_catalog(dataset=dataset)
     db.commit()
     db.refresh(dataset)
     return dataset
@@ -237,6 +240,7 @@ async def update_dataset(
     if request.is_active is not None:
         dataset.is_active = request.is_active
 
+    SemanticCatalogService(db).ensure_dataset_catalog(dataset=dataset)
     db.commit()
     db.refresh(dataset)
     return dataset

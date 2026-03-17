@@ -231,6 +231,107 @@ export type ApiDataset = {
   updated_at: string;
 };
 
+export type ApiCatalogMetric = {
+  id: number;
+  dataset_id: number;
+  name: string;
+  description?: string | null;
+  formula: string;
+  unit?: string | null;
+  default_grain?: string | null;
+  synonyms: string[];
+  examples: string[];
+};
+
+export type ApiCatalogDimension = {
+  id: number;
+  dataset_id: number;
+  name: string;
+  description?: string | null;
+  type: "categorical" | "temporal" | "relational";
+  synonyms: string[];
+};
+
+export type ApiCatalogDataset = {
+  id: number;
+  datasource_id: number;
+  view_id?: number | null;
+  name: string;
+  description?: string | null;
+  metrics: ApiCatalogMetric[];
+  dimensions: ApiCatalogDimension[];
+};
+
+export type ApiCatalogProfilePreviewPayload = {
+  datasource_id: number;
+  base_query_spec: Record<string, unknown>;
+  columns: Array<{
+    name: string;
+    type: "numeric" | "temporal" | "text" | "boolean";
+  }>;
+};
+
+export type ApiCatalogColumnQuickStats = {
+  name: string;
+  unique_count?: number | null;
+  min?: number | string | null;
+  max?: number | string | null;
+  avg?: number | null;
+};
+
+export type ApiCatalogProfilePreviewResponse = {
+  items: ApiCatalogColumnQuickStats[];
+};
+
+export type ApiCatalogDataPreviewPayload = {
+  datasource_id: number;
+  base_query_spec: Record<string, unknown>;
+  columns: string[];
+  limit?: number;
+};
+
+export type ApiCatalogDataPreviewResponse = {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+};
+
+export type ApiCatalogMetricCreatePayload = {
+  dataset_id: number;
+  name: string;
+  description?: string;
+  formula: string;
+  unit?: string;
+  default_grain?: string;
+  synonyms?: string[];
+  examples?: string[];
+};
+
+export type ApiCatalogMetricUpdatePayload = Partial<{
+  name: string;
+  description: string;
+  formula: string;
+  unit: string;
+  default_grain: string;
+  synonyms: string[];
+  examples: string[];
+}>;
+
+export type ApiCatalogDimensionCreatePayload = {
+  dataset_id: number;
+  name: string;
+  description?: string;
+  type: "categorical" | "temporal" | "relational";
+  synonyms?: string[];
+};
+
+export type ApiCatalogDimensionUpdatePayload = Partial<{
+  name: string;
+  description: string;
+  type: "categorical" | "temporal" | "relational";
+  synonyms: string[];
+}>;
+
 export type ApiDatasetBaseQuerySpec = {
   version: 1;
   source: {
@@ -894,6 +995,36 @@ export const api = {
   ) => request<ApiDataset>(`/datasets/${datasetId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
   deleteDataset: (datasetId: number) => request<void>(`/datasets/${datasetId}`, { method: "DELETE" }),
+
+  getCatalogDataset: (datasetId: number) =>
+    request<ApiCatalogDataset>(`/catalog/dataset/${datasetId}`),
+
+  regenerateCatalogDataset: (datasetId: number) =>
+    request<ApiCatalogDataset>(`/catalog/dataset/${datasetId}/regenerate`, { method: "POST" }),
+
+  getCatalogProfilePreview: (payload: ApiCatalogProfilePreviewPayload) =>
+    request<ApiCatalogProfilePreviewResponse>("/catalog/profile/preview", { method: "POST", body: JSON.stringify(payload) }),
+
+  previewCatalogData: (payload: ApiCatalogDataPreviewPayload) =>
+    request<ApiCatalogDataPreviewResponse>("/catalog/data/preview", { method: "POST", body: JSON.stringify(payload) }),
+
+  createCatalogMetric: (payload: ApiCatalogMetricCreatePayload) =>
+    request<ApiCatalogMetric>("/catalog/metrics", { method: "POST", body: JSON.stringify(payload) }),
+
+  updateCatalogMetric: (metricId: number, payload: ApiCatalogMetricUpdatePayload) =>
+    request<ApiCatalogMetric>(`/catalog/metrics/${metricId}`, { method: "PATCH", body: JSON.stringify(payload) }),
+
+  deleteCatalogMetric: (metricId: number) =>
+    request<void>(`/catalog/metrics/${metricId}`, { method: "DELETE" }),
+
+  createCatalogDimension: (payload: ApiCatalogDimensionCreatePayload) =>
+    request<ApiCatalogDimension>("/catalog/dimensions", { method: "POST", body: JSON.stringify(payload) }),
+
+  updateCatalogDimension: (dimensionId: number, payload: ApiCatalogDimensionUpdatePayload) =>
+    request<ApiCatalogDimension>(`/catalog/dimensions/${dimensionId}`, { method: "PATCH", body: JSON.stringify(payload) }),
+
+  deleteCatalogDimension: (dimensionId: number) =>
+    request<void>(`/catalog/dimensions/${dimensionId}`, { method: "DELETE" }),
 
   listDashboards: (datasetId?: number) => {
     const query = datasetId ? `?dataset_id=${datasetId}` : "";

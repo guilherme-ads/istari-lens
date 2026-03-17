@@ -136,11 +136,63 @@ class Dataset(Base):
     datasource = relationship("DataSource", back_populates="datasets")
     view = relationship("View", back_populates="datasets")
     dashboards = relationship("Dashboard", back_populates="dataset", cascade="all, delete-orphan")
+    metrics = relationship("Metric", back_populates="dataset", cascade="all, delete-orphan")
+    dimensions = relationship("Dimension", back_populates="dataset", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("dataset_datasource_idx", "datasource_id"),
         Index("dataset_view_idx", "view_id"),
     )
+
+
+class Metric(Base):
+    __tablename__ = "metrics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text)
+    formula = Column(Text, nullable=False)
+    unit = Column(String(64))
+    default_grain = Column(String(64))
+    synonyms = Column(JSON, nullable=False, default=list)
+    examples = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dataset = relationship("Dataset", back_populates="metrics")
+    dimensions = relationship("Dimension", secondary="metric_dimensions", back_populates="metrics")
+
+    __table_args__ = (
+        Index("metrics_dataset_name_idx", "dataset_id", "name", unique=True),
+    )
+
+
+class Dimension(Base):
+    __tablename__ = "dimensions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text)
+    type = Column(String(32), nullable=False, default="categorical", index=True)
+    synonyms = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dataset = relationship("Dataset", back_populates="dimensions")
+    metrics = relationship("Metric", secondary="metric_dimensions", back_populates="dimensions")
+
+    __table_args__ = (
+        Index("dimensions_dataset_name_idx", "dataset_id", "name", unique=True),
+    )
+
+
+class MetricDimension(Base):
+    __tablename__ = "metric_dimensions"
+
+    metric_id = Column(Integer, ForeignKey("metrics.id", ondelete="CASCADE"), primary_key=True)
+    dimension_id = Column(Integer, ForeignKey("dimensions.id", ondelete="CASCADE"), primary_key=True)
 
 
 class Dashboard(Base):
