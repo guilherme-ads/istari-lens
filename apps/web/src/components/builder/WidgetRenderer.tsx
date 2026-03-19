@@ -1650,23 +1650,42 @@ export const WidgetRenderer = ({
     if (!parsed) return String(value);
     return formatDateBR(parsed, true, lineGranularity === "timestamp");
   };
+  const metricPrefixByKey = Object.fromEntries(
+    (widget.config.metrics || []).map((item, index) => [`m${index}`, item.prefix || ""]),
+  ) as Record<string, string>;
+  const metricSuffixByKey = Object.fromEntries(
+    (widget.config.metrics || []).map((item, index) => [`m${index}`, item.suffix || ""]),
+  ) as Record<string, string>;
+  const resolveBaseMetricKey = (seriesKey: string): string => (seriesKey.includes("__") ? seriesKey.split("__")[0] : seriesKey);
   const chartPrefix = widget.config.widget_type === "line"
     ? (widget.config.metrics[0]?.prefix || widget.config.kpi_prefix || "")
-    : (widget.config.kpi_prefix || "");
+    : (widget.config.metrics[0]?.prefix || widget.config.kpi_prefix || "");
   const chartSuffix = widget.config.widget_type === "line"
     ? (widget.config.metrics[0]?.suffix || widget.config.kpi_suffix || "")
-    : (widget.config.kpi_suffix || "");
+    : (widget.config.metrics[0]?.suffix || widget.config.kpi_suffix || "");
   const showPercentOfTotal = !!widget.config.bar_show_percent_of_total;
   const formatChartValueCompact = (value: unknown): string => `${chartPrefix}${formatCompactNumber(value)}${chartSuffix}`;
   const formatChartValueFull = (value: unknown): string => `${chartPrefix}${formatFullNumber(value)}${chartSuffix}`;
+  const formatMetricValueCompact = (seriesKey: string, value: unknown): string => {
+    const baseMetricKey = resolveBaseMetricKey(seriesKey);
+    const prefix = metricPrefixByKey[baseMetricKey] ?? chartPrefix;
+    const suffix = metricSuffixByKey[baseMetricKey] ?? chartSuffix;
+    return `${prefix}${formatCompactNumber(value)}${suffix}`;
+  };
+  const formatMetricValueFull = (seriesKey: string, value: unknown): string => {
+    const baseMetricKey = resolveBaseMetricKey(seriesKey);
+    const prefix = metricPrefixByKey[baseMetricKey] ?? chartPrefix;
+    const suffix = metricSuffixByKey[baseMetricKey] ?? chartSuffix;
+    return `${prefix}${formatFullNumber(value)}${suffix}`;
+  };
   const formatLineSeriesValueCompact = (seriesKey: string, value: unknown): string => {
-    const baseMetricKey = seriesKey.includes("__") ? seriesKey.split("__")[0] : seriesKey;
+    const baseMetricKey = resolveBaseMetricKey(seriesKey);
     const prefix = lineMetricPrefixByKey[baseMetricKey] || "";
     const suffix = lineMetricSuffixByKey[baseMetricKey] || "";
     return `${prefix}${formatCompactNumber(value)}${suffix}`;
   };
   const formatLineSeriesValueFull = (seriesKey: string, value: unknown): string => {
-    const baseMetricKey = seriesKey.includes("__") ? seriesKey.split("__")[0] : seriesKey;
+    const baseMetricKey = resolveBaseMetricKey(seriesKey);
     const prefix = lineMetricPrefixByKey[baseMetricKey] || "";
     const suffix = lineMetricSuffixByKey[baseMetricKey] || "";
     return `${prefix}${formatFullNumber(value)}${suffix}`;
@@ -2131,6 +2150,7 @@ export const WidgetRenderer = ({
                 <YAxis
                   type="category"
                   dataKey={dimKey}
+                  interval={0}
                   tick={(props: { x?: number; y?: number; payload?: { value?: unknown } }) => {
                     const x = Number(props.x || 0);
                     const y = Number(props.y || 0);
@@ -2296,13 +2316,16 @@ export const WidgetRenderer = ({
       Math.max(maxValue, columnRows.reduce((innerMax, row) => Math.max(innerMax, toFiniteNumber(row[key])), 0))
     ), 0);
     const overlayAxisMax = computeNiceAxisMax(overlayDataMax, 5);
+    const rightAxisMetricKey = overlayMetricKeys[0] || primaryMetricKey;
     const hasMultilineColumnTicks = columnRows.some((row) => splitLabelIntoTwoLines(formatCategoricalBucketLabel(row[dimKey]), 12).lines.length > 1);
     const denseColumnTicks = columnRows.length > 14;
     const columnTickInterval = denseColumnTicks ? Math.max(1, Math.ceil(columnRows.length / 10)) - 1 : 0;
     const columnXAxisHeight = denseColumnTicks ? 56 : (hasMultilineColumnTicks ? 40 : 26);
     const formatColumnMetricLabel = (value: unknown, compact = true): string => {
       const numericValue = toFiniteNumber(value);
-      const absolute = compact ? formatChartValueCompact(numericValue) : formatChartValueFull(numericValue);
+      const absolute = compact
+        ? formatMetricValueCompact(primaryMetricKey, numericValue)
+        : formatMetricValueFull(primaryMetricKey, numericValue);
       if (!showPercentOfTotal) return absolute;
       return `${absolute} (${formatPercentOfTotal(numericValue, columnTotal)})`;
     };
@@ -2369,7 +2392,7 @@ export const WidgetRenderer = ({
             width={50}
             domain={[0, columnAxisMax]}
             tickCount={5}
-            tickFormatter={(value) => formatChartValueCompact(value)}
+            tickFormatter={(value) => formatMetricValueCompact(primaryMetricKey, value)}
           />
           {hasOverlayMetrics && (
             <YAxis
@@ -2381,7 +2404,7 @@ export const WidgetRenderer = ({
               width={50}
               domain={[0, overlayAxisMax]}
               tickCount={5}
-              tickFormatter={(value) => formatChartValueCompact(value)}
+              tickFormatter={(value) => formatMetricValueCompact(rightAxisMetricKey, value)}
             />
           )}
           <Tooltip
@@ -2413,7 +2436,7 @@ export const WidgetRenderer = ({
                       const isPrimary = key === primaryMetricKey;
                       const formatted = isPrimary
                         ? formatColumnMetricLabel(entry.value, false)
-                        : formatChartValueFull(entry.value);
+                        : formatMetricValueFull(key, entry.value);
                       return (
                         <div key={`${key}-${entry.name}`} className="flex items-center justify-between gap-3">
                           <span className="inline-flex items-center gap-1.5 text-muted-foreground">

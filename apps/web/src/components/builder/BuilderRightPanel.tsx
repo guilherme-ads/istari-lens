@@ -1366,17 +1366,35 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                     isColumnWidget ? (
                       <div className="space-y-1.5">
                         {barLikeMetrics.map((barMetric, metricIndex) => (
-                          <div key={`bar-like-alias-${metricIndex}`} className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
-                            <Label className="text-caption text-muted-foreground">{barMetric.column || "sem coluna"}</Label>
-                            <Input
-                              className="h-8 text-xs"
-                              value={barMetric.alias || ""}
-                              placeholder={`Ex: Serie ${metricIndex + 1}`}
-                              onChange={(event) => {
-                                const value = event.target.value.trim();
-                                updateBarLikeMetricAt(metricIndex, { alias: value || undefined });
-                              }}
-                            />
+                          <div key={`bar-like-alias-${metricIndex}`} className="rounded-md border border-border/60 p-2 space-y-2">
+                            <div className="grid grid-cols-[84px_minmax(0,1fr)] items-center gap-2">
+                              <Label className="text-caption text-muted-foreground truncate" title={barMetric.column || `m${metricIndex + 1}`}>
+                                {barMetric.column || `m${metricIndex + 1}`}
+                              </Label>
+                              <Input
+                                className="h-8 min-w-[84px] text-xs"
+                                value={barMetric.alias || ""}
+                                placeholder="Mostrar como..."
+                                onChange={(event) => {
+                                  const value = event.target.value.trim();
+                                  updateBarLikeMetricAt(metricIndex, { alias: value || undefined });
+                                }}
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 items-center gap-2">
+                              <Input
+                                className="h-8 text-xs px-2"
+                                value={barMetric.prefix || ""}
+                                placeholder="Prefix."
+                                onChange={(event) => updateBarLikeMetricAt(metricIndex, { prefix: event.target.value || undefined })}
+                              />
+                              <Input
+                                className="h-8 text-xs px-2"
+                                value={barMetric.suffix || ""}
+                                placeholder="Sufix."
+                                onChange={(event) => updateBarLikeMetricAt(metricIndex, { suffix: event.target.value || undefined })}
+                              />
+                            </div>
                           </div>
                         ))}
                       </div>
