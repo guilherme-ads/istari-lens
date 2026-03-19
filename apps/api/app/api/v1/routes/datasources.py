@@ -1,8 +1,7 @@
 """DataSource management endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from sqlalchemy import text
+from sqlalchemy import func, inspect, text
 from datetime import datetime
 import re
 from cryptography.fernet import InvalidToken
@@ -228,17 +227,15 @@ def delete_datasource(
             detail="DataSource must be deactivated before deletion",
         )
 
-    analyses_has_datasource_id = db.execute(
-        text(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = 'analyses'
-              AND column_name = 'datasource_id'
-            LIMIT 1
-            """
-        )
-    ).first()
+    try:
+        inspector = inspect(db.bind)
+        analyses_columns = {
+            column["name"]
+            for column in inspector.get_columns("analyses")
+        }
+        analyses_has_datasource_id = "datasource_id" in analyses_columns
+    except Exception:
+        analyses_has_datasource_id = False
 
     if analyses_has_datasource_id:
         usage_count = db.query(func.count(models.Analysis.id)).filter(
@@ -263,9 +260,20 @@ def delete_datasource(
             detail="DataSource cannot be deleted because it is used in analyses",
         )
 
-    dataset_ids = [item.id for item in db.query(models.Dataset.id).filter(models.Dataset.datasource_id == datasource_id).all()]
+    dataset_ids = [
+        item.id
+        for item in db.query(models.Dataset.id).filter(
+            models.Dataset.datasource_id == datasource_id
+        ).all()
+    ]
     if dataset_ids:
-        db.query(models.Dashboard).filter(models.Dashboard.dataset_id.in_(dataset_ids)).delete(synchronize_session=False)
+        dashboards = (
+            db.query(models.Dashboard)
+            .filter(models.Dashboard.dataset_id.in_(dataset_ids))
+            .all()
+        )
+        for dashboard in dashboards:
+            db.delete(dashboard)
 
     db.delete(datasource)
     db.commit()

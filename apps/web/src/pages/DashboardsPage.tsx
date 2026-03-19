@@ -416,9 +416,10 @@ const CreateDashboardDialog = ({
             className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
             disabled={!datasetId}
             onClick={() => {
-              onContinue(datasetId);
+              const selectedDatasetId = datasetId;
               onOpenChange(false);
               setDatasetId("");
+              window.requestAnimationFrame(() => onContinue(selectedDatasetId));
             }}
           >
             Continuar para Builder
