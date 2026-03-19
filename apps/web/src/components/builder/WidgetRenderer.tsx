@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart,
   LineChart as ReLineChart, Line, LabelList, Legend, PieChart as RePieChart, Pie, Cell,
 } from "recharts";
 import { ArrowUpDown, Download, ChevronLeft, ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
@@ -641,7 +641,8 @@ const buildDraftPreviewSpec = ({
   const isKpi = widgetType === "kpi";
   const isLine = widgetType === "line";
   const isDonut = widgetType === "donut";
-  const isCategorical = widgetType === "bar" || widgetType === "column" || widgetType === "donut";
+  const isBarLike = widgetType === "bar" || widgetType === "column";
+  const isCategorical = isBarLike || isDonut;
   const isTable = widgetType === "table";
   const isDre = widgetType === "dre";
   if (!isKpi && !isCategorical && !isLine && !isTable && !isDre) return null;
@@ -661,7 +662,10 @@ const buildDraftPreviewSpec = ({
       agg: cfg.inner_agg || "count",
     }];
   }
-  if ((isKpi || isCategorical) && metrics.length !== 1) return null;
+  if (isKpi && metrics.length !== 1) return null;
+  if (isDonut && metrics.length !== 1) return null;
+  if (widgetType === "bar" && metrics.length !== 1) return null;
+  if (widgetType === "column" && metrics.length < 1) return null;
   if (isLine && (metrics.length < 1 || metrics.length > 2)) return null;
   const dreRowMetricKeys: Record<string, string[]> = {};
   const tableMetricKeyByColumn: Record<string, string> = {};
@@ -2029,7 +2033,25 @@ export const WidgetRenderer = ({
   const parsedTemporalCategoryDimension = dim ? parseTemporalDimensionToken(dim) : null;
   const categoryTemporalGranularity = parsedTemporalCategoryDimension?.granularity;
   const metricKey = resolvePrimaryMetricKey(widget, rows);
-  const chartRows = rows.map((row) => ({ ...row, [metricKey]: toFiniteNumber(row[metricKey]) }));
+  const configuredMetricKeys = (widget.config.metrics || []).map((_, index) => `m${index}`);
+  const chartMetricKeys = (configuredMetricKeys.length > 0 ? configuredMetricKeys : [metricKey]).filter((key, index, arr) => arr.indexOf(key) === index);
+  const chartMetricLabelByKey = Object.fromEntries(
+    chartMetricKeys.map((key, index) => {
+      const metricConfig = widget.config.metrics[index];
+      if (!metricConfig) return [key, key];
+      if (metricConfig.alias && metricConfig.alias.trim()) return [key, metricConfig.alias.trim()];
+      if (metricConfig.op === "count") return [key, metricConfig.column ? `CONTAGEM(${metricConfig.column})` : "CONTAGEM(*)"];
+      if (metricConfig.op === "distinct_count") return [key, `CONTAGEM ÚNICA(${metricConfig.column || "*"})`];
+      return [key, `${aggLabelMap[metricConfig.op]}(${metricConfig.column || "*"})`];
+    }),
+  );
+  const chartRows = rows.map((row) => {
+    const next = { ...row };
+    chartMetricKeys.forEach((key) => {
+      next[key] = toFiniteNumber(next[key]);
+    });
+    return next;
+  });
   const formatCategoricalBucketLabel = (value: unknown): string => {
     if (categoryTemporalGranularity) {
       return formatTemporalBucket(value, categoryTemporalGranularity);
@@ -2042,20 +2064,27 @@ export const WidgetRenderer = ({
     const showBarLabels = widget.config.bar_data_labels_enabled !== false;
     const showBarGrid = !!widget.config.bar_show_grid;
     const barGap = 8;
+    const primaryMetricKey = chartMetricKeys[0] || metricKey;
+    const overlayMetricKeys: string[] = [];
+    const hasOverlayMetrics = false;
     const barRows = [...chartRows].sort((left, right) => {
-      const metricDiff = toFiniteNumber(right[metricKey]) - toFiniteNumber(left[metricKey]);
+      const metricDiff = toFiniteNumber(right[primaryMetricKey]) - toFiniteNumber(left[primaryMetricKey]);
       if (metricDiff !== 0) return metricDiff;
       return String(left[dimKey] ?? "").localeCompare(String(right[dimKey] ?? ""), "pt-BR");
     });
-    const barTotal = barRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
+    const barTotal = barRows.reduce((sum, row) => sum + toFiniteNumber(row[primaryMetricKey]), 0);
     const formatBarMetricLabel = (value: unknown, compact = true): string => {
       const numericValue = toFiniteNumber(value);
       const absolute = compact ? formatChartValueCompact(numericValue) : formatChartValueFull(numericValue);
       if (!showPercentOfTotal) return absolute;
       return `${absolute} (${formatPercentOfTotal(numericValue, barTotal)})`;
     };
-    const barDataMax = barRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
+    const barDataMax = barRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[primaryMetricKey])), 0);
     const barAxisMax = computeNiceAxisMax(barDataMax, 4);
+    const overlayDataMax = overlayMetricKeys.reduce((maxValue, key) => (
+      Math.max(maxValue, barRows.reduce((innerMax, row) => Math.max(innerMax, toFiniteNumber(row[key])), 0))
+    ), 0);
+    const overlayAxisMax = computeNiceAxisMax(overlayDataMax, 4);
     const barRightMargin = showBarLabels
       ? (showPercentOfTotal ? 76 : 56)
       : 28;
@@ -2073,22 +2102,32 @@ export const WidgetRenderer = ({
         <div
           className="w-full overflow-y-auto pr-1"
           style={{
-            height: `calc(100% - ${axisFooterHeight}px)`,
-            scrollbarWidth: "thin",
-            scrollbarColor: "hsl(var(--border)) transparent",
+            height: hasOverlayMetrics ? "100%" : `calc(100% - ${axisFooterHeight}px)`,
           }}
         >
           <div style={{ minHeight: "100%", height: `${barChartHeight}px` }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barRows} margin={{ top: 8, right: barRightMargin, bottom: 6, left: 4 }} layout="vertical" barCategoryGap={barGap}>
+              <ComposedChart data={barRows} margin={{ top: 8, right: barRightMargin, bottom: 6, left: 4 }} layout="vertical" barCategoryGap={barGap}>
                 {showBarGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" horizontal={false} />}
                 <XAxis
+                  xAxisId="left"
                   type="number"
-                  hide
+                  hide={hasOverlayMetrics}
                   domain={[0, barAxisMax]}
                   allowDataOverflow={false}
                   tickFormatter={(value) => formatChartValueCompact(value)}
                 />
+                {hasOverlayMetrics && (
+                  <XAxis
+                    xAxisId="right"
+                    type="number"
+                    hide
+                    orientation="top"
+                    domain={[0, overlayAxisMax]}
+                    allowDataOverflow={false}
+                    tickFormatter={(value) => formatChartValueCompact(value)}
+                  />
+                )}
                 <YAxis
                   type="category"
                   dataKey={dimKey}
@@ -2121,21 +2160,60 @@ export const WidgetRenderer = ({
                 />
                 <Tooltip
                   cursor={{ fill: "hsl(var(--muted)/0.28)" }}
-                  content={(props) => (
-                    <GlassTooltip
-                      active={props.active}
-                      payload={props.payload as Array<{ value?: unknown }> | undefined}
-                      label={props.label}
-                      categoryLabel={formatCategoricalBucketLabel}
-                      metricLabel={metricLabel}
-                      valueLabel={(value) => formatBarMetricLabel(value, false)}
-                    />
-                  )}
+                  content={(props) => {
+                    const payload = (props.payload || []) as Array<{ value?: unknown; name?: string; color?: string; dataKey?: string }>;
+                    if (!props.active || payload.length === 0) return null;
+                    if (!hasOverlayMetrics) {
+                      return (
+                        <GlassTooltip
+                          active={props.active}
+                          payload={props.payload as Array<{ value?: unknown }> | undefined}
+                          label={props.label}
+                          categoryLabel={formatCategoricalBucketLabel}
+                          metricLabel={metricLabel}
+                          valueLabel={(value) => formatBarMetricLabel(value, false)}
+                        />
+                      );
+                    }
+                    return (
+                      <div
+                        className="min-w-[170px] rounded-xl border border-border/60 bg-[hsl(var(--card)/0.72)] px-3 py-2 shadow-xl backdrop-blur-md"
+                        style={{ boxShadow: "0 14px 30px -16px rgba(2,6,23,0.65)" }}
+                      >
+                        <p className="text-[11px] font-semibold text-foreground/95">{formatCategoricalBucketLabel(props.label)}</p>
+                        <div className="mt-1 space-y-1 text-[11px]">
+                          {payload.map((entry) => {
+                            const key = String(entry.dataKey || "");
+                            const isPrimary = key === primaryMetricKey;
+                            const formatted = isPrimary
+                              ? formatBarMetricLabel(entry.value, false)
+                              : formatChartValueFull(entry.value);
+                            return (
+                              <div key={`${key}-${entry.name}`} className="flex items-center justify-between gap-3">
+                                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color || "hsl(var(--chart-1))" }} />
+                                  {entry.name || chartMetricLabelByKey[key] || key}
+                                </span>
+                                <span className="font-semibold tabular-nums text-foreground">{formatted}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  }}
                 />
-                <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[4, 4, 0, 0]} barSize={adaptiveBarHeight}>
+                <Bar
+                  dataKey={primaryMetricKey}
+                  name={chartMetricLabelByKey[primaryMetricKey] || metricLabel}
+                  xAxisId="left"
+                  fill={chartPalette[0]}
+                  radius={[4, 4, 0, 0]}
+                  barSize={adaptiveBarHeight}
+                >
                   {showBarLabels && (
                     <LabelList
-                      dataKey={metricKey}
+                      dataKey={primaryMetricKey}
                       content={(props: Record<string, unknown>) => {
                         const value = props.value;
                         const x = Number(props.x || 0);
@@ -2150,28 +2228,44 @@ export const WidgetRenderer = ({
                     />
                   )}
                 </Bar>
-              </BarChart>
+                {overlayMetricKeys.map((lineKey, index) => (
+                  <Line
+                    key={`bar-overlay-${lineKey}`}
+                    type="monotone"
+                    dataKey={lineKey}
+                    name={chartMetricLabelByKey[lineKey] || lineKey}
+                    xAxisId={hasOverlayMetrics ? "right" : "left"}
+                    stroke={chartPalette[(index + 1) % chartPalette.length]}
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 3 }}
+                  />
+                ))}
+                {hasOverlayMetrics && <Legend wrapperStyle={{ fontSize: 10 }} />}
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </div>
-        <div className="shrink-0" style={{ height: `${axisFooterHeight}px` }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={barRows.length > 0 ? [barRows[0]] : [{ [metricKey]: 0 }]} margin={{ top: 0, right: barRightMargin, bottom: 0, left: 4 }}>
-              <XAxis
-                type="number"
-                dataKey={metricKey}
-                tick={{ fontSize: 10 }}
-                height={20}
-                axisLine={false}
-                tickLine={false}
-                domain={[0, barAxisMax]}
-                tickCount={4}
-                allowDataOverflow={false}
-                tickFormatter={(value) => formatChartValueCompact(value)}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {!hasOverlayMetrics && (
+          <div className="shrink-0" style={{ height: `${axisFooterHeight}px` }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={barRows.length > 0 ? [barRows[0]] : [{ [primaryMetricKey]: 0 }]} margin={{ top: 0, right: barRightMargin, bottom: 0, left: 4 }}>
+                <XAxis
+                  type="number"
+                  dataKey={primaryMetricKey}
+                  tick={{ fontSize: 10 }}
+                  height={20}
+                  axisLine={false}
+                  tickLine={false}
+                  domain={[0, barAxisMax]}
+                  tickCount={4}
+                  allowDataOverflow={false}
+                  tickFormatter={(value) => formatChartValueCompact(value)}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
     );
   }
@@ -2179,6 +2273,9 @@ export const WidgetRenderer = ({
   if (type === "column") {
     const showColumnLabels = widget.config.bar_data_labels_enabled !== false;
     const showColumnGrid = !!widget.config.bar_show_grid;
+    const primaryMetricKey = chartMetricKeys[0] || metricKey;
+    const overlayMetricKeys = chartMetricKeys.slice(1);
+    const hasOverlayMetrics = overlayMetricKeys.length > 0;
     const columnRows = [...chartRows].sort((left, right) => {
       const leftDim = left[dimKey];
       const rightDim = right[dimKey];
@@ -2192,11 +2289,17 @@ export const WidgetRenderer = ({
       }
       return String(leftDim ?? "").localeCompare(String(rightDim ?? ""), "pt-BR");
     });
-    const columnTotal = columnRows.reduce((sum, row) => sum + toFiniteNumber(row[metricKey]), 0);
-    const columnDataMax = columnRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[metricKey])), 0);
+    const columnTotal = columnRows.reduce((sum, row) => sum + toFiniteNumber(row[primaryMetricKey]), 0);
+    const columnDataMax = columnRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[primaryMetricKey])), 0);
     const columnAxisMax = computeNiceAxisMax(columnDataMax, 5);
+    const overlayDataMax = overlayMetricKeys.reduce((maxValue, key) => (
+      Math.max(maxValue, columnRows.reduce((innerMax, row) => Math.max(innerMax, toFiniteNumber(row[key])), 0))
+    ), 0);
+    const overlayAxisMax = computeNiceAxisMax(overlayDataMax, 5);
     const hasMultilineColumnTicks = columnRows.some((row) => splitLabelIntoTwoLines(formatCategoricalBucketLabel(row[dimKey]), 12).lines.length > 1);
-    const columnXAxisHeight = hasMultilineColumnTicks ? 40 : 26;
+    const denseColumnTicks = columnRows.length > 14;
+    const columnTickInterval = denseColumnTicks ? Math.max(1, Math.ceil(columnRows.length / 10)) - 1 : 0;
+    const columnXAxisHeight = denseColumnTicks ? 56 : (hasMultilineColumnTicks ? 40 : 26);
     const formatColumnMetricLabel = (value: unknown, compact = true): string => {
       const numericValue = toFiniteNumber(value);
       const absolute = compact ? formatChartValueCompact(numericValue) : formatChartValueFull(numericValue);
@@ -2205,17 +2308,38 @@ export const WidgetRenderer = ({
     };
     return (
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={columnRows} margin={{ top: 8, right: 8, bottom: 0, left: 2 }}>
+        <ComposedChart data={columnRows} margin={{ top: 8, right: hasOverlayMetrics ? 22 : 8, bottom: 0, left: 2 }}>
           {showColumnGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 20%, 88%)" vertical={false} />}
           <XAxis
             dataKey={dimKey}
-            interval={0}
+            interval={columnTickInterval}
+            minTickGap={12}
+            allowDuplicatedCategory={false}
             height={columnXAxisHeight}
             tickMargin={6}
             tick={(props: { x?: number; y?: number; payload?: { value?: unknown } }) => {
               const x = Number(props.x || 0);
               const y = Number(props.y || 0);
-              const { lines, full } = splitLabelIntoTwoLines(formatCategoricalBucketLabel(props.payload?.value), 12);
+              const formatted = formatCategoricalBucketLabel(props.payload?.value);
+              const { lines, full } = splitLabelIntoTwoLines(formatted, denseColumnTicks ? 10 : 12);
+              if (denseColumnTicks) {
+                return (
+                  <g transform={`translate(${x},${y})`}>
+                    <title>{full}</title>
+                    <text
+                      x={0}
+                      y={0}
+                      dy={10}
+                      textAnchor="end"
+                      fill="hsl(var(--muted-foreground))"
+                      fontSize={10}
+                      transform="rotate(-32)"
+                    >
+                      {lines[0] || formatted}
+                    </text>
+                  </g>
+                );
+              }
               return (
                 <g transform={`translate(${x},${y})`}>
                   <title>{full}</title>
@@ -2238,6 +2362,7 @@ export const WidgetRenderer = ({
             tickLine={false}
           />
           <YAxis
+            yAxisId="left"
             tick={{ fontSize: 10 }}
             axisLine={false}
             tickLine={false}
@@ -2246,23 +2371,74 @@ export const WidgetRenderer = ({
             tickCount={5}
             tickFormatter={(value) => formatChartValueCompact(value)}
           />
+          {hasOverlayMetrics && (
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              width={50}
+              domain={[0, overlayAxisMax]}
+              tickCount={5}
+              tickFormatter={(value) => formatChartValueCompact(value)}
+            />
+          )}
           <Tooltip
             cursor={{ fill: "hsl(var(--muted)/0.28)" }}
-            content={(props) => (
-              <GlassTooltip
-                active={props.active}
-                payload={props.payload as Array<{ value?: unknown }> | undefined}
-                label={props.label}
-                categoryLabel={formatCategoricalBucketLabel}
-                metricLabel={metricLabel}
-                valueLabel={(value) => formatColumnMetricLabel(value, false)}
-              />
-            )}
+            content={(props) => {
+              const payload = (props.payload || []) as Array<{ value?: unknown; name?: string; color?: string; dataKey?: string }>;
+              if (!props.active || payload.length === 0) return null;
+              if (!hasOverlayMetrics) {
+                return (
+                  <GlassTooltip
+                    active={props.active}
+                    payload={props.payload as Array<{ value?: unknown }> | undefined}
+                    label={props.label}
+                    categoryLabel={formatCategoricalBucketLabel}
+                    metricLabel={metricLabel}
+                    valueLabel={(value) => formatColumnMetricLabel(value, false)}
+                  />
+                );
+              }
+              return (
+                <div
+                  className="min-w-[170px] rounded-xl border border-border/60 bg-[hsl(var(--card)/0.72)] px-3 py-2 shadow-xl backdrop-blur-md"
+                  style={{ boxShadow: "0 14px 30px -16px rgba(2,6,23,0.65)" }}
+                >
+                  <p className="text-[11px] font-semibold text-foreground/95">{formatCategoricalBucketLabel(props.label)}</p>
+                  <div className="mt-1 space-y-1 text-[11px]">
+                    {payload.map((entry) => {
+                      const key = String(entry.dataKey || "");
+                      const isPrimary = key === primaryMetricKey;
+                      const formatted = isPrimary
+                        ? formatColumnMetricLabel(entry.value, false)
+                        : formatChartValueFull(entry.value);
+                      return (
+                        <div key={`${key}-${entry.name}`} className="flex items-center justify-between gap-3">
+                          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color || "hsl(var(--chart-1))" }} />
+                            {entry.name || chartMetricLabelByKey[key] || key}
+                          </span>
+                          <span className="font-semibold tabular-nums text-foreground">{formatted}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }}
           />
-          <Bar dataKey={metricKey} fill={chartPalette[0]} radius={[6, 6, 0, 0]}>
+          <Bar
+            dataKey={primaryMetricKey}
+            name={chartMetricLabelByKey[primaryMetricKey] || metricLabel}
+            yAxisId="left"
+            fill={chartPalette[0]}
+            radius={[6, 6, 0, 0]}
+          >
             {showColumnLabels && (
               <LabelList
-                dataKey={metricKey}
+                dataKey={primaryMetricKey}
                 content={(props: Record<string, unknown>) => {
                   const value = props.value;
                   const x = Number(props.x || 0);
@@ -2277,7 +2453,21 @@ export const WidgetRenderer = ({
               />
             )}
           </Bar>
-        </BarChart>
+          {overlayMetricKeys.map((lineKey, index) => (
+            <Line
+              key={`column-overlay-${lineKey}`}
+              type="monotone"
+              dataKey={lineKey}
+              name={chartMetricLabelByKey[lineKey] || lineKey}
+              yAxisId="right"
+              stroke={chartPalette[(index + 1) % chartPalette.length]}
+              strokeWidth={2}
+              dot={{ r: 2 }}
+              activeDot={{ r: 3 }}
+            />
+          ))}
+          {hasOverlayMetrics && <Legend wrapperStyle={{ fontSize: 10 }} />}
+        </ComposedChart>
       </ResponsiveContainer>
     );
   }

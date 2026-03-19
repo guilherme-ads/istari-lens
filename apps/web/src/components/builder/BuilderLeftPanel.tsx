@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { type DragEvent as ReactDragEvent } from "react";
 import {
   BarChart3,
+  BarChartHorizontal,
   GripVertical,
   Hash,
   LayoutGrid,
@@ -43,7 +44,7 @@ type WidgetOption = {
 
 const widgetIconsByWidgetType: Record<WidgetType, typeof BarChart3> = {
   kpi: Hash,
-  bar: BarChart3,
+  bar: BarChartHorizontal,
   line: LineChart,
   donut: PieChart,
   table: Table2,
@@ -89,8 +90,8 @@ const patternOptions: Array<{
 }> = [
   { title: "Metrica Unica", description: "KPI principal para leitura rapida", type: "kpi", presetKey: "kpi_primary", icon: Hash },
   { title: "KPI com Tendencia", description: "KPI com variacao do periodo anterior", type: "kpi", presetKey: "kpi_trend", icon: LineChart },
-  { title: "Comparacao por Categoria", description: "Compara categorias por valor", type: "bar", presetKey: "category_comparison", icon: BarChart3 },
-  { title: "Top 10 Ranking", description: "Ordena e limita para principais categorias", type: "bar", presetKey: "top_10_ranking", icon: BarChart3 },
+  { title: "Comparacao por Categoria", description: "Compara categorias por valor", type: "bar", presetKey: "category_comparison", icon: BarChartHorizontal },
+  { title: "Top 10 Ranking", description: "Ordena e limita para principais categorias", type: "bar", presetKey: "top_10_ranking", icon: BarChartHorizontal },
   { title: "Evolucao Mensal", description: "Serie temporal em granularidade mensal", type: "line", presetKey: "temporal_evolution_monthly", icon: LineChart },
   { title: "Participacao Percentual", description: "Distribuicao percentual por categoria", type: "pie", presetKey: "share_distribution", icon: PieChart },
   { title: "Composicao no Tempo", description: "Colunas por mes para acompanhar composicao", type: "column", presetKey: "temporal_composition", icon: Layers3 },

@@ -289,8 +289,12 @@ class WidgetConfig(BaseModel):
         elif self.widget_type in {"bar", "column", "donut"}:
             if len(self.dimensions) != 1:
                 raise ValueError("Categorical widget requires exactly one dimension")
-            if len(self.metrics) != 1:
-                raise ValueError("Categorical widget requires exactly one metric")
+            if self.widget_type == "donut" and len(self.metrics) != 1:
+                raise ValueError("Donut widget requires exactly one metric")
+            if self.widget_type == "bar" and len(self.metrics) != 1:
+                raise ValueError("Bar widget requires exactly one metric")
+            if self.widget_type == "column" and len(self.metrics) < 1:
+                raise ValueError("Column widget requires at least one metric")
             if self.time is not None:
                 raise ValueError("Categorical widget does not support time")
             if self.top_n is not None and self.top_n <= 0:

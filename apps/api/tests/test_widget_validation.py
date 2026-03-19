@@ -163,6 +163,57 @@ def test_bar_allows_temporal_week_dimension_token() -> None:
     validate_widget_config_against_columns(config, COLUMN_TYPES)
 
 
+def test_column_allows_multiple_metrics() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "column",
+            "view_name": "public.vw_recargas",
+            "metrics": [
+                {"op": "count", "column": "id_recarga"},
+                {"op": "sum", "column": "kwh"},
+            ],
+            "dimensions": ["estacao"],
+            "filters": [],
+            "order_by": [{"metric_ref": "m0", "direction": "desc"}],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+
+
+def test_bar_rejects_multiple_metrics() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "bar",
+                "view_name": "public.vw_recargas",
+                "metrics": [
+                    {"op": "count", "column": "id_recarga"},
+                    {"op": "sum", "column": "kwh"},
+                ],
+                "dimensions": ["estacao"],
+                "filters": [],
+                "order_by": [{"metric_ref": "m0", "direction": "desc"}],
+            }
+        )
+
+
+def test_donut_rejects_multiple_metrics() -> None:
+    with pytest.raises(ValueError):
+        WidgetConfig.model_validate(
+            {
+                "widget_type": "donut",
+                "view_name": "public.vw_recargas",
+                "metrics": [
+                    {"op": "count", "column": "id_recarga"},
+                    {"op": "sum", "column": "kwh"},
+                ],
+                "dimensions": ["estacao"],
+                "filters": [],
+                "order_by": [],
+            }
+        )
+
+
 def test_bar_rejects_order_by_column_different_from_selected_dimension() -> None:
     config = WidgetConfig.model_validate(
         {

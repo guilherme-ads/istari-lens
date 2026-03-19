@@ -218,7 +218,13 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
   const isKpiWidget = draft.config.widget_type === "kpi";
   const isLineWidget = draft.config.widget_type === "line";
   const isBarLikeWidget = draft.config.widget_type === "bar" || draft.config.widget_type === "column";
+  const isColumnWidget = draft.config.widget_type === "column";
   const isDonutWidget = draft.config.widget_type === "donut";
+  const barLikeMetrics = isBarLikeWidget
+    ? ((draft.config.metrics && draft.config.metrics.length > 0)
+      ? (isColumnWidget ? draft.config.metrics : [draft.config.metrics[0]])
+      : [{ op: "count" as const, column: undefined }])
+    : [];
   const isDreWidget = draft.config.widget_type === "dre";
   const isCategoricalChart = isBarLikeWidget || isDonutWidget;
   const hasChartOptions = isLineWidget || isBarLikeWidget || isDonutWidget;
@@ -286,7 +292,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
     })),
   ];
   const donutDimensionValue = draft.config.dimensions[0] || "__none__";
-  const donutDimensionPreview = donutDimensionValue === "__none__" ? "Sem dimensão" : donutDimensionValue;
+  const donutDimensionPreview = donutDimensionValue === "__none__" ? "Sem dimensao" : donutDimensionValue;
   const donutSentencePreview = `${metricLabelByOp[donutSentenceAgg]} de ${donutSentenceColumn === "__none__" ? "*" : donutSentenceColumn} por ${donutDimensionPreview}`;
   const lineMetrics = (draft.config.metrics.length > 0
     ? draft.config.metrics
@@ -303,7 +309,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
   const barLikeDimensionIsTemporal = !!barLikeDimensionColumn && temporalColumns.some((column) => column.name === barLikeDimensionColumn);
   const barLikeDimensionPreview = barLikeDimensionColumn
     ? `${barLikeDimensionColumn}${barLikeDimensionIsTemporal ? `[${barLikeDimensionGranularity}]` : ""}`
-    : "Sem dimensão";
+    : "Sem dimensao";
   const donutTopNInputValue = draft.config.donut_group_others_enabled
     ? (draft.config.donut_group_others_top_n ?? draft.config.top_n ?? "")
     : (draft.config.top_n ?? draft.config.donut_group_others_top_n ?? "");
@@ -375,7 +381,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
     const columnType = getColumnType(columnName);
     if (columnType === "numeric") {
       return [
-        { value: "number_2", label: "Número (2 casas)" },
+        { value: "number_2", label: "Numero (2 casas)" },
         { value: "integer", label: "Inteiro" },
         { value: "currency_brl", label: "Moeda (R$)" },
         { value: "native", label: "Nativo" },
@@ -385,11 +391,11 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
     if (columnType === "temporal") {
       return [
         { value: "datetime", label: "Data e hora" },
-        { value: "date", label: "Só data" },
-        { value: "time", label: "Só hora" },
-        { value: "year", label: "Só ano" },
-        { value: "month", label: "Só mês" },
-        { value: "day", label: "Só dia" },
+        { value: "date", label: "So data" },
+        { value: "time", label: "So hora" },
+        { value: "year", label: "So ano" },
+        { value: "month", label: "So mes" },
+        { value: "day", label: "So dia" },
         { value: "native", label: "Nativo" },
         { value: "text", label: "Texto" },
       ];
@@ -560,6 +566,34 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
     nextMetrics[0] = { ...nextMetrics[0], ...patch };
     setConfig({ metrics: nextMetrics });
   };
+  const setBarLikeMetrics = (nextMetrics: Array<{ op: MetricOp; column?: string; alias?: string; prefix?: string; suffix?: string }>) => {
+    const fallbackMetric = { op: "count" as const, column: undefined };
+    setConfig({ metrics: nextMetrics.length > 0 ? nextMetrics : [fallbackMetric] });
+  };
+  const updateBarLikeMetricAt = (
+    index: number,
+    patch: Partial<{ op: MetricOp; column?: string; alias?: string; prefix?: string; suffix?: string }>,
+  ) => {
+    if (index < 0) return;
+    const base = barLikeMetrics.length > 0 ? barLikeMetrics : [{ op: "count" as const, column: undefined }];
+    if (index >= base.length) return;
+    const next = [...base];
+    next[index] = { ...next[index], ...patch };
+    setBarLikeMetrics(next);
+  };
+  const addBarLikeMetric = () => {
+    if (!isColumnWidget) return;
+    const fallbackMetric = { op: "count" as const, column: undefined };
+    const next = [...(barLikeMetrics.length > 0 ? barLikeMetrics : [fallbackMetric])];
+    next.push({ op: "count" as const, column: undefined });
+    setBarLikeMetrics(next);
+  };
+  const removeBarLikeMetric = (index: number) => {
+    if (!isColumnWidget) return;
+    if (index <= 0) return;
+    const next = barLikeMetrics.filter((_, metricIndex) => metricIndex !== index);
+    setBarLikeMetrics(next);
+  };
   const setLineMetrics = (nextMetrics: Array<{ op: MetricOp; column?: string; alias?: string; prefix?: string; suffix?: string; line_style?: "solid" | "dashed" | "dotted"; line_y_axis?: "left" | "right" }>) => {
     setConfig({
       metrics: nextMetrics.map((item, index) => ({
@@ -567,6 +601,17 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
         line_y_axis: item.line_y_axis === "right" ? "right" : index === 0 ? "left" : "right",
       })),
     });
+  };
+  const barFormattingMetrics = (barLikeMetrics.length > 0 ? barLikeMetrics : [{ op: "count" as const, column: undefined }]).map((item) => ({
+    ...item,
+    line_style: (item as { line_style?: "solid" | "dashed" | "dotted" }).line_style || "solid",
+    line_y_axis: "left" as const,
+  }));
+  const setBarFormattingMetrics = (
+    nextMetrics: Array<{ op: MetricOp; column?: string; alias?: string; prefix?: string; suffix?: string; line_style?: "solid" | "dashed" | "dotted"; line_y_axis?: "left" | "right" }>,
+  ) => {
+    const sanitized = nextMetrics.map(({ op, column, alias, prefix, suffix }) => ({ op, column, alias, prefix, suffix }));
+    setBarLikeMetrics(sanitized.length > 0 ? sanitized : [{ op: "count" as const, column: undefined }]);
   };
   const setKpiSentenceBaseAgg = (value: string) => {
     const nextAgg = value as MetricOp;
@@ -796,6 +841,19 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
         type: normalizedDraft.config.widget_type,
         props: normalizedDraft.config,
       };
+    } else if (normalizedDraft.config.widget_type === "bar" || normalizedDraft.config.widget_type === "column") {
+      const existingMetrics = (normalizedDraft.config.metrics || []).filter((metric) => !!metric.op);
+      const fallbackMetric = { op: "count" as const, column: undefined };
+      const nextMetrics = normalizedDraft.config.widget_type === "bar"
+        ? [(existingMetrics[0] || fallbackMetric)]
+        : (existingMetrics.length > 0 ? existingMetrics : [fallbackMetric]);
+      normalizedDraft = {
+        ...normalizedDraft,
+        config: {
+          ...normalizedDraft.config,
+          metrics: nextMetrics,
+        },
+      };
     } else if (normalizedDraft.config.widget_type === "table") {
       const fallbackSources = resolvedColumns.slice(0, Math.min(5, resolvedColumns.length)).map((column) => column.name);
       const rawInstances: Array<{
@@ -961,7 +1019,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
             <Icon className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-label font-semibold text-foreground truncate">{draft.title || "Sem título"}</p>
+            <p className="text-label font-semibold text-foreground truncate">{draft.title || "Sem titulo"}</p>
             <p className="text-caption text-muted-foreground truncate">{draft.config.view_name}</p>
           </div>
         </div>
@@ -991,7 +1049,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               <ConfigSection
                 title={draft.config.widget_type === "table"
                   ? "Colunas da tabela"
-                  : (isDreWidget ? "Estrutura DRE" : (draft.config.widget_type === "text" ? "Conteúdo" : "Métricas"))}
+                  : (isDreWidget ? "Estrutura DRE" : (draft.config.widget_type === "text" ? "Conteudo" : "Metricas"))}
                 icon={draft.config.widget_type === "table" ? Table2 : (isDreWidget ? Columns3 : (draft.config.widget_type === "text" ? Type : Hash))}
                 badge={draft.config.widget_type === "table"
                   ? (selectedTableColumnDefs.length || undefined)
@@ -1119,28 +1177,176 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                       donutSentencePreview={donutSentencePreview}
                     />
                   ) : isBarLikeWidget ? (
-                    <BarLikeWidgetDataSection
-                      SentenceTokenSelect={SentenceTokenSelect}
-                      barSentenceAgg={barSentenceAgg}
-                      setBarSentenceAgg={setBarSentenceAgg}
-                      metricOps={metricOps}
-                      metricLabelByOp={metricLabelByOp}
-                      numericColumns={numericColumns}
-                      barSentenceColumn={barSentenceColumn}
-                      setBarSentenceColumn={setBarSentenceColumn}
-                      barSentenceColumnOptions={barSentenceColumnOptions}
-                      barLikeDimensionIsTemporal={barLikeDimensionIsTemporal}
-                      barLikeDimensionColumn={barLikeDimensionColumn}
-                      setConfig={setConfig}
-                      temporalColumns={temporalColumns}
-                      categoricalColumns={categoricalColumns}
-                      buildTemporalDimensionToken={buildTemporalDimensionToken}
-                      draft={draft}
-                      barLikeDimensionGranularity={barLikeDimensionGranularity}
-                      temporalDimensionGranularityOptions={temporalDimensionGranularityOptions}
-                      barSentencePreview={barSentencePreview}
-                      barLikeDimensionPreview={barLikeDimensionPreview}
-                    />
+                    <div className="space-y-2">
+                      {!isColumnWidget && (
+                        <BarLikeWidgetDataSection
+                        SentenceTokenSelect={SentenceTokenSelect}
+                        barSentenceAgg={barSentenceAgg}
+                        setBarSentenceAgg={setBarSentenceAgg}
+                        metricOps={metricOps}
+                        metricLabelByOp={metricLabelByOp}
+                        numericColumns={numericColumns}
+                        barSentenceColumn={barSentenceColumn}
+                        setBarSentenceColumn={setBarSentenceColumn}
+                        barSentenceColumnOptions={barSentenceColumnOptions}
+                        barLikeDimensionIsTemporal={barLikeDimensionIsTemporal}
+                        barLikeDimensionColumn={barLikeDimensionColumn}
+                        setConfig={setConfig}
+                        temporalColumns={temporalColumns}
+                        categoricalColumns={categoricalColumns}
+                        buildTemporalDimensionToken={buildTemporalDimensionToken}
+                        draft={draft}
+                        barLikeDimensionGranularity={barLikeDimensionGranularity}
+                        temporalDimensionGranularityOptions={temporalDimensionGranularityOptions}
+                        barSentencePreview={barSentencePreview}
+                        barLikeDimensionPreview={barLikeDimensionPreview}
+                        />
+                      )}
+                      {isColumnWidget && (
+                        <div className="rounded-lg border border-border/60 bg-background/70 p-2.5 space-y-2">
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                            <SentenceTokenSelect
+                              tone="agg"
+                              value={barLikeMetrics[0]?.op || "count"}
+                              onChange={(value) => {
+                                const nextAgg = value as MetricOp;
+                                const current = barLikeMetrics[0] || { op: "count" as const, column: undefined };
+                                const nextColumn = countLikeOps.has(nextAgg)
+                                  ? current.column
+                                  : (current.column && numericColumns.some((column) => column.name === current.column)
+                                    ? current.column
+                                    : numericColumns[0]?.name);
+                                updateBarLikeMetricAt(0, { op: nextAgg, column: nextColumn });
+                              }}
+                              options={metricOps.map((op) => ({
+                                value: op,
+                                label: metricLabelByOp[op] || op,
+                                disabled: (op === "sum" || op === "avg" || op === "min" || op === "max") && numericColumns.length === 0,
+                              }))}
+                            />
+                            <span>de</span>
+                            <SentenceTokenSelect
+                              tone="column"
+                              value={barLikeMetrics[0]?.column || "__none__"}
+                              onChange={(value) => updateBarLikeMetricAt(0, { column: value === "__none__" ? undefined : value })}
+                              options={[
+                                ...(countLikeOps.has(barLikeMetrics[0]?.op || "count") ? [{ value: "__none__", label: "sem coluna" }] : []),
+                                ...(countLikeOps.has(barLikeMetrics[0]?.op || "count") ? resolvedColumns : numericColumns)
+                                  .map((column) => ({ value: column.name, label: column.name })),
+                              ]}
+                              placeholder="coluna"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                            onClick={addBarLikeMetric}
+                            aria-label="Adicionar metrica"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </Button>
+                        </div>
+
+                        {barLikeMetrics.slice(1).map((barMetric, metricIndex) => {
+                          const actualIndex = metricIndex + 1;
+                          return (
+                            <div key={`column-metric-${actualIndex}`} className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                              <SentenceTokenSelect
+                                tone="agg"
+                                value={barMetric.op || "count"}
+                                onChange={(value) => {
+                                  const nextAgg = value as MetricOp;
+                                  const nextColumn = countLikeOps.has(nextAgg)
+                                    ? barMetric.column
+                                    : (barMetric.column && numericColumns.some((column) => column.name === barMetric.column)
+                                      ? barMetric.column
+                                      : numericColumns[0]?.name);
+                                  updateBarLikeMetricAt(actualIndex, { op: nextAgg, column: nextColumn });
+                                }}
+                                options={metricOps.map((op) => ({
+                                  value: op,
+                                  label: metricLabelByOp[op] || op,
+                                  disabled: (op === "sum" || op === "avg" || op === "min" || op === "max") && numericColumns.length === 0,
+                                }))}
+                              />
+                              <span>de</span>
+                              <SentenceTokenSelect
+                                tone="column"
+                                value={barMetric.column || "__none__"}
+                                onChange={(value) => updateBarLikeMetricAt(actualIndex, { column: value === "__none__" ? undefined : value })}
+                                options={[
+                                  ...(countLikeOps.has(barMetric.op || "count") ? [{ value: "__none__", label: "sem coluna" }] : []),
+                                  ...(countLikeOps.has(barMetric.op || "count") ? resolvedColumns : numericColumns)
+                                    .map((column) => ({ value: column.name, label: column.name })),
+                                ]}
+                                placeholder="coluna"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => removeBarLikeMetric(actualIndex)}
+                                aria-label={`Remover metrica ${actualIndex + 1}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                        <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                          <span>por</span>
+                          <SentenceTokenSelect
+                            tone={barLikeDimensionIsTemporal ? "time" : "column"}
+                            value={barLikeDimensionColumn || "__none__"}
+                            onChange={(value) => {
+                              if (value === "__none__") {
+                                setConfig({ dimensions: [] });
+                                return;
+                              }
+                              const isTemporal = temporalColumns.some((column) => column.name === value);
+                              const nextDimension = isTemporal ? buildTemporalDimensionToken(value, "day") : value;
+                              setConfig({
+                                dimensions: [nextDimension],
+                                order_by: [{ column: nextDimension, direction: "asc" }],
+                              });
+                            }}
+                            options={[
+                              { value: "__none__", label: "sem dimensao" },
+                              ...categoricalColumns.map((column) => ({ value: column.name, label: column.name })),
+                              ...temporalColumns.map((column) => ({ value: column.name, label: column.name })),
+                            ]}
+                            placeholder="dimensao"
+                            showCalendarIcon={barLikeDimensionIsTemporal}
+                          />
+                          {barLikeDimensionIsTemporal && (
+                            <>
+                              <span>como</span>
+                              <SentenceTokenSelect
+                                tone="time"
+                                value={barLikeDimensionGranularity}
+                                onChange={(value) => {
+                                  if (!barLikeDimensionColumn) return;
+                                  const nextDimension = buildTemporalDimensionToken(
+                                    barLikeDimensionColumn,
+                                    value as "day" | "month" | "week" | "weekday" | "hour",
+                                  );
+                                  setConfig({
+                                    dimensions: [nextDimension],
+                                    order_by: [{ column: nextDimension, direction: "asc" }],
+                                  });
+                                }}
+                                options={temporalDimensionGranularityOptions.map((option) => ({ value: option.value, label: option.label.toLowerCase() }))}
+                              />
+                            </>
+                          )}
+                        </div>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <GenericMetricDataSection
                       metric={metric}
@@ -1155,20 +1361,31 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               </ConfigSection>
 
               {(isBarLikeWidget || isLineWidget || isDonutWidget) && (
-                <ConfigSection title="Formatação" icon={Type} defaultOpen={false}>
+                <ConfigSection title="Formatacao" icon={Type} defaultOpen={false}>
                   {isBarLikeWidget && (
-                    <div className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
-                      <Label className="text-caption text-muted-foreground">Alias da métrica</Label>
-                      <Input
-                        className="h-8 text-xs"
-                        value={metric.alias || ""}
-                        placeholder="Ex: Recargas"
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setMetric({ alias: value.trim() ? value : undefined });
-                        }}
+                    isColumnWidget ? (
+                      <div className="space-y-1.5">
+                        {barLikeMetrics.map((barMetric, metricIndex) => (
+                          <div key={`bar-like-alias-${metricIndex}`} className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
+                            <Label className="text-caption text-muted-foreground">{barMetric.column || "sem coluna"}</Label>
+                            <Input
+                              className="h-8 text-xs"
+                              value={barMetric.alias || ""}
+                              placeholder={`Ex: Serie ${metricIndex + 1}`}
+                              onChange={(event) => {
+                                const value = event.target.value.trim();
+                                updateBarLikeMetricAt(metricIndex, { alias: value || undefined });
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <LineWidgetFormattingGroup
+                        lineMetrics={barFormattingMetrics}
+                        setLineMetrics={setBarFormattingMetrics}
                       />
-                    </div>
+                    )
                   )}
                   {isLineWidget && (
                     <LineWidgetFormattingGroup
@@ -1178,7 +1395,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                   )}
                   {isDonutWidget && (
                     <div className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
-                      <Label className="text-caption text-muted-foreground">Alias da métrica</Label>
+                      <Label className="text-caption text-muted-foreground">Alias da metrica</Label>
                       <Input
                         className="h-8 text-xs"
                         value={metric.alias || ""}
@@ -1190,7 +1407,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                       />
                     </div>
                   )}
-                  {!isLineWidget && (
+                  {isDonutWidget && (
                     <div className="grid grid-cols-2 gap-2">
                       <Input
                         className="h-8 text-xs"
@@ -1210,7 +1427,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               )}
 
               {(isCategoricalChart || isLineWidget || draft.config.widget_type === "table") && (
-                <ConfigSection title="Ordenação" icon={ArrowUpDown} badge={currentOrder ? 1 : undefined}>
+                <ConfigSection title="Ordenacao" icon={ArrowUpDown} badge={currentOrder ? 1 : undefined}>
                   {isCategoricalChart ? (
                     <div className="space-y-2">
                       <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2">
@@ -1228,11 +1445,11 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                             setConfig({ order_by: [{ column: value, direction: currentOrder?.direction || "desc" }] });
                           }}
                         >
-                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sem ordenação" /></SelectTrigger>
+                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sem ordenacao" /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="__none__">Sem ordenação</SelectItem>
-                            <SelectItem value="__metric__">Pela métrica</SelectItem>
-                            {draft.config.dimensions[0] && <SelectItem value={draft.config.dimensions[0]}>Pela dimensão</SelectItem>}
+                            <SelectItem value="__none__">Sem ordenacao</SelectItem>
+                            <SelectItem value="__metric__">Pela metrica</SelectItem>
+                            {draft.config.dimensions[0] && <SelectItem value={draft.config.dimensions[0]}>Pela dimensao</SelectItem>}
                           </SelectContent>
                         </Select>
                         <Select
@@ -1326,9 +1543,9 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                           setConfig({ order_by: [{ column: value, direction: currentOrder?.direction || "desc" }] });
                         }}
                       >
-                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sem ordenação" /></SelectTrigger>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sem ordenacao" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">Sem ordenação</SelectItem>
+                          <SelectItem value="__none__">Sem ordenacao</SelectItem>
                           {resolvedColumns.map((column) => <SelectItem key={`order-${column.name}`} value={column.name}>{column.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
@@ -1352,7 +1569,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               )}
 
               {draft.config.widget_type === "kpi" && (
-                <ConfigSection title="Formatação" icon={Type} defaultOpen={false}>
+                <ConfigSection title="Formatacao" icon={Type} defaultOpen={false}>
                   <Select
                     value={kpiFormattingMode}
                     onValueChange={(value) => setConfig({ kpi_show_as: value as "number_2" | "integer" })}
@@ -1404,11 +1621,11 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
           {activeTab === "visual" && (
             <div className="space-y-3">
               <ConfigSection title="Layout" icon={Palette}>
-                <div className="flex items-center justify-between"><Label className="text-caption text-muted-foreground">Mostrar título</Label><Switch checked={draft.config.show_title !== false} onCheckedChange={(checked) => setConfig({ show_title: checked })} /></div>
+                <div className="flex items-center justify-between"><Label className="text-caption text-muted-foreground">Mostrar titulo</Label><Switch checked={draft.config.show_title !== false} onCheckedChange={(checked) => setConfig({ show_title: checked })} /></div>
               </ConfigSection>
 
               {draft.config.widget_type === "table" && (
-                <ConfigSection title="Opções da tabela" icon={Table2}>
+                <ConfigSection title="Opcoes da tabela" icon={Table2}>
                   <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-2">
                     <Label className="text-caption text-muted-foreground">Densidade</Label>
                     <Select
@@ -1419,7 +1636,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                       <SelectContent>
                         <SelectItem value="compact">Compacta</SelectItem>
                         <SelectItem value="normal">Normal</SelectItem>
-                        <SelectItem value="comfortable">Confortável</SelectItem>
+                        <SelectItem value="comfortable">Confortavel</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1436,7 +1653,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                     <Switch checked={draft.config.table_borders !== false} onCheckedChange={(checked) => setConfig({ table_borders: checked })} />
                   </div>
                   <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-2">
-                    <Label className="text-caption text-muted-foreground">Texto padrão</Label>
+                    <Label className="text-caption text-muted-foreground">Texto padrao</Label>
                     <Select
                       value={draft.config.table_default_text_align || "left"}
                       onValueChange={(value) => setConfig({ table_default_text_align: value as "left" | "center" | "right" })}
@@ -1450,7 +1667,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                     </Select>
                   </div>
                   <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-2">
-                    <Label className="text-caption text-muted-foreground">Número padrão</Label>
+                    <Label className="text-caption text-muted-foreground">Numero padrao</Label>
                     <Select
                       value={draft.config.table_default_number_align || "right"}
                       onValueChange={(value) => setConfig({ table_default_number_align: value as "left" | "center" | "right" })}
@@ -1467,7 +1684,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               )}
 
               {draft.config.widget_type === "dre" && (
-                <ConfigSection title="Visualização DRE" icon={Table2}>
+                <ConfigSection title="Visualizacao DRE" icon={Table2}>
                   <div className="space-y-1.5 rounded-md border border-border/60 p-2">
                     <Label className="text-[11px] text-muted-foreground">Mostrar percentual sobre</Label>
                     <Select
@@ -1476,7 +1693,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione uma conta total" /></SelectTrigger>
                       <SelectContent>
-                        {dreResultRowOptions.length === 0 && <SelectItem value="__none__">Nenhuma linha Total disponível</SelectItem>}
+                        {dreResultRowOptions.length === 0 && <SelectItem value="__none__">Nenhuma linha Total disponivel</SelectItem>}
                         {dreResultRowOptions.map(({ row, index }) => (
                           <SelectItem key={`dre-percent-base-${index}`} value={String(index)}>
                             {row.title.trim() || `Total ${index + 1}`}
@@ -1489,7 +1706,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
               )}
 
               {hasChartOptions && (
-                <ConfigSection title="Opções do gráfico" icon={BarChart3} defaultOpen={false}>
+                <ConfigSection title="Opcoes do grafico" icon={BarChart3} defaultOpen={false}>
 
                   {isLineWidget && (
                     <>
@@ -1579,7 +1796,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                         <Switch checked={!!draft.config.bar_show_grid} onCheckedChange={(checked) => setConfig({ bar_show_grid: checked })} />
                       </div>
                       <div className="flex items-center justify-between">
-                        <Label className="text-caption text-muted-foreground">Mostrar rótulos de dados</Label>
+                        <Label className="text-caption text-muted-foreground">Mostrar rotulos de dados</Label>
                         <Switch checked={draft.config.bar_data_labels_enabled !== false} onCheckedChange={(checked) => setConfig({ bar_data_labels_enabled: checked })} />
                       </div>
                       <div className="flex items-center justify-between">
@@ -1596,7 +1813,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
                         <Switch checked={draft.config.donut_show_legend !== false} onCheckedChange={(checked) => setConfig({ donut_show_legend: checked })} />
                       </div>
                       <div className="flex items-center justify-between">
-                        <Label className="text-caption text-muted-foreground">Mostrar rótulos de dados</Label>
+                        <Label className="text-caption text-muted-foreground">Mostrar rotulos de dados</Label>
                         <Switch checked={!!draft.config.donut_data_labels_enabled} onCheckedChange={(checked) => setConfig({ donut_data_labels_enabled: checked })} />
                       </div>
                     </>
@@ -1805,11 +2022,11 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
           )}
 
           {activeTab === "interacoes" && (
-            <ConfigSection title="Interações" icon={Wand2} defaultOpen={false}>
+            <ConfigSection title="Interacoes" icon={Wand2} defaultOpen={false}>
               <div className="p-1 text-center">
                 <Sparkles className="h-5 w-5 text-accent mx-auto mb-2" />
                 <p className="text-label font-semibold text-foreground">Em breve</p>
-                <p className="text-caption text-muted-foreground mt-1">Drilldown e navegação entre widgets.</p>
+                <p className="text-caption text-muted-foreground mt-1">Drilldown e navegacao entre widgets.</p>
               </div>
             </ConfigSection>
           )}
@@ -1825,4 +2042,7 @@ export const BuilderRightPanel = ({ widget, onUpdate, onDelete, onClose, columns
 };
 
 export default BuilderRightPanel;
+
+
+
 
