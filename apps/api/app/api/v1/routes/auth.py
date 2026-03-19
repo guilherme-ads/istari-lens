@@ -30,13 +30,21 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+def _refresh_cookie_security_attrs() -> tuple[bool, str]:
+    if settings.is_production:
+        # Cross-site auth flow in production requires Secure + SameSite=None.
+        return True, "none"
+    return settings.refresh_cookie_secure, settings.refresh_cookie_samesite
+
+
 def _set_refresh_cookie(response: Response, refresh_token: str, *, is_persistent: bool) -> None:
+    secure, samesite = _refresh_cookie_security_attrs()
     cookie_kwargs = {
         "key": settings.refresh_cookie_name,
         "value": refresh_token,
         "httponly": True,
-        "secure": settings.refresh_cookie_secure,
-        "samesite": settings.refresh_cookie_samesite,
+        "secure": secure,
+        "samesite": samesite,
         "path": settings.refresh_cookie_path,
     }
     if is_persistent:
@@ -46,8 +54,11 @@ def _set_refresh_cookie(response: Response, refresh_token: str, *, is_persistent
 
 
 def _clear_refresh_cookie(response: Response) -> None:
+    secure, samesite = _refresh_cookie_security_attrs()
     response.delete_cookie(
         key=settings.refresh_cookie_name,
+        secure=secure,
+        samesite=samesite,
         path=settings.refresh_cookie_path,
     )
 

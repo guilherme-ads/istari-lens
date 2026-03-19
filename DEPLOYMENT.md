@@ -59,6 +59,19 @@ docker push registry.example.com/istari-web:latest
 docker push registry.example.com/istari-api:latest
 ```
 
+### GCP Cloud Build (Artifact Registry)
+
+Para deploy no GCP (Cloud Build + Artifact Registry + Cloud Run), use o guia dedicado:
+
+- `DEPLOY_GCP_CLOUD_RUN.md`
+
+Esse guia contem:
+- setup de projeto/regiao/repo
+- build/push das imagens com `cloudbuild.images.yaml`
+- deploy de `engine`, `api` e `web`
+- configuracao de Cloud SQL Connector
+- ajuste de CORS dinamico para a URL do `web`
+
 ### Docker Compose Production
 
 ```yaml

@@ -1,0 +1,21 @@
+# Keep Cloud Build uploads explicit and independent from broad .gitignore rules.
+#!include:.gitignore
+
+.git
+.gitignore
+.vscode
+.idea
+.claude
+node_modules
+.next
+dist
+build
+.turbo
+.env
+.env.local
+*.log
+coverage
+htmlcov
+
+# Always include Alembic migrations used by API startup.
+!apps/api/alembic/versions/*.py

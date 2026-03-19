@@ -34,7 +34,8 @@ RUN pip install --no-cache-dir \
 
 # Copy application code
 COPY apps/api ./
-RUN chmod +x /app/entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh \
+    && chmod +x /app/entrypoint.sh
 
 RUN useradd --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app
