@@ -23,3 +23,5 @@ htmlcov/
 /alembic/versions/[0-9]*.py
 apps/api/storage/
 .claude/
+encryption_key.txt
+secret_key.txt
