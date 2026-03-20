@@ -34,3 +34,6 @@ images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-api:${_TAG}
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-web:${_TAG}
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-engine:${_TAG}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
