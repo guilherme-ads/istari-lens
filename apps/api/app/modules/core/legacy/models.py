@@ -11,6 +11,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255))
     is_admin = Column(Boolean, default=False)
+    is_owner = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     last_login_at = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
@@ -33,6 +34,8 @@ class User(Base):
     )
     spreadsheet_imports = relationship("SpreadsheetImport", back_populates="created_by_user")
     dashboard_email_shares_created = relationship("DashboardEmailShare", back_populates="created_by_user")
+    dataset_email_shares_created = relationship("DatasetEmailShare", back_populates="created_by_user")
+    dashboard_favorites = relationship("DashboardFavorite", back_populates="user", cascade="all, delete-orphan")
     dashboard_edit_locks = relationship("DashboardEditLock", back_populates="user", overlaps="user")
     auth_sessions = relationship("AuthSession", back_populates="user", cascade="all, delete-orphan")
 
@@ -136,6 +139,7 @@ class Dataset(Base):
     datasource = relationship("DataSource", back_populates="datasets")
     view = relationship("View", back_populates="datasets")
     dashboards = relationship("Dashboard", back_populates="dataset", cascade="all, delete-orphan")
+    email_shares = relationship("DatasetEmailShare", back_populates="dataset", cascade="all, delete-orphan")
     metrics = relationship("Metric", back_populates="dataset", cascade="all, delete-orphan")
     dimensions = relationship("Dimension", back_populates="dataset", cascade="all, delete-orphan")
 
@@ -215,6 +219,7 @@ class Dashboard(Base):
     widgets = relationship("DashboardWidget", back_populates="dashboard", cascade="all, delete-orphan")
     created_by_user = relationship("User", back_populates="dashboards")
     email_shares = relationship("DashboardEmailShare", back_populates="dashboard", cascade="all, delete-orphan")
+    favorites = relationship("DashboardFavorite", back_populates="dashboard", cascade="all, delete-orphan")
     versions = relationship("DashboardVersion", back_populates="dashboard", cascade="all, delete-orphan")
     edit_lock = relationship(
         "DashboardEditLock",
@@ -226,6 +231,24 @@ class Dashboard(Base):
 
     __table_args__ = (
         Index("dashboard_dataset_idx", "dataset_id"),
+    )
+
+
+class DatasetEmailShare(Base):
+    __tablename__ = "dataset_email_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    dataset = relationship("Dataset", back_populates="email_shares")
+    created_by_user = relationship("User", back_populates="dataset_email_shares_created")
+
+    __table_args__ = (
+        Index("dataset_email_share_unique_idx", "dataset_id", "email", unique=True),
     )
 
 
@@ -245,6 +268,23 @@ class DashboardEmailShare(Base):
 
     __table_args__ = (
         Index("dashboard_email_share_unique_idx", "dashboard_id", "email", unique=True),
+    )
+
+
+class DashboardFavorite(Base):
+    __tablename__ = "dashboard_favorites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_id = Column(Integer, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dashboard = relationship("Dashboard", back_populates="favorites")
+    user = relationship("User", back_populates="dashboard_favorites")
+
+    __table_args__ = (
+        Index("dashboard_favorite_unique_idx", "dashboard_id", "user_id", unique=True),
     )
 
 

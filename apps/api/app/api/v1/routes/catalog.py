@@ -4,11 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.modules.auth.adapters.api.dependencies import get_current_user
 from app.modules.catalog import SemanticCatalogService
 from app.modules.core.legacy.models import DataSource, Dataset, Dimension, Metric, MetricDimension, User
+from app.modules.datasets.access import (
+    can_view_dataset,
+    can_view_organization_data,
+    ensure_dataset_manage_access,
+    ensure_dataset_view_access,
+)
 from app.modules.datasets import validate_and_resolve_base_query_spec
 from app.modules.engine import get_engine_client, resolve_datasource_access
 from app.shared.infrastructure.database import get_db
@@ -188,6 +194,13 @@ def _load_dataset_or_404(db: Session, dataset_id: int) -> Dataset:
     return dataset
 
 
+def _ensure_datasource_access(*, datasource: DataSource, current_user: User) -> None:
+    if current_user.is_admin:
+        return
+    if int(datasource.created_by_id) != int(current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to access this datasource")
+
+
 def _load_metric_or_404(db: Session, metric_id: int) -> Metric:
     metric = db.query(Metric).filter(Metric.id == metric_id).first()
     if metric is None:
@@ -272,6 +285,7 @@ async def catalog_resources(
     current_user: User = Depends(get_current_user),
 ):
     datasource = _load_datasource_or_404(db, datasource_id)
+    _ensure_datasource_access(datasource=datasource, current_user=current_user)
     access = resolve_datasource_access(datasource=datasource, dataset=None, current_user=current_user)
     payload = await get_engine_client().list_resources(
         datasource_id=access.datasource_id,
@@ -293,6 +307,7 @@ async def schema_get(
     current_user: User = Depends(get_current_user),
 ):
     datasource = _load_datasource_or_404(db, datasource_id)
+    _ensure_datasource_access(datasource=datasource, current_user=current_user)
     access = resolve_datasource_access(datasource=datasource, dataset=None, current_user=current_user)
     payload = await get_engine_client().get_schema(
         datasource_id=access.datasource_id,
@@ -314,15 +329,17 @@ async def catalog_datasets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     _sync_catalog_for_existing_datasets(db)
     service = SemanticCatalogService(db)
     datasets = (
         db.query(Dataset)
+        .options(joinedload(Dataset.datasource), joinedload(Dataset.email_shares))
         .filter(Dataset.is_active == True)  # noqa: E712
         .order_by(Dataset.name.asc())
         .all()
     )
+    if not can_view_organization_data(current_user):
+        datasets = [item for item in datasets if can_view_dataset(dataset=item, user=current_user)]
     payload: list[CatalogDatasetSummary] = []
     for dataset in datasets:
         metrics = service.list_metrics(dataset_id=int(dataset.id))
@@ -347,8 +364,8 @@ async def catalog_dataset_detail(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset = _load_dataset_or_404(db, dataset_id)
+    ensure_dataset_view_access(dataset=dataset, user=current_user)
     _ensure_catalog_for_dataset(db, dataset=dataset)
     return _build_dataset_detail_response(db, dataset=dataset)
 
@@ -359,8 +376,8 @@ async def catalog_regenerate_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset = _load_dataset_or_404(db, dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     metric_rows = db.query(Metric).filter(Metric.dataset_id == dataset.id).all()
     dimension_rows = db.query(Dimension).filter(Dimension.dataset_id == dataset.id).all()
     metric_ids = [int(item.id) for item in metric_rows if item.id is not None]
@@ -394,8 +411,8 @@ async def catalog_metrics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset_row = _load_dataset_or_404(db, dataset)
+    ensure_dataset_view_access(dataset=dataset_row, user=current_user)
     _ensure_catalog_for_dataset(db, dataset=dataset_row)
     return [CatalogMetricResponse.model_validate(item) for item in SemanticCatalogService(db).list_metrics(dataset_id=dataset)]
 
@@ -406,8 +423,8 @@ async def catalog_dimensions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset_row = _load_dataset_or_404(db, dataset)
+    ensure_dataset_view_access(dataset=dataset_row, user=current_user)
     _ensure_catalog_for_dataset(db, dataset=dataset_row)
     return [
         CatalogDimensionResponse.model_validate(item)
@@ -421,8 +438,8 @@ async def catalog_create_metric(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset = _load_dataset_or_404(db, request.dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     service = SemanticCatalogService(db)
     metric = Metric(
         dataset_id=dataset.id,
@@ -459,8 +476,9 @@ async def catalog_update_metric(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     metric = _load_metric_or_404(db, metric_id)
+    dataset = _load_dataset_or_404(db, int(metric.dataset_id))
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     if request.name is not None:
         metric.name = request.name.strip()
     if request.description is not None:
@@ -492,8 +510,9 @@ async def catalog_delete_metric(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     metric = _load_metric_or_404(db, metric_id)
+    dataset = _load_dataset_or_404(db, int(metric.dataset_id))
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     db.delete(metric)
     db.commit()
 
@@ -504,8 +523,8 @@ async def catalog_create_dimension(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset = _load_dataset_or_404(db, request.dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     service = SemanticCatalogService(db)
     dimension = Dimension(
         dataset_id=dataset.id,
@@ -539,8 +558,9 @@ async def catalog_update_dimension(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dimension = _load_dimension_or_404(db, dimension_id)
+    dataset = _load_dataset_or_404(db, int(dimension.dataset_id))
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     if request.name is not None:
         dimension.name = request.name.strip()
     if request.description is not None:
@@ -566,8 +586,9 @@ async def catalog_delete_dimension(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dimension = _load_dimension_or_404(db, dimension_id)
+    dataset = _load_dataset_or_404(db, int(dimension.dataset_id))
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
     db.delete(dimension)
     db.commit()
 
@@ -580,6 +601,7 @@ async def catalog_profile_preview(
     current_user: User = Depends(get_current_user),
 ):
     datasource = _load_datasource_or_404(db, request.datasource_id)
+    _ensure_datasource_access(datasource=datasource, current_user=current_user)
     access = resolve_datasource_access(datasource=datasource, dataset=None, current_user=current_user)
     resolved_base_query_spec, semantic_columns = validate_and_resolve_base_query_spec(
         db=db,
@@ -706,6 +728,7 @@ async def catalog_data_preview(
     current_user: User = Depends(get_current_user),
 ):
     datasource = _load_datasource_or_404(db, request.datasource_id)
+    _ensure_datasource_access(datasource=datasource, current_user=current_user)
     access = resolve_datasource_access(datasource=datasource, dataset=None, current_user=current_user)
     resolved_base_query_spec, semantic_columns = validate_and_resolve_base_query_spec(
         db=db,
@@ -768,7 +791,6 @@ async def catalog_search(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     normalized = term.strip()
     if not normalized:
         return CatalogSearchResponse(items=[])
@@ -776,20 +798,36 @@ async def catalog_search(
     if dataset is None:
         _sync_catalog_for_existing_datasets(db)
     else:
-        dataset_row = _load_dataset_or_404(db, dataset)
+        dataset_row = (
+            db.query(Dataset)
+            .options(joinedload(Dataset.datasource), joinedload(Dataset.email_shares))
+            .filter(Dataset.id == dataset)
+            .first()
+        )
+        ensure_dataset_view_access(dataset=dataset_row, user=current_user)
         _ensure_catalog_for_dataset(db, dataset=dataset_row)
 
     term_like = f"%{normalized}%"
-    dataset_filters = [Dataset.is_active == True]  # noqa: E712
+    dataset_scope_query = (
+        db.query(Dataset)
+        .options(joinedload(Dataset.datasource), joinedload(Dataset.email_shares))
+        .filter(Dataset.is_active == True)  # noqa: E712
+    )
     if dataset is not None:
-        dataset_filters.append(Dataset.id == dataset)
+        dataset_scope_query = dataset_scope_query.filter(Dataset.id == dataset)
+    dataset_scope_rows = dataset_scope_query.all()
+    if not can_view_organization_data(current_user):
+        dataset_scope_rows = [item for item in dataset_scope_rows if can_view_dataset(dataset=item, user=current_user)]
+    dataset_scope_ids = [int(item.id) for item in dataset_scope_rows]
+    if not dataset_scope_ids:
+        return CatalogSearchResponse(items=[])
 
     hits: list[CatalogSearchHit] = []
 
     dataset_rows = (
         db.query(Dataset)
         .filter(
-            *dataset_filters,
+            Dataset.id.in_(dataset_scope_ids),
             or_(
                 Dataset.name.ilike(term_like),
                 Dataset.description.ilike(term_like),
@@ -815,7 +853,7 @@ async def catalog_search(
         db.query(Metric, Dataset)
         .join(Dataset, Metric.dataset_id == Dataset.id)
         .filter(
-            *dataset_filters,
+            Dataset.id.in_(dataset_scope_ids),
             or_(
                 Metric.name.ilike(term_like),
                 Metric.description.ilike(term_like),
@@ -842,7 +880,7 @@ async def catalog_search(
         db.query(Dimension, Dataset)
         .join(Dataset, Dimension.dataset_id == Dataset.id)
         .filter(
-            *dataset_filters,
+            Dataset.id.in_(dataset_scope_ids),
             or_(
                 Dimension.name.ilike(term_like),
                 Dimension.description.ilike(term_like),

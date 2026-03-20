@@ -58,6 +58,7 @@ const AccountPage = () => {
   const { toast } = useToast();
   const storedUser = getStoredUser();
   const isAdmin = !!storedUser?.is_admin;
+  const isOwner = !!storedUser?.is_owner;
   const [fullName, setFullName] = useState(storedUser?.full_name || "");
   const [email, setEmail] = useState(storedUser?.email || "");
 
@@ -83,6 +84,7 @@ const AccountPage = () => {
       email: data.email,
       full_name: data.full_name,
       is_admin: current?.is_admin ?? data.is_admin,
+      is_owner: current?.is_owner ?? data.is_owner,
     });
   }, [meQuery.data]);
 
@@ -99,6 +101,7 @@ const AccountPage = () => {
         email: data.email,
         full_name: data.full_name,
         is_admin: current?.is_admin ?? data.is_admin,
+        is_owner: current?.is_owner ?? data.is_owner,
       });
       toast({ title: "Perfil atualizado", description: "Seus dados foram salvos com sucesso." });
     },
@@ -151,7 +154,7 @@ const AccountPage = () => {
     changePassword.mutate();
   };
 
-  const roleLabel = storedUser?.is_admin ? "Administrador" : "Usuário";
+  const roleLabel = storedUser?.is_admin ? "Administrador" : isOwner ? "Owner" : "Usuário";
   const initials =
     (fullName || email)
       .split(" ")

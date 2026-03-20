@@ -65,6 +65,7 @@ describe("auth route guards", () => {
       email: "user@test.com",
       full_name: "User",
       is_admin: false,
+      is_owner: false,
     });
     window.history.pushState({}, "", "/admin/users");
 

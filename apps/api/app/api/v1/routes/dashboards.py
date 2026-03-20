@@ -10,8 +10,10 @@ from uuid import uuid4
 
 from app.shared.infrastructure.database import get_db
 from app.modules.widgets.application.execution_coordinator import _to_engine_query_spec, get_dashboard_widget_executor
+from app.modules.datasets.access import ensure_dataset_view_access, load_dataset_with_access_relations
 from app.modules.core.legacy.models import (
     Dashboard,
+    DashboardFavorite,
     DashboardWidget,
     DashboardEmailShare,
     DashboardVersion,
@@ -38,6 +40,7 @@ from app.modules.core.legacy.schemas import (
     DashboardNativeFilterConfig,
     DashboardEmailShareResponse,
     DashboardShareUpsertRequest,
+    DashboardFavoriteResponse,
     DashboardVisibilityUpdateRequest,
     DashboardSharingResponse,
     DashboardShareableUserResponse,
@@ -81,6 +84,8 @@ def _new_public_share_key() -> str:
 
 
 def _resolve_dashboard_access(dashboard: Dashboard, user: User) -> tuple[str, str] | None:
+    if getattr(user, "is_admin", False):
+        return ("owner", "organization")
     if dashboard.created_by_id == user.id:
         return ("owner", "owner")
 
@@ -112,8 +117,8 @@ def _resolve_dashboard_access(dashboard: Dashboard, user: User) -> tuple[str, st
     if workspace_level:
         source = "public" if dashboard.visibility == "public_view" else "workspace"
         return (workspace_level, source)
-    if user.is_admin and dashboard.visibility == "public_view":
-        return ("view", "public")
+    if getattr(user, "is_owner", False):
+        return ("view", "organization")
     return None
 
 
@@ -1005,6 +1010,12 @@ async def list_dashboard_catalog(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    favorite_rows = (
+        db.query(DashboardFavorite.dashboard_id)
+        .filter(DashboardFavorite.user_id == current_user.id)
+        .all()
+    )
+    favorite_ids = {int(row[0]) for row in favorite_rows}
     dashboards = (
         db.query(Dashboard)
         .options(
@@ -1051,6 +1062,7 @@ async def list_dashboard_catalog(
                 name=dashboard.name,
                 created_by_id=creator.id if creator else None,
                 is_owner=level == "owner",
+                is_favorite=dashboard.id in favorite_ids,
                 access_level=level,
                 access_source=source,
                 visibility=dashboard.visibility or "private",
@@ -1072,6 +1084,65 @@ async def list_dashboard_catalog(
         )
     items.sort(key=lambda item: item.last_edited_at, reverse=True)
     return items
+
+
+@router.put("/{dashboard_id}/favorite", response_model=DashboardFavoriteResponse)
+async def favorite_dashboard(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    favorite = (
+        db.query(DashboardFavorite)
+        .filter(
+            DashboardFavorite.dashboard_id == dashboard.id,
+            DashboardFavorite.user_id == current_user.id,
+        )
+        .first()
+    )
+    if favorite is None:
+        db.add(
+            DashboardFavorite(
+                dashboard_id=dashboard.id,
+                user_id=current_user.id,
+            )
+        )
+        db.commit()
+    return DashboardFavoriteResponse(dashboard_id=dashboard.id, is_favorite=True)
+
+
+@router.delete("/{dashboard_id}/favorite", response_model=DashboardFavoriteResponse)
+async def unfavorite_dashboard(
+    dashboard_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dashboard, _, _ = _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    favorite = (
+        db.query(DashboardFavorite)
+        .filter(
+            DashboardFavorite.dashboard_id == dashboard.id,
+            DashboardFavorite.user_id == current_user.id,
+        )
+        .first()
+    )
+    if favorite is not None:
+        db.delete(favorite)
+        db.commit()
+    return DashboardFavoriteResponse(dashboard_id=dashboard.id, is_favorite=False)
 
 
 @router.get("/shareable-users", response_model=list[DashboardShareableUserResponse])
@@ -1107,15 +1178,17 @@ async def generate_dashboard_with_ai(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     dataset = (
         db.query(Dataset)
-        .options(joinedload(Dataset.view).joinedload(View.columns))
+        .options(
+            joinedload(Dataset.datasource),
+            joinedload(Dataset.email_shares),
+            joinedload(Dataset.view).joinedload(View.columns),
+        )
         .filter(Dataset.id == request.dataset_id)
         .first()
     )
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_view_access(dataset=dataset, user=current_user)
     column_types = _dataset_column_types(dataset)
     payload = await generate_dashboard_with_ai_service(
         db=db,
@@ -1387,14 +1460,12 @@ async def preview_dashboard_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     raw = request.dashboard if isinstance(request.dashboard, dict) else {}
     dataset_id = int(request.dataset_id or raw.get("dataset_id") or 0)
     if dataset_id <= 0:
         raise HTTPException(status_code=400, detail="dataset_id is required for import preview")
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    ensure_dataset_view_access(dataset=dataset, user=current_user)
     return _preview_dashboard_import_compatibility(dataset=dataset, snapshot=raw)
 
 
@@ -1408,9 +1479,8 @@ async def import_dashboard(
     dataset_id = int(request.dataset_id or raw.get("dataset_id") or 0)
     if dataset_id <= 0:
         raise HTTPException(status_code=400, detail="dataset_id is required for import")
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    ensure_dataset_view_access(dataset=dataset, user=current_user)
     preview = _preview_dashboard_import_compatibility(dataset=dataset, snapshot=raw)
     if preview.compatibility == "incompatible":
         raise HTTPException(
@@ -1542,9 +1612,13 @@ async def create_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dataset = db.query(Dataset).filter(Dataset.id == request.dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found")
+    dataset = (
+        db.query(Dataset)
+        .options(joinedload(Dataset.datasource), joinedload(Dataset.email_shares), joinedload(Dataset.view))
+        .filter(Dataset.id == request.dataset_id)
+        .first()
+    )
+    ensure_dataset_view_access(dataset=dataset, user=current_user)
     if not dataset.is_active:
         raise HTTPException(status_code=400, detail="Dataset is inactive")
     if not dataset.datasource or not dataset.datasource.is_active:

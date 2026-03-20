@@ -2,10 +2,11 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import asc, desc, func, or_
+from sqlalchemy import asc, case, desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.modules.auth.application.security import hash_password
+from app.modules.datasets.access import resolve_user_role
 from app.shared.infrastructure.database import get_db
 from app.modules.auth.adapters.api.dependencies import get_current_admin_user
 from app.modules.core.legacy.models import AuthSession, User
@@ -28,7 +29,7 @@ def _normalize_email(email: str) -> str:
 
 
 def _to_response(user: User) -> AdminUserResponse:
-    role = "ADMIN" if user.is_admin else "USER"
+    role = resolve_user_role(user)
     return AdminUserResponse(
         id=user.id,
         email=user.email,
@@ -75,7 +76,11 @@ async def list_users(
     elif sort_field == "last_login_at":
         order_col = User.last_login_at
     elif sort_field == "role":
-        order_col = User.is_admin
+        order_col = case(
+            (User.is_admin.is_(True), 3),
+            (User.is_owner.is_(True), 2),
+            else_=1,
+        )
     else:
         order_col = User.updated_at
 
@@ -126,6 +131,7 @@ async def create_user(
         full_name=request.name.strip(),
         hashed_password=hash_password(request.password),
         is_admin=request.role == "ADMIN",
+        is_owner=request.role == "OWNER",
         is_active=request.is_active,
     )
     db.add(user)
@@ -160,10 +166,11 @@ async def update_user(
         user.full_name = request.name.strip()
     if request.role is not None:
         user.is_admin = request.role == "ADMIN"
+        user.is_owner = request.role == "OWNER"
     if request.is_active is not None:
         user.is_active = request.is_active
 
-    if current_user.id == user.id and request.role == "USER":
+    if current_user.id == user.id and request.role is not None and request.role != "ADMIN":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot remove your own admin role")
     if current_user.id == user.id and request.is_active is False:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own user")

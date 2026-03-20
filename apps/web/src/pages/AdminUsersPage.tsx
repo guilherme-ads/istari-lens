@@ -64,7 +64,7 @@ const AdminUsersPage = () => {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const createMutation = useMutation({
-    mutationFn: (payload: { name: string; email: string; role: "ADMIN" | "USER"; is_active: boolean; password: string }) =>
+    mutationFn: (payload: { name: string; email: string; role: "ADMIN" | "OWNER" | "USER"; is_active: boolean; password: string }) =>
       api.createAdminUser(payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["admin-users"] });
@@ -78,7 +78,7 @@ const AdminUsersPage = () => {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: Partial<{ name: string; email: string; role: "ADMIN" | "USER"; is_active: boolean }> }) =>
+    mutationFn: ({ id, payload }: { id: number; payload: Partial<{ name: string; email: string; role: "ADMIN" | "OWNER" | "USER"; is_active: boolean }> }) =>
       api.updateAdminUser(id, payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["admin-users"] });
@@ -296,11 +296,11 @@ const UserCreateDialog = ({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   submitting: boolean;
-  onSubmit: (payload: { name: string; email: string; role: "ADMIN" | "USER"; is_active: boolean; password: string }) => void;
+  onSubmit: (payload: { name: string; email: string; role: "ADMIN" | "OWNER" | "USER"; is_active: boolean; password: string }) => void;
 }) => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"ADMIN" | "USER">("USER");
+  const [role, setRole] = useState<"ADMIN" | "OWNER" | "USER">("USER");
   const [isActive, setIsActive] = useState(true);
   const [password, setPassword] = useState("");
 
@@ -339,10 +339,11 @@ const UserCreateDialog = ({
           </div>
           <div className="space-y-1.5">
             <Label>Papel</Label>
-            <Select value={role} onValueChange={(v) => setRole(v as "ADMIN" | "USER")}>
+            <Select value={role} onValueChange={(v) => setRole(v as "ADMIN" | "OWNER" | "USER")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="USER">USER</SelectItem>
+                <SelectItem value="OWNER">OWNER</SelectItem>
                 <SelectItem value="ADMIN">ADMIN</SelectItem>
               </SelectContent>
             </Select>
@@ -455,11 +456,11 @@ const UserEditDialog = ({
   user: ApiAdminUser | null;
   submitting: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (id: number, payload: Partial<{ name: string; email: string; role: "ADMIN" | "USER"; is_active: boolean }>) => void;
+  onSubmit: (id: number, payload: Partial<{ name: string; email: string; role: "ADMIN" | "OWNER" | "USER"; is_active: boolean }>) => void;
 }) => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"ADMIN" | "USER">("USER");
+  const [role, setRole] = useState<"ADMIN" | "OWNER" | "USER">("USER");
   const [isActive, setIsActive] = useState(true);
 
   const open = !!user;
@@ -495,10 +496,11 @@ const UserEditDialog = ({
           </div>
           <div className="space-y-1.5">
             <Label>Papel</Label>
-            <Select value={role} onValueChange={(v) => setRole(v as "ADMIN" | "USER")}>
+            <Select value={role} onValueChange={(v) => setRole(v as "ADMIN" | "OWNER" | "USER")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="USER">USER</SelectItem>
+                <SelectItem value="OWNER">OWNER</SelectItem>
                 <SelectItem value="ADMIN">ADMIN</SelectItem>
               </SelectContent>
             </Select>
