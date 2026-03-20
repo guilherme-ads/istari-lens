@@ -5,6 +5,12 @@ steps:
     args:
       - -ceu
       - |
+        STATUS_UPPER="${_STATUS^^}"
+        if [[ -n "${STATUS_UPPER}" && "${STATUS_UPPER}" != "SUCCESS" ]]; then
+          echo "Skipping deploy-engine because _STATUS=${_STATUS}"
+          exit 0
+        fi
+
         CLOUDSQL_ARGS=()
         if [[ -n "${_INSTANCE_CONNECTION_NAME}" ]]; then
           CLOUDSQL_ARGS=(--add-cloudsql-instances "${_INSTANCE_CONNECTION_NAME}")
@@ -32,6 +38,12 @@ steps:
     args:
       - -ceu
       - |
+        STATUS_UPPER="${_STATUS^^}"
+        if [[ -n "${STATUS_UPPER}" && "${STATUS_UPPER}" != "SUCCESS" ]]; then
+          echo "Skipping deploy-api because _STATUS=${_STATUS}"
+          exit 0
+        fi
+
         ENGINE_URL="$$(cat /workspace/engine_url.txt)"
         CLOUDSQL_ARGS=()
         if [[ -n "${_INSTANCE_CONNECTION_NAME}" ]]; then
@@ -55,6 +67,12 @@ steps:
     args:
       - -ceu
       - |
+        STATUS_UPPER="${_STATUS^^}"
+        if [[ -n "${STATUS_UPPER}" && "${STATUS_UPPER}" != "SUCCESS" ]]; then
+          echo "Skipping deploy-web because _STATUS=${_STATUS}"
+          exit 0
+        fi
+
         gcloud run deploy "${_WEB_SERVICE}" \
           --project="$PROJECT_ID" \
           --region="${_REGION}" \
@@ -64,6 +82,7 @@ steps:
           --port="${_WEB_PORT}"
 
 substitutions:
+  _STATUS: ""
   _REGION: us-central1
   _REPO: lens
   _TAG: prod
