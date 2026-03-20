@@ -17,7 +17,8 @@ steps:
           --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-engine:${_TAG}" \
           --allow-unauthenticated \
           --port="${_ENGINE_PORT}" \
-          --set-env-vars="ENVIRONMENT=production,ANALYTICS_DB_URL=${_ANALYTICS_DB_URL},ENGINE_SERVICE_SECRET=${_ENGINE_SERVICE_SECRET}" \
+          --set-env-vars="ENVIRONMENT=production" \
+          --set-secrets="ANALYTICS_DB_URL=${_ENGINE_ANALYTICS_DB_URL_SECRET}:latest,ENGINE_SERVICE_SECRET=${_ENGINE_SERVICE_SECRET_SECRET}:latest" \
           "${CLOUDSQL_ARGS[@]}"
 
         gcloud run services describe "${_ENGINE_SERVICE}" \
@@ -44,8 +45,8 @@ steps:
           --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-api:${_TAG}" \
           --allow-unauthenticated \
           --port="${_API_PORT}" \
-          --set-env-vars="APP_ENVIRONMENT=production,APP_DATABASE_URL=${_APP_DB_URL},APP_APP_DB_URL=${_APP_DB_URL},APP_DB_URL=${_APP_DB_URL},APP_ANALYTICS_DB_URL=${_ANALYTICS_DB_URL},APP_ENGINE_BASE_URL=$${ENGINE_URL},APP_ENGINE_SERVICE_SECRET=${_ENGINE_SERVICE_SECRET},APP_CORS_ORIGINS=${_APP_CORS_ORIGINS}" \
-          --set-secrets="APP_SECRET_KEY=lens-api-secret-key:latest,APP_ENCRYPTION_KEY=lens-api-encryption-key:latest" \
+          --set-env-vars="APP_ENVIRONMENT=production,APP_ENGINE_BASE_URL=$${ENGINE_URL},APP_CORS_ORIGINS=${_APP_CORS_ORIGINS}" \
+          --set-secrets="APP_DATABASE_URL=${_APP_DB_URL_SECRET}:latest,APP_APP_DB_URL=${_APP_DB_URL_SECRET}:latest,APP_DB_URL=${_APP_DB_URL_SECRET}:latest,APP_ANALYTICS_DB_URL=${_APP_ANALYTICS_DB_URL_SECRET}:latest,APP_ENGINE_SERVICE_SECRET=${_APP_ENGINE_SERVICE_SECRET_SECRET}:latest,APP_SECRET_KEY=${_APP_SECRET_KEY_SECRET}:latest,APP_ENCRYPTION_KEY=${_APP_ENCRYPTION_KEY_SECRET}:latest" \
           "${CLOUDSQL_ARGS[@]}"
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
@@ -73,10 +74,14 @@ substitutions:
   _WEB_PORT: "3000"
   _ENGINE_PORT: "8010"
   _INSTANCE_CONNECTION_NAME: ""
-  _APP_DB_URL: ""
-  _ANALYTICS_DB_URL: ""
-  _ENGINE_SERVICE_SECRET: ""
   _APP_CORS_ORIGINS: https://example.com
+  _ENGINE_ANALYTICS_DB_URL_SECRET: lens-api-analytics-db-url
+  _ENGINE_SERVICE_SECRET_SECRET: lens-api-engine-service-secret
+  _APP_DB_URL_SECRET: lens-api-db-url
+  _APP_ANALYTICS_DB_URL_SECRET: lens-api-analytics-db-url
+  _APP_ENGINE_SERVICE_SECRET_SECRET: lens-api-engine-service-secret
+  _APP_SECRET_KEY_SECRET: lens-api-secret-key
+  _APP_ENCRYPTION_KEY_SECRET: lens-api-encryption-key
 
 options:
   logging: CLOUD_LOGGING_ONLY
