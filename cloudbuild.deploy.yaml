@@ -1,0 +1,84 @@
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy-engine
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        CLOUDSQL_ARGS=()
+        if [[ -n "${_INSTANCE_CONNECTION_NAME}" ]]; then
+          CLOUDSQL_ARGS=(--add-cloudsql-instances "${_INSTANCE_CONNECTION_NAME}")
+        fi
+
+        gcloud run deploy "${_ENGINE_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-engine:${_TAG}" \
+          --allow-unauthenticated \
+          --port="${_ENGINE_PORT}" \
+          --set-env-vars="ENVIRONMENT=production,ANALYTICS_DB_URL=${_ANALYTICS_DB_URL},ENGINE_SERVICE_SECRET=${_ENGINE_SERVICE_SECRET}" \
+          "${CLOUDSQL_ARGS[@]}"
+
+        gcloud run services describe "${_ENGINE_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format="value(status.url)" > /workspace/engine_url.txt
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy-api
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        ENGINE_URL="$$(cat /workspace/engine_url.txt)"
+        CLOUDSQL_ARGS=()
+        if [[ -n "${_INSTANCE_CONNECTION_NAME}" ]]; then
+          CLOUDSQL_ARGS=(--add-cloudsql-instances "${_INSTANCE_CONNECTION_NAME}")
+        fi
+
+        gcloud run deploy "${_API_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-api:${_TAG}" \
+          --allow-unauthenticated \
+          --port="${_API_PORT}" \
+          --set-env-vars="APP_ENVIRONMENT=production,APP_DATABASE_URL=${_APP_DB_URL},APP_APP_DB_URL=${_APP_DB_URL},APP_DB_URL=${_APP_DB_URL},APP_ANALYTICS_DB_URL=${_ANALYTICS_DB_URL},APP_SECRET_KEY=${_APP_SECRET_KEY},APP_ENCRYPTION_KEY=${_APP_ENCRYPTION_KEY},APP_ENGINE_BASE_URL=$${ENGINE_URL},APP_ENGINE_SERVICE_SECRET=${_ENGINE_SERVICE_SECRET},APP_CORS_ORIGINS=${_APP_CORS_ORIGINS}" \
+          "${CLOUDSQL_ARGS[@]}"
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy-web
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud run deploy "${_WEB_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-web:${_TAG}" \
+          --allow-unauthenticated \
+          --port="${_WEB_PORT}"
+
+substitutions:
+  _REGION: us-central1
+  _REPO: lens
+  _TAG: prod
+  _API_SERVICE: lens-api
+  _WEB_SERVICE: lens-web
+  _ENGINE_SERVICE: lens-engine
+  _API_PORT: "8000"
+  _WEB_PORT: "3000"
+  _ENGINE_PORT: "8010"
+  _INSTANCE_CONNECTION_NAME: ""
+  _APP_DB_URL: ""
+  _ANALYTICS_DB_URL: ""
+  _APP_SECRET_KEY: ""
+  _APP_ENCRYPTION_KEY: ""
+  _ENGINE_SERVICE_SECRET: ""
+  _APP_CORS_ORIGINS: https://example.com
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+

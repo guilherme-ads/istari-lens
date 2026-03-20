@@ -37,3 +37,4 @@ images:
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  pubsubTopic: projects/lens-490714/topics/lens-build-images-events
