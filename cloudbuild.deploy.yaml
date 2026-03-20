@@ -5,8 +5,8 @@ steps:
     args:
       - -ceu
       - |
-        STATUS_UPPER="${_STATUS^^}"
-        if [[ -n "${STATUS_UPPER}" && "${STATUS_UPPER}" != "SUCCESS" ]]; then
+        _STATUS_UPPER="$(printf '%s' "${_STATUS}" | tr '[:lower:]' '[:upper:]')"
+        if [[ -n "$$_STATUS_UPPER" && "$$_STATUS_UPPER" != "SUCCESS" ]]; then
           echo "Skipping deploy-engine because _STATUS=${_STATUS}"
           exit 0
         fi
@@ -38,8 +38,8 @@ steps:
     args:
       - -ceu
       - |
-        STATUS_UPPER="${_STATUS^^}"
-        if [[ -n "${STATUS_UPPER}" && "${STATUS_UPPER}" != "SUCCESS" ]]; then
+        _STATUS_UPPER="$(printf '%s' "${_STATUS}" | tr '[:lower:]' '[:upper:]')"
+        if [[ -n "$$_STATUS_UPPER" && "$$_STATUS_UPPER" != "SUCCESS" ]]; then
           echo "Skipping deploy-api because _STATUS=${_STATUS}"
           exit 0
         fi
@@ -67,8 +67,8 @@ steps:
     args:
       - -ceu
       - |
-        STATUS_UPPER="${_STATUS^^}"
-        if [[ -n "${STATUS_UPPER}" && "${STATUS_UPPER}" != "SUCCESS" ]]; then
+        _STATUS_UPPER="$(printf '%s' "${_STATUS}" | tr '[:lower:]' '[:upper:]')"
+        if [[ -n "$$_STATUS_UPPER" && "$$_STATUS_UPPER" != "SUCCESS" ]]; then
           echo "Skipping deploy-web because _STATUS=${_STATUS}"
           exit 0
         fi
