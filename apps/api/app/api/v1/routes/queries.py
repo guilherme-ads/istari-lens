@@ -13,6 +13,7 @@ from app.modules.core.legacy.schemas import (
     QuerySpec,
 )
 from app.modules.auth.adapters.api.dependencies import get_current_user
+from app.modules.datasets.access import ensure_dataset_view_access
 from app.modules.engine import get_engine_client, resolve_datasource_access, to_engine_query_spec
 
 router = APIRouter(prefix="/query", tags=["query"])
@@ -22,10 +23,9 @@ def _resolve_correlation_id(request: Request) -> str | None:
     return request.headers.get("x-correlation-id") or request.headers.get("x-request-id")
 
 
-def _validate_dataset(spec: QuerySpec, db: Session) -> Dataset:
+def _validate_dataset(spec: QuerySpec, db: Session, current_user: User) -> Dataset:
     dataset = db.query(Dataset).filter(Dataset.id == spec.datasetId).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_view_access(dataset=dataset, user=current_user)
     if not dataset.is_active:
         raise HTTPException(status_code=400, detail="Dataset is inactive")
 
@@ -45,8 +45,7 @@ async def execute_preview_query(
     current_user: User,
     correlation_id: str | None = None,
 ) -> QueryPreviewResponse:
-    _ = current_user
-    dataset = _validate_dataset(spec, db)
+    dataset = _validate_dataset(spec, db, current_user)
     access = resolve_datasource_access(
         datasource=dataset.datasource,
         dataset=dataset,
@@ -101,7 +100,7 @@ async def preview_query_batch(
     correlation_id = _resolve_correlation_id(http_request)
     indexed_queries: list[dict[str, object]] = []
     for item in request.queries:
-        dataset = _validate_dataset(item.spec, db)
+        dataset = _validate_dataset(item.spec, db, current_user)
         indexed_queries.append(
             {
                 "request_id": item.widget_id,

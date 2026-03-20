@@ -63,7 +63,7 @@ describe("api auth behavior", () => {
           access_token: "new-token",
           token_type: "bearer",
           remember_me: true,
-          user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
+          user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, is_owner: false, created_at: "2026-01-01T00:00:00Z" },
         }),
       })
       .mockResolvedValueOnce({
@@ -88,7 +88,7 @@ describe("api auth behavior", () => {
         access_token: "new-token",
         token_type: "bearer",
         remember_me: false,
-        user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
+        user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, is_owner: false, created_at: "2026-01-01T00:00:00Z" },
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -110,7 +110,7 @@ describe("api auth behavior", () => {
           access_token: "new-token",
           token_type: "bearer",
           remember_me: true,
-          user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, created_at: "2026-01-01T00:00:00Z" },
+          user: { id: 1, email: "user@test.com", full_name: "User", is_admin: false, is_owner: false, created_at: "2026-01-01T00:00:00Z" },
         }),
       }),
     );

@@ -33,6 +33,7 @@ async function refreshAccessToken(): Promise<boolean> {
           email: response.user.email,
           full_name: response.user.full_name,
           is_admin: response.user.is_admin,
+          is_owner: response.user.is_owner,
         });
         return true;
       } catch {
@@ -108,6 +109,7 @@ export type ApiUser = {
   email: string;
   full_name?: string | null;
   is_admin: boolean;
+  is_owner: boolean;
   is_active?: boolean;
   last_login_at?: string | null;
   updated_at?: string;
@@ -399,7 +401,7 @@ export type ApiDashboard = {
   created_by_id?: number | null;
   is_owner: boolean;
   access_level: "owner" | "edit" | "view";
-  access_source: "owner" | "direct" | "workspace" | "public";
+  access_source: "owner" | "direct" | "workspace" | "public" | "organization";
   visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
   public_share_key?: string | null;
   name: string;
@@ -419,8 +421,9 @@ export type ApiDashboardCatalogItem = {
   name: string;
   created_by_id?: number | null;
   is_owner: boolean;
+  is_favorite: boolean;
   access_level: "owner" | "edit" | "view";
-  access_source: "owner" | "direct" | "workspace" | "public";
+  access_source: "owner" | "direct" | "workspace" | "public" | "organization";
   visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
   public_share_key?: string | null;
   created_by_name?: string | null;
@@ -478,7 +481,7 @@ export type ApiAdminUser = {
   id: number;
   email: string;
   full_name?: string | null;
-  role: "ADMIN" | "USER";
+  role: "ADMIN" | "OWNER" | "USER";
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -748,6 +751,11 @@ export type ApiDashboardEditLockResponse = {
   expires_at?: string | null;
 };
 
+export type ApiDashboardFavoriteResponse = {
+  dashboard_id: number;
+  is_favorite: boolean;
+};
+
 export type ApiDashboardShareableUser = {
   id: number;
   email: string;
@@ -929,7 +937,7 @@ export const api = {
   createAdminUser: (payload: {
     name: string;
     email: string;
-    role: "ADMIN" | "USER";
+    role: "ADMIN" | "OWNER" | "USER";
     is_active: boolean;
     password: string;
   }) => request<ApiAdminUser>("/admin/users", { method: "POST", body: JSON.stringify(payload) }),
@@ -939,7 +947,7 @@ export const api = {
     payload: Partial<{
       name: string;
       email: string;
-      role: "ADMIN" | "USER";
+      role: "ADMIN" | "OWNER" | "USER";
       is_active: boolean;
     }>,
   ) => request<ApiAdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(payload) }),
@@ -1032,6 +1040,10 @@ export const api = {
   },
 
   listDashboardCatalog: () => request<ApiDashboardCatalogItem[]>("/dashboards/catalog"),
+  favoriteDashboard: (dashboardId: number) =>
+    request<ApiDashboardFavoriteResponse>(`/dashboards/${dashboardId}/favorite`, { method: "PUT" }),
+  unfavoriteDashboard: (dashboardId: number) =>
+    request<ApiDashboardFavoriteResponse>(`/dashboards/${dashboardId}/favorite`, { method: "DELETE" }),
 
   getDashboard: (dashboardId: number) => request<ApiDashboard>(`/dashboards/${dashboardId}`),
 

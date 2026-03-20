@@ -35,6 +35,7 @@ class UserResponse(BaseModel):
     email: str
     full_name: Optional[str]
     is_admin: bool
+    is_owner: bool
     created_at: datetime
     
     class Config:
@@ -99,7 +100,7 @@ class AdminUserBaseResponse(BaseModel):
     id: int
     email: str
     full_name: Optional[str]
-    role: Literal["ADMIN", "USER"]
+    role: Literal["ADMIN", "OWNER", "USER"]
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -121,7 +122,7 @@ class AdminUserListResponse(BaseModel):
 class AdminUserCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: str = Field(min_length=3, max_length=255)
-    role: Literal["ADMIN", "USER"] = "USER"
+    role: Literal["ADMIN", "OWNER", "USER"] = "USER"
     is_active: bool = True
     password: str = Field(min_length=8, max_length=128)
 
@@ -129,7 +130,7 @@ class AdminUserCreateRequest(BaseModel):
 class AdminUserUpdateRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     email: Optional[str] = Field(default=None, min_length=3, max_length=255)
-    role: Optional[Literal["ADMIN", "USER"]] = None
+    role: Optional[Literal["ADMIN", "OWNER", "USER"]] = None
     is_active: Optional[bool] = None
 
 
@@ -162,6 +163,27 @@ class DatasetUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
+class DatasetEmailShareResponse(BaseModel):
+    id: int
+    dataset_id: int
+    email: str
+    created_by_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetShareUpsertRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class DatasetSharingResponse(BaseModel):
+    dataset_id: int
+    shares: List[DatasetEmailShareResponse] = Field(default_factory=list)
+
+
 class DashboardWidgetResponse(BaseModel):
     id: int
     dashboard_id: int
@@ -190,7 +212,7 @@ class DashboardResponse(BaseModel):
     created_by_id: Optional[int] = None
     is_owner: bool = False
     access_level: Literal["owner", "edit", "view"] = "view"
-    access_source: Literal["owner", "direct", "workspace", "public"] = "direct"
+    access_source: Literal["owner", "direct", "workspace", "public", "organization"] = "direct"
     visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"] = "private"
     public_share_key: Optional[str] = None
     name: str
@@ -331,8 +353,9 @@ class DashboardCatalogItemResponse(BaseModel):
     name: str
     created_by_id: Optional[int] = None
     is_owner: bool = False
+    is_favorite: bool = False
     access_level: Literal["owner", "edit", "view"] = "view"
-    access_source: Literal["owner", "direct", "workspace", "public"] = "direct"
+    access_source: Literal["owner", "direct", "workspace", "public", "organization"] = "direct"
     visibility: Literal["private", "workspace_view", "workspace_edit", "public_view"] = "private"
     public_share_key: Optional[str] = None
     created_by_name: Optional[str] = None
@@ -361,6 +384,11 @@ class DashboardEmailShareResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DashboardFavoriteResponse(BaseModel):
+    dashboard_id: int
+    is_favorite: bool
 
 
 class DashboardShareUpsertRequest(BaseModel):

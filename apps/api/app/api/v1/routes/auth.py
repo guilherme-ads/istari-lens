@@ -165,7 +165,8 @@ async def register(request: UserRegister, db: Session = Depends(get_db)):
         email=normalized_email,
         hashed_password=hash_password(request.password),
         full_name=request.full_name,
-        is_admin=False
+        is_admin=False,
+        is_owner=False,
     )
     
     db.add(new_user)

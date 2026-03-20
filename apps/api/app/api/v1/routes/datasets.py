@@ -1,12 +1,29 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from typing import Any, List
 
 from app.shared.infrastructure.database import get_db
-from app.modules.core.legacy.models import User, Dataset, View, DataSource
+from app.modules.core.legacy.models import User, Dataset, DatasetEmailShare, View, DataSource
 from app.modules.catalog import SemanticCatalogService
+from app.modules.datasets.access import (
+    can_view_organization_data,
+    ensure_dataset_manage_access,
+    find_dataset_email_share,
+    load_dataset_with_access_relations,
+    normalize_email,
+)
 from app.modules.datasets import build_legacy_base_query_spec, validate_and_resolve_base_query_spec
-from app.modules.core.legacy.schemas import DatasetResponse, DatasetCreateRequest, DatasetUpdateRequest
+from app.modules.core.legacy.schemas import (
+    DatasetCreateRequest,
+    DatasetEmailShareResponse,
+    DatasetResponse,
+    DatasetShareUpsertRequest,
+    DatasetSharingResponse,
+    DatasetUpdateRequest,
+)
 from app.modules.auth.adapters.api.dependencies import get_current_user, get_current_admin_user
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -103,11 +120,28 @@ async def list_datasets(
     current_user: User = Depends(get_current_user)
 ):
     """List all active datasets available to the user."""
-    datasets = (
+    query = (
         db.query(Dataset)
+        .join(DataSource, DataSource.id == Dataset.datasource_id)
         .filter(Dataset.is_active == True)
-        .all()
     )
+    if not can_view_organization_data(current_user):
+        normalized_email = normalize_email(current_user.email)
+        share_exists = (
+            db.query(DatasetEmailShare.id)
+            .filter(
+                DatasetEmailShare.dataset_id == Dataset.id,
+                func.lower(DatasetEmailShare.email) == normalized_email,
+            )
+            .exists()
+        )
+        query = query.filter(
+            or_(
+                DataSource.created_by_id == current_user.id,
+                share_exists,
+            )
+        )
+    datasets = query.all()
     response_items: list[DatasetResponse] = []
     for dataset in datasets:
         persisted_descriptions = _semantic_description_map(
@@ -137,7 +171,9 @@ async def create_dataset(
     current_user: User = Depends(get_current_user),
 ):
     """Create a dataset from legacy view reference or from base_query_spec."""
-    _resolve_dataset_datasource(db=db, datasource_id=request.datasource_id)
+    datasource = _resolve_dataset_datasource(db=db, datasource_id=request.datasource_id)
+    if not current_user.is_admin and int(datasource.created_by_id) != int(current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to create datasets for this datasource")
     view = _resolve_dataset_view(db=db, datasource_id=request.datasource_id, view_id=request.view_id)
 
     resolved_base_query_spec = request.base_query_spec
@@ -189,12 +225,8 @@ async def update_dataset(
     current_user: User = Depends(get_current_user),
 ):
     """Update dataset metadata/base_query_spec."""
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Dataset not found",
-        )
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
 
     if request.name is not None:
         dataset.name = request.name
@@ -261,5 +293,100 @@ async def delete_dataset(
         )
     db.delete(dataset)
     db.commit()
+
+
+@router.get("/{dataset_id}/sharing", response_model=DatasetSharingResponse)
+async def get_dataset_sharing(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
+    shares = sorted(dataset.email_shares, key=lambda item: (item.email, item.id))
+    return DatasetSharingResponse(
+        dataset_id=dataset.id,
+        shares=[DatasetEmailShareResponse.model_validate(item) for item in shares],
+    )
+
+
+@router.post("/{dataset_id}/sharing/email", response_model=DatasetSharingResponse)
+async def upsert_dataset_email_share(
+    dataset_id: int,
+    request: DatasetShareUpsertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
+
+    normalized_email = normalize_email(request.email)
+    if normalized_email == normalize_email(current_user.email):
+        raise HTTPException(status_code=400, detail="Owner already has dataset access")
+
+    invitee = (
+        db.query(User)
+        .filter(
+            func.lower(User.email) == normalized_email,
+            User.deleted_at.is_(None),
+            User.is_active.is_(True),
+        )
+        .first()
+    )
+    if invitee is None:
+        raise HTTPException(status_code=400, detail="Email must belong to an active user")
+
+    share = find_dataset_email_share(
+        db=db,
+        dataset_id=dataset.id,
+        normalized_email=normalized_email,
+    )
+    if share:
+        share.updated_at = datetime.utcnow()
+    else:
+        share = DatasetEmailShare(
+            dataset_id=dataset.id,
+            email=normalized_email,
+            created_by_id=current_user.id,
+        )
+        db.add(share)
+
+    db.commit()
+    db.refresh(dataset)
+    shares = sorted(dataset.email_shares, key=lambda item: (item.email, item.id))
+    return DatasetSharingResponse(
+        dataset_id=dataset.id,
+        shares=[DatasetEmailShareResponse.model_validate(item) for item in shares],
+    )
+
+
+@router.delete("/{dataset_id}/sharing/email/{share_id}", response_model=DatasetSharingResponse)
+async def delete_dataset_email_share(
+    dataset_id: int,
+    share_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    ensure_dataset_manage_access(dataset=dataset, user=current_user)
+
+    share = (
+        db.query(DatasetEmailShare)
+        .filter(
+            DatasetEmailShare.id == share_id,
+            DatasetEmailShare.dataset_id == dataset.id,
+        )
+        .first()
+    )
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    db.delete(share)
+    db.commit()
+    db.refresh(dataset)
+    shares = sorted(dataset.email_shares, key=lambda item: (item.email, item.id))
+    return DatasetSharingResponse(
+        dataset_id=dataset.id,
+        shares=[DatasetEmailShareResponse.model_validate(item) for item in shares],
+    )
 
 

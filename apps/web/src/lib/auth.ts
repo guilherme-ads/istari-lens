@@ -6,6 +6,7 @@ export type StoredUser = {
   email: string;
   full_name?: string | null;
   is_admin: boolean;
+  is_owner: boolean;
 };
 
 type AuthStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -37,7 +38,15 @@ const safeRemoveItem = (storage: Storage, key: string): void => {
 const parseStoredUser = (raw: string | null): StoredUser | null => {
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as StoredUser;
+    const parsed = JSON.parse(raw) as Partial<StoredUser>;
+    if (typeof parsed.id !== "number" || typeof parsed.email !== "string") return null;
+    return {
+      id: parsed.id,
+      email: parsed.email,
+      full_name: parsed.full_name ?? null,
+      is_admin: !!parsed.is_admin,
+      is_owner: !!parsed.is_owner,
+    };
   } catch {
     return null;
   }

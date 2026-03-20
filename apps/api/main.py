@@ -293,6 +293,19 @@ def _ensure_users_admin_columns() -> None:
             ).first()
             if not has_deleted_at:
                 conn.execute(text("ALTER TABLE users ADD COLUMN deleted_at TIMESTAMP"))
+
+            has_is_owner = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'users' AND column_name = 'is_owner'
+                    LIMIT 1
+                    """
+                )
+            ).first()
+            if not has_is_owner:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_owner BOOLEAN NOT NULL DEFAULT FALSE"))
     except Exception:
         logger.exception("users admin columns patch failed")
 
@@ -430,6 +443,7 @@ def _bootstrap_admin_user() -> None:
             hashed_password=hash_password(settings.bootstrap_admin_password),
             full_name="Admin User",
             is_admin=True,
+            is_owner=False,
             is_active=True,
         )
         db.add(admin_user)

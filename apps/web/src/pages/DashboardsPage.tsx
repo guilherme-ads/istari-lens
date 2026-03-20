@@ -12,6 +12,7 @@ import {
   Activity,
   Clock3,
   Eye,
+  Star,
   Pencil,
   Share2,
   Trash2,
@@ -32,6 +33,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api } from "@/lib/api";
+import { getStoredUser } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { parseApiDate } from "@/lib/datetime";
 
@@ -63,9 +65,11 @@ const DashboardsPage = () => {
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [createOpen, setCreateOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"mine" | "shared" | "org">("mine");
+  const [activeTab, setActiveTab] = useState<"favorites" | "mine" | "shared" | "org">("favorites");
   const [shareOpen, setShareOpen] = useState(false);
   const [shareTarget, setShareTarget] = useState<CatalogItem | null>(null);
+  const currentUser = getStoredUser();
+  const currentUserId = currentUser?.id ?? null;
 
   const { datasets, isLoading, isError, errorMessage } = useCoreData();
   const catalogQuery = useQuery({
@@ -92,18 +96,24 @@ const DashboardsPage = () => {
       || normalizeSearchText(item.created_by_email || "").includes(q));
   }, [rows, search]);
 
+  const isMine = (item: CatalogItem) =>
+    (currentUserId != null && item.created_by_id === currentUserId)
+    || (item.is_owner && item.access_source === "owner");
+
   const tabCounts = useMemo(() => ({
-    mine: filteredRows.filter((item) => item.is_owner).length,
-    shared: filteredRows.filter((item) => !item.is_owner && item.access_source === "direct").length,
+    favorites: filteredRows.filter((item) => item.is_favorite).length,
+    mine: filteredRows.filter((item) => isMine(item)).length,
+    shared: filteredRows.filter((item) => !isMine(item) && item.access_source === "direct").length,
     org: filteredRows.length,
-  }), [filteredRows]);
+  }), [filteredRows, currentUserId]);
 
   const visibleRows = useMemo(() => {
     if (search.trim()) return filteredRows;
-    if (activeTab === "mine") return filteredRows.filter((item) => item.is_owner);
-    if (activeTab === "shared") return filteredRows.filter((item) => !item.is_owner && item.access_source === "direct");
+    if (activeTab === "favorites") return filteredRows.filter((item) => item.is_favorite);
+    if (activeTab === "mine") return filteredRows.filter((item) => isMine(item));
+    if (activeTab === "shared") return filteredRows.filter((item) => !isMine(item) && item.access_source === "direct");
     return filteredRows;
-  }, [activeTab, filteredRows, search]);
+  }, [activeTab, filteredRows, search, currentUserId]);
 
   const totalWidgets = useMemo(() => rows.reduce((acc, row) => acc + row.widget_count, 0), [rows]);
   const avgLatency = useMemo(() => {
@@ -154,6 +164,20 @@ const DashboardsPage = () => {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-catalog"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
       toast({ title: "Acesso removido" });
+    },
+  });
+
+  const toggleFavoriteMutation = useMutation({
+    mutationFn: async ({ dashboardId, isFavorite }: { dashboardId: number; isFavorite: boolean }) => {
+      if (isFavorite) {
+        await api.unfavoriteDashboard(dashboardId);
+        return;
+      }
+      await api.favoriteDashboard(dashboardId);
+    },
+    onSuccess: async (_, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-catalog"] });
+      toast({ title: variables.isFavorite ? "Dashboard removido dos favoritos" : "Dashboard adicionado aos favoritos" });
     },
   });
 
@@ -250,6 +274,17 @@ const DashboardsPage = () => {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            onClick={() => setActiveTab("favorites")}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === "favorites"
+                ? "bg-accent text-accent-foreground"
+                : "border border-border bg-card text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Favoritos ({tabCounts.favorites})
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("mine")}
             className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
               activeTab === "mine"
@@ -321,6 +356,8 @@ const DashboardsPage = () => {
                   setShareTarget(item);
                   setShareOpen(true);
                 } : undefined}
+                onToggleFavorite={() => toggleFavoriteMutation.mutate({ dashboardId: item.id, isFavorite: item.is_favorite })}
+                favoriteToggling={toggleFavoriteMutation.isPending && toggleFavoriteMutation.variables?.dashboardId === item.id}
               />
             ))}
           </div>
@@ -337,6 +374,8 @@ const DashboardsPage = () => {
                   setShareTarget(item);
                   setShareOpen(true);
                 } : undefined}
+                onToggleFavorite={() => toggleFavoriteMutation.mutate({ dashboardId: item.id, isFavorite: item.is_favorite })}
+                favoriteToggling={toggleFavoriteMutation.isPending && toggleFavoriteMutation.variables?.dashboardId === item.id}
               />
             ))}
           </div>
@@ -436,12 +475,16 @@ const DashboardGridCard = ({
   onOpen,
   onEdit,
   onShare,
+  onToggleFavorite,
+  favoriteToggling,
 }: {
   item: CatalogItem;
   delay: number;
   onOpen: () => void;
   onEdit?: () => void;
   onShare?: () => void;
+  onToggleFavorite: () => void;
+  favoriteToggling: boolean;
 }) => (
   <motion.div
     initial={{ opacity: 0, y: 14 }}
@@ -485,6 +528,17 @@ const DashboardGridCard = ({
     <div className="flex items-center justify-between text-caption pt-2.5 border-t border-border">
       <span>{formatDateTimeBR(item.last_edited_at)}</span>
       <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={onToggleFavorite}
+          disabled={favoriteToggling}
+          title={item.is_favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+          aria-label={item.is_favorite ? `Remover ${item.name} dos favoritos` : `Adicionar ${item.name} aos favoritos`}
+        >
+          <Star className={`h-3.5 w-3.5 ${item.is_favorite ? "fill-amber-400 text-amber-500" : ""}`} />
+        </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpen}>
           <Eye className="h-3.5 w-3.5" />
         </Button>
@@ -509,12 +563,16 @@ const DashboardListItem = ({
   onOpen,
   onEdit,
   onShare,
+  onToggleFavorite,
+  favoriteToggling,
 }: {
   item: CatalogItem;
   delay: number;
   onOpen: () => void;
   onEdit?: () => void;
   onShare?: () => void;
+  onToggleFavorite: () => void;
+  favoriteToggling: boolean;
 }) => (
   <motion.div
     initial={{ opacity: 0, x: -8 }}
@@ -547,6 +605,17 @@ const DashboardListItem = ({
     <div className="hidden md:flex items-center gap-4 shrink-0 text-caption">
       <span>{item.widget_count} widgets</span>
     </div>
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8"
+      onClick={onToggleFavorite}
+      disabled={favoriteToggling}
+      title={item.is_favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+      aria-label={item.is_favorite ? `Remover ${item.name} dos favoritos` : `Adicionar ${item.name} aos favoritos`}
+    >
+      <Star className={`h-4 w-4 ${item.is_favorite ? "fill-amber-400 text-amber-500" : ""}`} />
+    </Button>
     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onOpen}>
       <Eye className="h-4 w-4" />
     </Button>
