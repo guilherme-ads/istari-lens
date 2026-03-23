@@ -112,7 +112,7 @@ steps:
           --update-env-vars="^~^APP_CORS_ORIGINS=$${API_CORS_ORIGINS}"
 
 substitutions:
-  _STATUS: ""
+  _STATUS: $(body.message.attributes.status)
   _REGION: us-central1
   _REPO: lens
   _TAG: prod
