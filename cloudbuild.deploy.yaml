@@ -45,6 +45,15 @@ steps:
         fi
 
         ENGINE_URL="$$(cat /workspace/engine_url.txt)"
+        PROJECT_NUMBER="$$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")"
+        WEB_DETERMINISTIC_URL="https://${_WEB_SERVICE}-$${PROJECT_NUMBER}.${_REGION}.run.app"
+        API_CORS_ORIGINS="${_APP_CORS_ORIGINS}"
+        if [[ -z "$$API_CORS_ORIGINS" ]]; then
+          API_CORS_ORIGINS="$$WEB_DETERMINISTIC_URL"
+        elif [[ ",$$API_CORS_ORIGINS," != *",$$WEB_DETERMINISTIC_URL,"* ]]; then
+          API_CORS_ORIGINS="$$API_CORS_ORIGINS,$$WEB_DETERMINISTIC_URL"
+        fi
+
         CLOUDSQL_ARGS=()
         if [[ -n "${_INSTANCE_CONNECTION_NAME}" ]]; then
           CLOUDSQL_ARGS=(--add-cloudsql-instances "${_INSTANCE_CONNECTION_NAME}")
@@ -57,7 +66,7 @@ steps:
           --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/lens-api:${_TAG}" \
           --allow-unauthenticated \
           --port="${_API_PORT}" \
-          --set-env-vars="APP_ENVIRONMENT=production,APP_ENGINE_BASE_URL=$${ENGINE_URL},APP_CORS_ORIGINS=${_APP_CORS_ORIGINS}" \
+          --set-env-vars="^~^APP_ENVIRONMENT=production~APP_ENGINE_BASE_URL=$${ENGINE_URL}~APP_CORS_ORIGINS=$${API_CORS_ORIGINS}" \
           --set-secrets="APP_DATABASE_URL=${_APP_DB_URL_SECRET}:latest,APP_APP_DB_URL=${_APP_DB_URL_SECRET}:latest,APP_DB_URL=${_APP_DB_URL_SECRET}:latest,APP_ANALYTICS_DB_URL=${_APP_ANALYTICS_DB_URL_SECRET}:latest,APP_ENGINE_SERVICE_SECRET=${_APP_ENGINE_SERVICE_SECRET_SECRET}:latest,APP_SECRET_KEY=${_APP_SECRET_KEY_SECRET}:latest,APP_ENCRYPTION_KEY=${_APP_ENCRYPTION_KEY_SECRET}:latest" \
           "${CLOUDSQL_ARGS[@]}"
 
@@ -81,6 +90,27 @@ steps:
           --allow-unauthenticated \
           --port="${_WEB_PORT}"
 
+        WEB_URL="$$(gcloud run services describe "${_WEB_SERVICE}" --project="$PROJECT_ID" --region="${_REGION}" --format="value(status.url)")"
+        PROJECT_NUMBER="$$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")"
+        WEB_DETERMINISTIC_URL="https://${_WEB_SERVICE}-$${PROJECT_NUMBER}.${_REGION}.run.app"
+
+        API_CORS_ORIGINS="${_APP_CORS_ORIGINS}"
+        for ORIGIN in "$$WEB_URL" "$$WEB_DETERMINISTIC_URL"; do
+          if [[ -z "$$ORIGIN" ]]; then
+            continue
+          fi
+          if [[ -z "$$API_CORS_ORIGINS" ]]; then
+            API_CORS_ORIGINS="$$ORIGIN"
+          elif [[ ",$$API_CORS_ORIGINS," != *",$$ORIGIN,"* ]]; then
+            API_CORS_ORIGINS="$$API_CORS_ORIGINS,$$ORIGIN"
+          fi
+        done
+
+        gcloud run services update "${_API_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --update-env-vars="^~^APP_CORS_ORIGINS=$${API_CORS_ORIGINS}"
+
 substitutions:
   _STATUS: ""
   _REGION: us-central1
@@ -93,7 +123,7 @@ substitutions:
   _WEB_PORT: "3000"
   _ENGINE_PORT: "8010"
   _INSTANCE_CONNECTION_NAME: ""
-  _APP_CORS_ORIGINS: https://example.com
+  _APP_CORS_ORIGINS: ""
   _ENGINE_ANALYTICS_DB_URL_SECRET: lens-api-analytics-db-url
   _ENGINE_SERVICE_SECRET_SECRET: lens-api-engine-service-secret
   _APP_DB_URL_SECRET: lens-api-db-url
