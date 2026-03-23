@@ -45,13 +45,21 @@ steps:
         fi
 
         ENGINE_URL="$$(cat /workspace/engine_url.txt)"
-        PROJECT_NUMBER="$$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")"
-        WEB_DETERMINISTIC_URL="https://${_WEB_SERVICE}-$${PROJECT_NUMBER}.${_REGION}.run.app"
+        EXISTING_WEB_URL="$$(gcloud run services describe "${_WEB_SERVICE}" --project="$PROJECT_ID" --region="${_REGION}" --format="value(status.url)" 2>/dev/null || true)"
+        EXISTING_WEB_LIST_URL="$$(gcloud run services list --project="$PROJECT_ID" --region="${_REGION}" --filter="metadata.name=${_WEB_SERVICE}" --format="value(URL)" 2>/dev/null || true)"
         API_CORS_ORIGINS="${_APP_CORS_ORIGINS}"
+        for ORIGIN in "$$EXISTING_WEB_URL" "$$EXISTING_WEB_LIST_URL"; do
+          if [[ -z "$$ORIGIN" ]]; then
+            continue
+          fi
+          if [[ -z "$$API_CORS_ORIGINS" ]]; then
+            API_CORS_ORIGINS="$$ORIGIN"
+          elif [[ ",$$API_CORS_ORIGINS," != *",$$ORIGIN,"* ]]; then
+            API_CORS_ORIGINS="$$API_CORS_ORIGINS,$$ORIGIN"
+          fi
+        done
         if [[ -z "$$API_CORS_ORIGINS" ]]; then
-          API_CORS_ORIGINS="$$WEB_DETERMINISTIC_URL"
-        elif [[ ",$$API_CORS_ORIGINS," != *",$$WEB_DETERMINISTIC_URL,"* ]]; then
-          API_CORS_ORIGINS="$$API_CORS_ORIGINS,$$WEB_DETERMINISTIC_URL"
+          API_CORS_ORIGINS="https://example.com"
         fi
 
         CLOUDSQL_ARGS=()
@@ -91,11 +99,10 @@ steps:
           --port="${_WEB_PORT}"
 
         WEB_URL="$$(gcloud run services describe "${_WEB_SERVICE}" --project="$PROJECT_ID" --region="${_REGION}" --format="value(status.url)")"
-        PROJECT_NUMBER="$$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")"
-        WEB_DETERMINISTIC_URL="https://${_WEB_SERVICE}-$${PROJECT_NUMBER}.${_REGION}.run.app"
+        WEB_LIST_URL="$$(gcloud run services list --project="$PROJECT_ID" --region="${_REGION}" --filter="metadata.name=${_WEB_SERVICE}" --format="value(URL)" 2>/dev/null || true)"
 
         API_CORS_ORIGINS="${_APP_CORS_ORIGINS}"
-        for ORIGIN in "$$WEB_URL" "$$WEB_DETERMINISTIC_URL"; do
+        for ORIGIN in "$$WEB_URL" "$$WEB_LIST_URL"; do
           if [[ -z "$$ORIGIN" ]]; then
             continue
           fi
@@ -134,4 +141,3 @@ substitutions:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-
