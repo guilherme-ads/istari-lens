@@ -95,3 +95,4 @@ python -m pytest
 - `apps/api/README.md`
 - `apps/engine/README.md`
 - `apps/web/README.md`
+- `GUIA_USUARIO_LENS.md`

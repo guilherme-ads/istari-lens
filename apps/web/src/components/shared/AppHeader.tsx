@@ -35,7 +35,7 @@ const AppHeader = ({ title = "Lens App", showNav = true, onLogout }: AppHeaderPr
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur-md">
-      <div className="app-container flex h-14 items-center justify-between">
+      <div className="w-full px-4 md:px-6 xl:px-8 2xl:px-10 flex h-14 items-center justify-between">
         <div className="flex items-center gap-6">
           <Link to="/datasets" className="flex items-center gap-2.5 group">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent shadow-sm group-hover:shadow-md transition-shadow">
@@ -110,7 +110,7 @@ const AppHeader = ({ title = "Lens App", showNav = true, onLogout }: AppHeaderPr
             transition={{ duration: 0.2 }}
             className="overflow-hidden border-t border-border md:hidden"
           >
-            <nav className="app-container flex flex-col gap-1 py-3">
+            <nav className="w-full px-4 md:px-6 xl:px-8 2xl:px-10 flex flex-col gap-1 py-3">
               {navLinks.map((link) => {
                 const isActive = location.pathname.startsWith(link.to);
                 return (

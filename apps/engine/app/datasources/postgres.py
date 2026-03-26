@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 from datetime import timedelta
 from typing import Any
@@ -9,6 +10,8 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from app.errors import EngineError
+
+logger = logging.getLogger("uvicorn.error")
 
 
 _DANGEROUS_PATTERN = re.compile(
@@ -58,6 +61,7 @@ class PostgresAdapter:
         except EngineError:
             raise
         except Exception as exc:
+            logger.exception("engine.datasource_error | %s", {"code": "datasource_error", "detail": str(exc)[:800]})
             raise EngineError(status_code=500, code="datasource_error", message="Datasource execution failed") from exc
         finally:
             if conn:

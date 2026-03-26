@@ -15,12 +15,12 @@ const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage"));
 const ApiConfigPage = lazy(() => import("./pages/ApiConfigPage"));
 const BuilderPage = lazy(() => import("./pages/BuilderPage"));
 const DashboardViewPage = lazy(() => import("./pages/DashboardViewPage"));
+const DatasetCanvas = lazy(() => import("./pages/DatasetCanvas"));
 const DashboardsPage = lazy(() => import("./pages/DashboardsPage"));
 const DatasetDetailPage = lazy(() => import("./pages/DatasetDetailPage"));
 const DatasetsPage = lazy(() => import("./pages/DatasetsPage"));
 const HomePage = lazy(() => import("./pages/HomePage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
-const NewDatasetPage = lazy(() => import("./pages/NewDatasetPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const OverviewPage = lazy(() => import("./pages/OverviewPage"));
 
@@ -81,7 +81,7 @@ const App = () => {
         <TooltipProvider>
           <Toaster />
           <Sonner />
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             {authReady ? (
               <Routes>
                 <Route path="/" element={withFullPageSuspense(<HomePage />)} />
@@ -98,8 +98,8 @@ const App = () => {
                 <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
                   <Route path="/home" element={withInLayoutSuspense(<OverviewPage />)} />
                   <Route path="/datasets" element={withInLayoutSuspense(<DatasetsPage />)} />
-                  <Route path="/datasets/new" element={withInLayoutSuspense(<NewDatasetPage />)} />
-                  <Route path="/datasets/:datasetId/edit" element={withInLayoutSuspense(<NewDatasetPage />)} />
+                  <Route path="/datasets/new" element={withInLayoutSuspense(<DatasetCanvas />)} />
+                  <Route path="/datasets/:datasetId/edit" element={withInLayoutSuspense(<DatasetCanvas />)} />
                   <Route path="/dashboards" element={withInLayoutSuspense(<DashboardsPage />)} />
                   <Route path="/account" element={withInLayoutSuspense(<AccountPage />)} />
                   <Route path="/datasets/:datasetId" element={withInLayoutSuspense(<DatasetDetailPage />)} />

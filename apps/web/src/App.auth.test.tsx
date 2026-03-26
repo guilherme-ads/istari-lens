@@ -3,8 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { Outlet } from "react-router-dom";
 
 vi.mock("./lib/auth", () => ({
+  clearAuthSession: vi.fn(),
   hasAuthSession: vi.fn(),
   getStoredUser: vi.fn(),
+  isAuthTokenFresh: vi.fn(),
 }));
 vi.mock("./lib/api", () => ({
   api: {
@@ -29,12 +31,13 @@ vi.mock("./pages/NotFound", () => ({ default: () => <div>not-found-page</div> })
 vi.mock("./pages/AdminUsersPage", () => ({ default: () => <div>admin-users-page</div> }));
 
 import App from "./App";
-import { getStoredUser, hasAuthSession } from "./lib/auth";
+import { getStoredUser, hasAuthSession, isAuthTokenFresh } from "./lib/auth";
 import { api } from "./lib/api";
 
 describe("auth route guards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(isAuthTokenFresh).mockReturnValue(true);
   });
 
   it("tries restore session on app bootstrap when unauthenticated", async () => {

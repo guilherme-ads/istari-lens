@@ -40,7 +40,7 @@ const AppLayout = () => {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="fixed inset-x-0 top-0 z-50 glass-nav">
-        <div className="app-container flex h-14 items-stretch justify-between">
+        <div className="w-full px-4 md:px-6 xl:px-8 2xl:px-10 flex h-14 items-stretch justify-between">
           <div className="flex items-center gap-6">
             <Link to="/home" className="flex items-center gap-2.5 group">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent shadow-sm group-hover:shadow-md transition-shadow">
@@ -171,7 +171,7 @@ const AppLayout = () => {
               transition={{ duration: 0.2 }}
               className="overflow-hidden border-t border-border md:hidden"
             >
-              <nav className="app-container flex flex-col gap-1 py-3">
+              <nav className="w-full px-4 md:px-6 xl:px-8 2xl:px-10 flex flex-col gap-1 py-3">
                 {navLinks.map((link) => {
                   const isActive = isActiveLink(link.to);
                   return (

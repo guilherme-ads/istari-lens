@@ -8,10 +8,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
+import psycopg
 
 from app.modules.core.legacy.models import DashboardWidget, DataSource, Dataset, User
 from app.modules.core.legacy.schemas import DashboardWidgetDataResponse
 from app.modules.datasets import compose_engine_query_spec_with_dataset
+from app.modules.datasets.preaggregation import (
+    build_rollup_table_name,
+    can_apply_rollup_to_query_spec,
+    resolve_rollup_plan_for_widget,
+    rewrite_query_spec_for_rollup,
+)
 from app.modules.engine import get_engine_client, resolve_datasource_access
 from app.modules.widgets.domain.config import FilterConfig, MetricConfig, WidgetConfig
 
@@ -76,6 +83,7 @@ class DashboardWidgetExecutionCoordinator:
         available_widget_ids = set(configs_by_widget_id.keys())
         results: dict[int, WidgetExecutionResult] = {}
         engine_result_cache: dict[str, WidgetExecutionResult] = {}
+        rollup_exists_cache: dict[str, bool] = {}
 
         # Preserve current batching behavior for directly requested non-derived widgets.
         requested_non_derived_ids = [
@@ -92,6 +100,7 @@ class DashboardWidgetExecutionCoordinator:
                 access=access,
                 widget_ids=requested_non_derived_ids,
                 configs_by_widget_id=configs_by_widget_id,
+                rollup_exists_cache=rollup_exists_cache,
                 correlation_id=correlation_id,
             )
             for widget_id, execution in consolidated_results.items():
@@ -109,6 +118,7 @@ class DashboardWidgetExecutionCoordinator:
                 access=access,
                 widget_ids=remaining_non_derived_ids,
                 configs_by_widget_id=configs_by_widget_id,
+                rollup_exists_cache=rollup_exists_cache,
                 correlation_id=correlation_id,
             )
             for widget_id, execution in batched_results.items():
@@ -129,6 +139,7 @@ class DashboardWidgetExecutionCoordinator:
                 configs_by_widget_id=configs_by_widget_id,
                 correlation_id=correlation_id,
                 engine_result_cache=engine_result_cache,
+                rollup_exists_cache=rollup_exists_cache,
                 stack=[],
                 inherited_filters=None,
             )
@@ -191,8 +202,10 @@ class DashboardWidgetExecutionCoordinator:
         access: Any,
         widget_ids: list[int],
         configs_by_widget_id: dict[int, WidgetConfig],
+        rollup_exists_cache: dict[str, bool],
         correlation_id: str | None,
     ) -> dict[int, WidgetExecutionResult]:
+        _ = rollup_exists_cache
         candidates_by_view: dict[str, list[int]] = {}
         for widget_id in widget_ids:
             config = configs_by_widget_id.get(widget_id)
@@ -341,13 +354,17 @@ class DashboardWidgetExecutionCoordinator:
         access: Any,
         widget_ids: list[int],
         configs_by_widget_id: dict[int, WidgetConfig],
+        rollup_exists_cache: dict[str, bool],
         correlation_id: str | None,
     ) -> dict[int, WidgetExecutionResult]:
         batch_queries = [
             {
                 "request_id": str(widget_id),
-                "spec": _compose_dataset_query_spec(
+                "spec": _compose_dataset_query_spec_with_rollup(
                     dataset=dataset,
+                    access=access,
+                    config=configs_by_widget_id[widget_id],
+                    rollup_exists_cache=rollup_exists_cache,
                     query_spec=_to_engine_query_spec(configs_by_widget_id[widget_id]),
                 ),
             }
@@ -403,6 +420,7 @@ class DashboardWidgetExecutionCoordinator:
         configs_by_widget_id: dict[int, WidgetConfig],
         correlation_id: str | None,
         engine_result_cache: dict[str, WidgetExecutionResult],
+        rollup_exists_cache: dict[str, bool],
         stack: list[int],
         inherited_filters: list[FilterConfig] | None,
     ) -> WidgetExecutionResult:
@@ -435,8 +453,11 @@ class DashboardWidgetExecutionCoordinator:
                     datasource_id=access.datasource_id,
                     workspace_id=access.workspace_id,
                     dataset_id=dataset_id,
-                    query_spec=_compose_dataset_query_spec(
+                    query_spec=_compose_dataset_query_spec_with_rollup(
                         dataset=dataset,
+                        access=access,
+                        config=config,
+                        rollup_exists_cache=rollup_exists_cache,
                         query_spec=_to_engine_query_spec(config),
                     ),
                     datasource_url=access.datasource_url,
@@ -496,12 +517,13 @@ class DashboardWidgetExecutionCoordinator:
                     dataset=dataset,
                     access=access,
                     available_widget_ids=available_widget_ids,
-                    configs_by_widget_id=configs_by_widget_id,
-                    correlation_id=correlation_id,
-                    engine_result_cache=engine_result_cache,
-                    stack=[*stack, widget_id],
-                    inherited_filters=root_filters,
-                )
+                configs_by_widget_id=configs_by_widget_id,
+                correlation_id=correlation_id,
+                engine_result_cache=engine_result_cache,
+                rollup_exists_cache=rollup_exists_cache,
+                stack=[*stack, widget_id],
+                inherited_filters=root_filters,
+            )
             total_exec_ms += max(0, int(dep_execution.metadata.execution_time_ms))
             any_cache_hit = any_cache_hit or bool(dep_execution.metadata.cache_hit)
             dep_values[dep.alias] = _extract_kpi_scalar(dep_execution.payload)
@@ -518,6 +540,7 @@ class DashboardWidgetExecutionCoordinator:
             access=access,
             correlation_id=correlation_id,
             engine_result_cache=engine_result_cache,
+            rollup_exists_cache=rollup_exists_cache,
             inherited_filters=root_filters,
         )
         total_exec_ms += column_exec_ms
@@ -551,6 +574,7 @@ class DashboardWidgetExecutionCoordinator:
         access: Any,
         correlation_id: str | None,
         engine_result_cache: dict[str, WidgetExecutionResult],
+        rollup_exists_cache: dict[str, bool],
         inherited_filters: list[FilterConfig],
     ) -> WidgetExecutionResult:
         cache_key = _column_dep_cache_key(owner_widget_id, str(dep.alias), agg, str(dep.column), inherited_filters)
@@ -573,8 +597,11 @@ class DashboardWidgetExecutionCoordinator:
                 datasource_id=access.datasource_id,
                 workspace_id=access.workspace_id,
                 dataset_id=dataset_id,
-                query_spec=_compose_dataset_query_spec(
+                query_spec=_compose_dataset_query_spec_with_rollup(
                     dataset=dataset,
+                    access=access,
+                    config=virtual_config,
+                    rollup_exists_cache=rollup_exists_cache,
                     query_spec=_to_engine_query_spec(virtual_config),
                 ),
                 datasource_url=access.datasource_url,
@@ -615,6 +642,7 @@ class DashboardWidgetExecutionCoordinator:
         access: Any,
         correlation_id: str | None,
         engine_result_cache: dict[str, WidgetExecutionResult],
+        rollup_exists_cache: dict[str, bool],
         inherited_filters: list[FilterConfig],
     ) -> tuple[float | None, int, bool]:
         ast_root = _parse_derived_formula_ast(formula)
@@ -638,6 +666,7 @@ class DashboardWidgetExecutionCoordinator:
                 access=access,
                 correlation_id=correlation_id,
                 engine_result_cache=engine_result_cache,
+                rollup_exists_cache=rollup_exists_cache,
                 inherited_filters=inherited_filters,
             )
             total_exec_ms += max(0, int(execution.metadata.execution_time_ms))
@@ -654,6 +683,82 @@ def _compose_dataset_query_spec(
     if dataset is None:
         return query_spec
     return compose_engine_query_spec_with_dataset(dataset=dataset, query_spec=query_spec)
+
+
+def _compose_dataset_query_spec_with_rollup(
+    *,
+    dataset: Dataset | None,
+    access: Any,
+    config: WidgetConfig,
+    rollup_exists_cache: dict[str, bool],
+    query_spec: dict[str, Any],
+) -> dict[str, Any]:
+    if dataset is None:
+        return query_spec
+    if str(getattr(access, "effective_access_mode", "direct") or "direct").strip().lower() != "imported":
+        return _compose_dataset_query_spec(dataset=dataset, query_spec=query_spec)
+
+    plan = resolve_rollup_plan_for_widget(config)
+    if plan is None:
+        return _compose_dataset_query_spec(dataset=dataset, query_spec=query_spec)
+    if not can_apply_rollup_to_query_spec(plan=plan, query_spec=query_spec):
+        return _compose_dataset_query_spec(dataset=dataset, query_spec=query_spec)
+
+    schema_name = f"lens_imp_t{int(getattr(access, 'workspace_id', 0) or 0)}"
+    table_name = build_rollup_table_name(
+        dataset_id=int(dataset.id),
+        dataset_name=dataset.name,
+        signature=plan.signature,
+    )
+    cache_key = f"{schema_name}.{table_name}"
+    table_exists = rollup_exists_cache.get(cache_key)
+    if table_exists is None:
+        table_exists = _rollup_table_exists(
+            datasource_url=str(getattr(access, "datasource_url", "") or ""),
+            schema_name=schema_name,
+            table_name=table_name,
+        )
+        rollup_exists_cache[cache_key] = table_exists
+    if not table_exists:
+        return _compose_dataset_query_spec(dataset=dataset, query_spec=query_spec)
+
+    resource_id = f"{schema_name}.{table_name}"
+    return rewrite_query_spec_for_rollup(
+        query_spec=query_spec,
+        plan=plan,
+        resource_id=resource_id,
+    )
+
+
+def _rollup_table_exists(
+    *,
+    datasource_url: str,
+    schema_name: str,
+    table_name: str,
+) -> bool:
+    if not datasource_url:
+        return False
+    try:
+        with psycopg.connect(datasource_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM pg_catalog.pg_tables
+                    WHERE schemaname = %s
+                      AND tablename = %s
+                    LIMIT 1
+                    """,
+                    (schema_name, table_name),
+                )
+                return cur.fetchone() is not None
+    except Exception:
+        logger.exception(
+            "failed to resolve rollup table availability | schema=%s table=%s",
+            schema_name,
+            table_name,
+        )
+        return False
 
 
 def _to_engine_query_spec(config: WidgetConfig) -> dict[str, Any]:

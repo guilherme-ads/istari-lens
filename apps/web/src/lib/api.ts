@@ -150,6 +150,8 @@ export type ApiDatasource = {
   name: string;
   description?: string | null;
   schema_pattern?: string | null;
+  copy_policy?: "allowed" | "forbidden";
+  default_dataset_access_mode?: "direct" | "imported";
   source_type?: string;
   status?: string;
   is_active: boolean;
@@ -218,6 +220,11 @@ export type ApiDataset = {
   id: number;
   datasource_id: number;
   view_id?: number | null;
+  access_mode?: "direct" | "imported";
+  execution_datasource_id?: number | null;
+  execution_view_id?: number | null;
+  data_status?: string;
+  last_successful_sync_at?: string | null;
   name: string;
   description?: string | null;
   base_query_spec?: Record<string, unknown> | null;
@@ -231,6 +238,67 @@ export type ApiDataset = {
   view?: ApiView | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ApiDatasetImportConfig = {
+  id: number;
+  dataset_id: number;
+  refresh_mode: "full_refresh";
+  drift_policy: "block_on_breaking";
+  enabled: boolean;
+  max_runtime_seconds?: number | null;
+  state_hash?: string | null;
+  created_by_id?: number | null;
+  updated_by_id?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiDatasetSyncRun = {
+  id: number;
+  dataset_id: number;
+  trigger_type: string;
+  status: string;
+  queued_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  attempt: number;
+  published_execution_view_id?: number | null;
+  drift_summary?: Record<string, unknown> | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  input_snapshot?: Record<string, unknown>;
+  stats?: Record<string, unknown>;
+  correlation_id?: string | null;
+  coalesced?: boolean;
+};
+
+export type ApiDatasetSyncRunListResponse = {
+  items: ApiDatasetSyncRun[];
+};
+
+export type ApiDatasetSyncSchedule = {
+  id: number;
+  dataset_id: number;
+  enabled: boolean;
+  schedule_kind: "interval" | "cron";
+  cron_expr?: string | null;
+  interval_minutes?: number | null;
+  timezone: string;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  misfire_policy: "run_once" | "skip";
+  updated_by_id?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiDatasetBulkImportEnableResponse = {
+  targeted_count: number;
+  updated_count: number;
+  skipped_count: number;
+  run_enqueued_count: number;
+  skipped_items: Array<{ dataset_id: number; reason: string }>;
 };
 
 export type ApiCatalogMetric = {
@@ -298,6 +366,28 @@ export type ApiCatalogDataPreviewResponse = {
   row_count: number;
 };
 
+export type ApiCatalogResource = {
+  id: string;
+  schema_name: string;
+  resource_name: string;
+  resource_type: string;
+};
+
+export type ApiCatalogResourcesResponse = {
+  items: ApiCatalogResource[];
+};
+
+export type ApiCatalogResourceSchemaField = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+};
+
+export type ApiCatalogResourceSchemaResponse = {
+  resource_id: string;
+  fields: ApiCatalogResourceSchemaField[];
+};
+
 export type ApiCatalogMetricCreatePayload = {
   dataset_id: number;
   name: string;
@@ -349,6 +439,24 @@ export type ApiDatasetBaseQuerySpec = {
       type: "inner" | "left";
       left_resource: string;
       right_resource: string;
+      cardinality?: {
+        estimated?: {
+          value?: "1-1" | "1-N" | "N-1" | "N-N" | "indefinida";
+          method?: string;
+          sample_rows?: number;
+          sample_rows_left?: number;
+          sample_rows_right?: number;
+          sample_limit?: number;
+          sampled_at?: string;
+        };
+        actual?: {
+          value?: "1-1" | "1-N" | "N-1" | "N-N" | "indefinida";
+          method?: string;
+          left_rows?: number;
+          right_rows?: number;
+          computed_at?: string;
+        };
+      };
       on: Array<{
         left_column: string;
         right_column: string;
@@ -866,11 +974,20 @@ export const api = {
     description?: string;
     database_url: string;
     schema_pattern?: string;
+    copy_policy?: "allowed" | "forbidden";
+    default_dataset_access_mode?: "direct" | "imported";
   }) => request<ApiDatasource>("/datasources/", { method: "POST", body: JSON.stringify(payload) }),
 
   updateDatasource: (
     datasourceId: number,
-    payload: Partial<{ name: string; description: string; schema_pattern: string; is_active: boolean }>,
+    payload: Partial<{
+      name: string;
+      description: string;
+      schema_pattern: string;
+      is_active: boolean;
+      copy_policy: "allowed" | "forbidden";
+      default_dataset_access_mode: "direct" | "imported";
+    }>,
   ) => request<ApiDatasource>(`/datasources/${datasourceId}`, { method: "PATCH", body: JSON.stringify(payload) }),
 
   deleteDatasource: (datasourceId: number) => request<void>(`/datasources/${datasourceId}`, { method: "DELETE" }),
@@ -882,6 +999,7 @@ export const api = {
   createSpreadsheetImport: (payload: {
     tenant_id: number;
     name: string;
+    datasource_id?: number;
     description?: string;
     timezone?: string;
     header_row?: number;
@@ -974,6 +1092,7 @@ export const api = {
     name: string;
     description?: string;
     is_active?: boolean;
+    access_mode?: "direct" | "imported";
     view_id?: number;
     base_query_spec?: ApiDatasetBaseQuerySpec;
     semantic_columns?: Array<{
@@ -991,6 +1110,7 @@ export const api = {
       name: string;
       description: string;
       is_active: boolean;
+      access_mode: "direct" | "imported";
       view_id: number;
       base_query_spec: ApiDatasetBaseQuerySpec;
       semantic_columns: Array<{
@@ -1001,6 +1121,71 @@ export const api = {
       }>;
     }>,
   ) => request<ApiDataset>(`/datasets/${datasetId}`, { method: "PATCH", body: JSON.stringify(payload) }),
+
+  enableImportedDatasetsForDatasource: (
+    datasourceId: number,
+    payload: {
+      dataset_ids?: number[];
+      only_if_copy_policy_allowed?: boolean;
+      enqueue_initial_sync?: boolean;
+    } = {},
+  ) =>
+    request<ApiDatasetBulkImportEnableResponse>(`/datasets/datasources/${datasourceId}/import-enable`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getDatasetImportConfig: (datasetId: number) =>
+    request<ApiDatasetImportConfig>(`/datasets/${datasetId}/import-config`),
+
+  upsertDatasetImportConfig: (
+    datasetId: number,
+    payload: {
+      enabled?: boolean;
+      max_runtime_seconds?: number | null;
+    },
+  ) =>
+    request<ApiDatasetImportConfig>(`/datasets/${datasetId}/import-config`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  triggerDatasetSync: (datasetId: number, payload: { input_snapshot?: Record<string, unknown> } = {}) =>
+    request<ApiDatasetSyncRun>(`/datasets/${datasetId}/syncs`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listDatasetSyncRuns: (datasetId: number, limit = 20) =>
+    request<ApiDatasetSyncRunListResponse>(`/datasets/${datasetId}/syncs?limit=${limit}`),
+
+  getDatasetSyncRun: (datasetId: number, runId: number) =>
+    request<ApiDatasetSyncRun>(`/datasets/${datasetId}/syncs/${runId}`),
+
+  retryDatasetSyncRun: (datasetId: number, runId: number) =>
+    request<ApiDatasetSyncRun>(`/datasets/${datasetId}/syncs/${runId}/retry`, { method: "POST" }),
+
+  getDatasetSyncSchedule: (datasetId: number) =>
+    request<ApiDatasetSyncSchedule>(`/datasets/${datasetId}/sync-schedule`),
+
+  upsertDatasetSyncSchedule: (
+    datasetId: number,
+    payload: {
+      enabled: boolean;
+      schedule_kind: "interval" | "cron";
+      cron_expr?: string;
+      interval_minutes?: number;
+      timezone?: string;
+      misfire_policy?: "run_once" | "skip";
+    },
+  ) =>
+    request<ApiDatasetSyncSchedule>(`/datasets/${datasetId}/sync-schedule`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteDatasetSyncSchedule: (datasetId: number) =>
+    request<void>(`/datasets/${datasetId}/sync-schedule`, { method: "DELETE" }),
 
   deleteDataset: (datasetId: number) => request<void>(`/datasets/${datasetId}`, { method: "DELETE" }),
 
@@ -1015,6 +1200,14 @@ export const api = {
 
   previewCatalogData: (payload: ApiCatalogDataPreviewPayload) =>
     request<ApiCatalogDataPreviewResponse>("/catalog/data/preview", { method: "POST", body: JSON.stringify(payload) }),
+
+  listCatalogResources: (datasourceId: number) =>
+    request<ApiCatalogResourcesResponse>(`/catalog/resources?datasource_id=${datasourceId}`),
+
+  getCatalogResourceSchema: (resourceId: string, datasourceId: number) =>
+    request<ApiCatalogResourceSchemaResponse>(
+      `/schema/${encodeURIComponent(resourceId)}?datasource_id=${datasourceId}`,
+    ),
 
   createCatalogMetric: (payload: ApiCatalogMetricCreatePayload) =>
     request<ApiCatalogMetric>("/catalog/metrics", { method: "POST", body: JSON.stringify(payload) }),

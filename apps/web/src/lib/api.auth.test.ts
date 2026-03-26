@@ -3,18 +3,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth", () => ({
   clearAuthSession: vi.fn(),
   getAuthToken: vi.fn(),
+  isAuthTokenFresh: vi.fn(),
   setAuthSession: vi.fn(),
   updateAuthToken: vi.fn(),
   updateStoredUser: vi.fn(),
 }));
 
 import { api, ApiError } from "@/lib/api";
-import { clearAuthSession, getAuthToken, setAuthSession } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, isAuthTokenFresh, setAuthSession } from "@/lib/auth";
 
 describe("api auth behavior", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getAuthToken).mockReturnValue("fake-token");
+    vi.mocked(isAuthTokenFresh).mockReturnValue(false);
   });
 
   it("clears session and redirects to /login on 401 for authenticated requests", async () => {

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight, Search, LayoutGrid, List,
-  Layers, BarChart3, Copy, FolderOpen, Plus, Trash2,
+  Layers, BarChart3, FolderOpen, Plus, Trash2,
 } from "lucide-react";
 
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
@@ -14,11 +14,53 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCoreData } from "@/hooks/use-core-data";
-import { api, ApiDatasetBaseQuerySpec, ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
 import type { Dataset, View } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import SkeletonCard from "@/components/shared/SkeletonCard";
+
+const datasetModeLabel = (mode: Dataset["accessMode"]): string => (
+  mode === "imported" ? "Imported" : "Direct"
+);
+
+const datasetDataStatusLabel = (status: Dataset["dataStatus"]): string => {
+  switch (status) {
+    case "initializing":
+      return "Inicializando";
+    case "ready":
+      return "Pronto";
+    case "syncing":
+      return "Sincronizando";
+    case "error":
+      return "Erro";
+    case "drift_blocked":
+      return "Drift bloqueado";
+    case "paused":
+      return "Pausado";
+    case "draft":
+      return "Rascunho";
+    default:
+      return status;
+  }
+};
+
+const datasetStatusClassName = (status: Dataset["dataStatus"]): string => {
+  switch (status) {
+    case "ready":
+      return "bg-success/10 text-success";
+    case "syncing":
+    case "initializing":
+      return "bg-warning/10 text-warning";
+    case "error":
+    case "drift_blocked":
+      return "bg-destructive/10 text-destructive";
+    case "paused":
+      return "bg-muted text-muted-foreground";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+};
 
 const DatasetsPage = () => {
   const navigate = useNavigate();
@@ -59,37 +101,6 @@ const DatasetsPage = () => {
     onError: (error: unknown) => {
       const message = error instanceof ApiError ? error.detail || error.message : "Falha ao excluir dataset";
       toast({ title: "Erro ao excluir dataset", description: message, variant: "destructive" });
-    },
-  });
-
-  const duplicateDataset = useMutation({
-    mutationFn: async (dataset: Dataset) => {
-      const duplicatedName = `${dataset.name} (copia)`;
-      return api.createDataset({
-        datasource_id: Number(dataset.datasourceId),
-        name: duplicatedName,
-        description: dataset.description || "",
-        view_id: dataset.viewId ? Number(dataset.viewId) : undefined,
-        base_query_spec: (dataset.baseQuerySpec || undefined) as ApiDatasetBaseQuerySpec | undefined,
-        semantic_columns: dataset.semanticColumns.map((column) => ({
-          name: column.name,
-          type: column.type,
-          source: column.source,
-          description: column.description,
-        })),
-      });
-    },
-    onSuccess: async (payload) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["datasets"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboards"] }),
-      ]);
-      toast({ title: "Dataset duplicado", description: "Abrindo copia para edicao." });
-      navigate(`/datasets/${payload.id}/edit`);
-    },
-    onError: (error: unknown) => {
-      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao duplicar dataset";
-      toast({ title: "Erro ao duplicar dataset", description: message, variant: "destructive" });
     },
   });
 
@@ -227,7 +238,6 @@ const DatasetsPage = () => {
                     delay={i * 0.04}
                     onClick={() => navigate(`/datasets/${dataset.id}`)}
                     onDelete={isAdmin ? () => setDeleteTarget(dataset) : undefined}
-                    onDuplicate={() => duplicateDataset.mutate(dataset)}
                   />
                 ))}
               </motion.div>
@@ -247,7 +257,6 @@ const DatasetsPage = () => {
                     delay={i * 0.03}
                     onClick={() => navigate(`/datasets/${dataset.id}`)}
                     onDelete={isAdmin ? () => setDeleteTarget(dataset) : undefined}
-                    onDuplicate={() => duplicateDataset.mutate(dataset)}
                   />
                 ))}
               </motion.div>
@@ -280,14 +289,12 @@ const DatasetGridCard = ({
   delay,
   onClick,
   onDelete,
-  onDuplicate,
 }: {
   dataset: Dataset;
   views: View[];
   delay: number;
   onClick: () => void;
   onDelete?: () => void;
-  onDuplicate?: () => void;
 }) => {
   const view = views.find((v) => v.id === dataset.viewId);
   const dashboardCount = dataset.dashboardIds.length;
@@ -321,20 +328,6 @@ const DatasetGridCard = ({
         </div>
         <div className="flex items-center gap-1">
           {view && <StatusBadge status={view.status} />}
-          {onDuplicate && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDuplicate();
-              }}
-              aria-label={`Duplicar dataset ${dataset.name}`}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-          )}
           {onDelete && (
             <Button
               variant="ghost"
@@ -353,6 +346,14 @@ const DatasetGridCard = ({
       </div>
       <div className="space-y-1.5">
         <h3 className="font-bold text-foreground leading-tight">{dataset.name}</h3>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            {datasetModeLabel(dataset.accessMode)}
+          </span>
+          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${datasetStatusClassName(dataset.dataStatus)}`}>
+            {datasetDataStatusLabel(dataset.dataStatus)}
+          </span>
+        </div>
         <code className="text-caption font-mono">{sourceLabel}</code>
         <p className="text-body text-muted-foreground line-clamp-2">{dataset.description}</p>
       </div>
@@ -389,14 +390,12 @@ const DatasetListItem = ({
   delay,
   onClick,
   onDelete,
-  onDuplicate,
 }: {
   dataset: Dataset;
   views: View[];
   delay: number;
   onClick: () => void;
   onDelete?: () => void;
-  onDuplicate?: () => void;
 }) => {
   const view = views.find((v) => v.id === dataset.viewId);
   const dashboardCount = dataset.dashboardIds.length;
@@ -429,6 +428,12 @@ const DatasetListItem = ({
           <h3 className="font-bold text-foreground truncate">{dataset.name}</h3>
           <code className="text-caption font-mono hidden sm:inline">{sourceLabel}</code>
           {view && <StatusBadge status={view.status} className="hidden sm:inline-flex" />}
+          <span className="hidden sm:inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            {datasetModeLabel(dataset.accessMode)}
+          </span>
+          <span className={`hidden sm:inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${datasetStatusClassName(dataset.dataStatus)}`}>
+            {datasetDataStatusLabel(dataset.dataStatus)}
+          </span>
         </div>
         <p className="text-body text-muted-foreground truncate mt-0.5">{dataset.description}</p>
       </div>
@@ -436,20 +441,6 @@ const DatasetListItem = ({
         <span>{totalColumns} colunas</span>
         <span>{dashboardCount} dashboards</span>
       </div>
-      {onDuplicate && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDuplicate();
-          }}
-          aria-label={`Duplicar dataset ${dataset.name}`}
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
-      )}
       {onDelete && (
         <Button
           variant="ghost"

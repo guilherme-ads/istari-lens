@@ -492,6 +492,8 @@ export const mapDatasource = (item: ApiDatasource): Datasource => ({
   status: item.is_active ? "active" : "inactive",
   sourceType: item.source_type === "file_spreadsheet_import" ? "spreadsheet" : "database",
   description: item.description || "",
+  copyPolicy: item.copy_policy === "forbidden" ? "forbidden" : "allowed",
+  defaultDatasetAccessMode: item.default_dataset_access_mode === "imported" ? "imported" : "direct",
 });
 
 export const mapView = (item: ApiView): View => ({
@@ -516,6 +518,11 @@ export const mapDataset = (item: ApiDataset, dashboardIds: string[] = []): Datas
   description: item.description || "",
   viewId: item.view_id != null ? String(item.view_id) : undefined,
   baseQuerySpec: item.base_query_spec || null,
+  accessMode: item.access_mode === "imported" ? "imported" : "direct",
+  executionDatasourceId: item.execution_datasource_id != null ? String(item.execution_datasource_id) : undefined,
+  executionViewId: item.execution_view_id != null ? String(item.execution_view_id) : undefined,
+  dataStatus: (item.data_status || "ready") as Dataset["dataStatus"],
+  lastSuccessfulSyncAt: item.last_successful_sync_at ? normalizeApiDateTime(item.last_successful_sync_at) : null,
   semanticColumns: (item.semantic_columns || [])
     .filter((col) => typeof col?.name === "string" && typeof col?.type === "string")
     .map((col) => ({

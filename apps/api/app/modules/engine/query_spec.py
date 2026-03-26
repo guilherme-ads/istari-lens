@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.modules.core.legacy.models import Dataset, View
 from app.modules.core.legacy.schemas import QuerySpec
-from app.modules.datasets import compose_engine_query_spec_with_dataset
+from app.modules.datasets import compose_engine_query_spec_with_dataset, resolve_effective_access_mode
 
 
 def to_engine_query_spec(
@@ -21,13 +21,20 @@ def to_engine_query_spec(
     if view is None and dataset is None:
         raise ValueError("to_engine_query_spec requires either view or dataset")
     resolved_view = view
-    if resolved_view is None and dataset is not None:
-        resolved_view = dataset.view
-    if resolved_view is None:
+    if dataset is not None:
+        if resolve_effective_access_mode(dataset) == "imported" and dataset.execution_view is not None:
+            resolved_view = dataset.execution_view
+        elif resolved_view is None:
+            resolved_view = dataset.view
+    if dataset is None and resolved_view is None:
         raise ValueError("Dataset has no attached view and no explicit view was provided")
 
     payload: dict[str, object] = {
-        "resource_id": f"{resolved_view.schema_name}.{resolved_view.view_name}",
+        "resource_id": (
+            f"{resolved_view.schema_name}.{resolved_view.view_name}"
+            if resolved_view is not None
+            else "__dataset_base"
+        ),
         "metrics": [{"field": metric.field, "agg": metric.agg} for metric in spec.metrics],
         "dimensions": list(spec.dimensions),
         "filters": filters_payload,

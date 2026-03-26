@@ -64,6 +64,21 @@ class Settings(BaseSettings):
     import_max_columns: int = 200
     import_preview_rows: int = 50
     import_error_sample_limit: int = 200
+    dataset_sync_runtime_enabled: bool = True
+    dataset_sync_runtime_startup_delay_seconds: int = 5
+    dataset_sync_scheduler_interval_seconds: int = 30
+    dataset_sync_worker_idle_seconds: int = 3
+    dataset_sync_worker_lease_seconds: int = 300
+    dataset_sync_copy_batch_size: int = 1000
+    dataset_sync_optimize_table_enabled: bool = True
+    dataset_sync_optimize_max_indexes: int = 4
+    dataset_sync_optimize_brin_threshold_rows: int = 500_000
+    dataset_sync_optimize_cluster_enabled: bool = False
+    dataset_sync_partition_enabled: bool = True
+    dataset_sync_partition_min_rows: int = 1_000_000
+    dataset_sync_rollup_enabled: bool = True
+    dataset_sync_rollup_min_rows: int = 200_000
+    dataset_sync_rollup_max_plans: int = 24
 
     # =========================
     # Dashboard widget execution

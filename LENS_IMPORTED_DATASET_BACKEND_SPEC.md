@@ -18,6 +18,9 @@ The key constraint is product compatibility:
 - the dataset logical contract must stay stable
 - imported mode must not fork the dataset semantic model
 - existing dashboards, builder flows, catalog, and query preview must keep working
+- switching from `direct` to `imported` must be low-friction for already-created datasets
+- cutover to imported execution should happen automatically only when imported storage is ready
+- imported physical assets for one workspace should converge into one internal schema
 
 ## 2. Product Reality
 
@@ -53,6 +56,12 @@ Those stay in `dataset.base_query_spec`, which is already the canonical logical 
 5. The worker materializes the dataset logical relation into internal storage.
 6. Query execution resolves effective datasource and effective resource at runtime.
 7. v1 is intentionally narrow: simple, reliable full refresh first.
+8. Persisted `access_mode` is the desired mode; runtime computes the effective mode.
+9. `direct -> imported` cutover is automatic only after the first successful publish.
+10. Existing datasets can be bulk-enrolled into imported mode at datasource scope.
+11. Imported execution uses a workspace-level internal schema as convergence layer.
+12. Spreadsheet imports and datasource-based imports must land in the same workspace internal schema for imported-mode joins.
+13. `copy_policy=forbidden` enforces direct-only execution for datasets anchored on that datasource.
 
 ## 4. Scope
 
@@ -65,12 +74,13 @@ Those stay in `dataset.base_query_spec`, which is already the canonical logical 
 - internal metadata registration in `views` and `view_columns`
 - schema drift detection for fields referenced by the dataset logical contract
 - observability, retries, and operational controls
+- imported-mode joins between DB-origin resources and spreadsheet-origin resources inside the same workspace convergence layer
 
 ### Out of scope
 - frontend UX redesign
 - CDC / logical replication
 - free-text source SQL in v1
-- cross-datasource imports
+- direct-mode cross-source joins
 - imported-mode-specific semantic modeling separate from `base_query_spec`
 - delete reconciliation and merge/upsert semantics in v1
 
@@ -98,10 +108,42 @@ Imported mode introduces a separate execution binding:
 
 This binding is operational, not semantic.
 
-## 5.3 Core Principle
+## 5.3 Desired Mode vs Effective Mode
+`datasets.access_mode` is the desired execution mode selected by product/API.
+
+Runtime derives an `effective_access_mode`:
+
+- effective `direct` when:
+  - `access_mode=direct`, or
+  - `access_mode=imported` but imported execution is not publish-ready yet
+- effective `imported` when:
+  - `access_mode=imported`, and
+  - a successful sync has produced a valid published binding
+
+This enables non-breaking cutover:
+
+- user or operator can request imported mode first
+- worker materializes in background
+- runtime keeps serving direct queries until imported binding is ready
+- once ready, runtime automatically switches to imported execution
+
+## 5.4 Core Principle
 `base_query_spec` is persisted as the logical contract.
 
 For imported datasets, the API builds an execution-time query spec over the internal published resource. That derived execution spec is transient and must not overwrite the persisted logical `base_query_spec`.
+
+## 5.5 Source vs Dataset Responsibility
+- `datasource` is the origin registry:
+  - credentials
+  - ownership/workspace anchor
+  - policy (`copy_policy`)
+  - defaults for dataset mode
+- `dataset` is the semantic and execution unit:
+  - logical definition (`base_query_spec` / `view_id`)
+  - imported materialization lifecycle (sync/schedule/runs)
+  - runtime execution binding (`execution_datasource_id`, `execution_view_id`)
+
+Dashboards continue to depend only on dataset contract and do not branch by source kind.
 
 ## 6. Target Architecture
 
@@ -166,6 +208,7 @@ Notes:
 - `datasource_id` remains the origin datasource.
 - `view_id` remains a legacy logical reference only.
 - `execution_view_id` is the runtime binding for imported execution.
+- `error` means the latest sync attempt failed; it does not by itself clear the last successfully published binding.
 
 ## 7.3 New datasource column
 
@@ -174,8 +217,17 @@ Notes:
   - `allowed`
   - `forbidden`
   - default: `allowed`
+- `default_dataset_access_mode` enum:
+  - `direct`
+  - `imported`
+  - default: `direct`
 
-This is the policy gate for imported mode.
+These columns define imported-mode policy and datasource defaults.
+
+Notes:
+
+- `default_dataset_access_mode` applies to newly created datasets for that datasource.
+- Existing datasets are not rewritten implicitly by this column alone; bulk migration is explicit and auditable.
 
 ## 7.4 New tables
 
@@ -280,7 +332,26 @@ v1 intentionally does not introduce checkpoints because refresh is full snapshot
 4. Preserve the same semantic column names exposed by the logical dataset.
 5. Execute against the internal datasource.
 
-## 8.3 Important Rule
+## 8.3 Effective mode resolution
+Runtime must resolve effective execution from dataset state, not only from persisted `access_mode`.
+
+Recommended rule:
+
+- if `access_mode=direct`, execute `direct`
+- if `access_mode=imported` and all of the following are true:
+  - `execution_datasource_id` is set
+  - `execution_view_id` is set
+  - `last_successful_sync_at` is not null
+  - `data_status` is not `draft`
+  - `data_status` is not `initializing`
+  - `data_status` is not `drift_blocked`
+  - `data_status` is not `paused`
+  then execute `imported`
+- otherwise execute `direct`
+
+This preserves availability during first import and during reconfiguration before a new publish is ready, while also preserving the last published imported binding across transient sync failures.
+
+## 8.4 Important Rule
 For imported mode, runtime may derive a transient execution query spec, but it must not overwrite the persisted logical `dataset.base_query_spec`.
 
 ## 9. Materialization Model
@@ -293,19 +364,28 @@ The worker materializes the result of the dataset logical relation defined by:
 
 The published internal resource must expose the same semantic column names used by the product.
 
-## 9.2 Internal naming
+For imported execution, the logical relation may include:
+- one or more DB-origin resources
+- one or more spreadsheet-origin resources
+- joins among those resources
+
+## 9.2 Workspace convergence schema
 - schema:
-  `lens_imp_t{tenant_id}`
-- physical load table:
-  `ds_{dataset_id}__load_{run_id}`
+  `lens_imp_t{workspace_id}`
+- physical load tables (A/B slots):
+  `ds_{dataset_id}__slot_a`
+  `ds_{dataset_id}__slot_b`
 - published stable view:
   `ds_{dataset_id}`
 
 Recommendation:
 
 - publish through a stable internal SQL view
-- allow the worker to atomically swap the underlying physical table
+- allow the worker to atomically swap between two fixed underlying slot tables (A/B)
 - keep `execution_view_id` bound to the stable published view
+- avoid unbounded storage growth from one-table-per-run materialization
+
+All imported physical assets for the workspace must be stored under this schema, including tables originating from spreadsheet imports.
 
 ## 9.3 Metadata sync
 After publish, worker must ensure corresponding rows exist and are updated in:
@@ -322,21 +402,29 @@ This keeps current validation and engine integration patterns reusable.
 ## 10.1 Initial sync
 1. Validate imported mode is allowed for the origin datasource.
 2. Validate dataset logical definition.
-3. Resolve the logical dataset relation.
+3. Resolve the logical dataset relation graph (including joins).
 4. Infer resulting schema.
 5. Compare with last published schema snapshot.
 6. If breaking drift is detected, stop and mark `drift_blocked`.
-7. Create load table in internal store.
-8. Extract rows from origin and load into internal store.
+7. Create/load target slot table in workspace internal schema.
+8. Extract rows from logical resources and load the resulting relation into internal store.
 9. Publish or swap the stable internal view.
 10. Sync `views` and `view_columns` metadata.
 11. Update `execution_datasource_id` and `execution_view_id`.
 12. Refresh `semantic_columns` if the logical contract changed as part of an approved config update.
 13. Regenerate catalog metadata if needed.
 14. Mark run `success` and dataset `ready`.
+15. Automatic cutover starts here:
+    - if `access_mode=imported`, runtime now resolves the dataset to effective `imported`
+    - no explicit per-dataset manual publish step is required in v1
 
 ## 10.2 Recurring sync
 Same flow as initial sync, still full refresh in v1.
+
+Additional rule:
+
+- if a recurring sync fails after at least one successful publish already exists, Lens keeps the last published imported binding active
+- runtime does not automatically cut traffic back to `direct` on a transient refresh failure
 
 ## 10.3 Why full refresh first
 This matches the current product better because it avoids:
@@ -385,7 +473,11 @@ Rules:
   - `view_id`, or
   - `base_query_spec`
 - imported creation is rejected if origin datasource has `copy_policy=forbidden`
+- direct creation must reject logical resources that depend on spreadsheet-origin imported resources
 - imported creation stores the logical dataset first and enqueues an initial sync
+- imported creation does not block reads:
+  - until the first successful sync publishes a valid binding, effective execution remains `direct`
+  - after the first successful sync, effective execution switches automatically to `imported`
 
 ## 12.2 Dataset update
 
@@ -402,6 +494,39 @@ Rules:
 - `direct -> imported` requires valid import config and queues initial sync
 - `imported -> direct` clears execution binding, disables schedule, keeps history
 - changing the logical dataset definition on an imported dataset invalidates the current published binding until a new successful sync completes
+- while the new binding is not ready, runtime falls back to effective `direct`
+
+Join eligibility rules:
+
+- if any logical resource is spreadsheet-origin, dataset execution mode must be imported
+- if dataset execution mode is direct, only direct-origin resources from its datasource are valid
+- imported-mode joins can combine DB-origin resources and spreadsheet-origin resources, as long as resources belong to the same workspace convergence layer
+
+### `POST /datasources/{id}/datasets/import-enable`
+Bulk-enroll existing datasets from one datasource into imported mode.
+
+Request options:
+
+- `dataset_ids` optional:
+  - if omitted, target all eligible datasets in the datasource
+- `only_if_copy_policy_allowed` default `true`
+- `enqueue_initial_sync` default `true`
+
+Behavior:
+
+- set `access_mode=imported` for each targeted eligible dataset
+- create default `dataset_import_config` where missing
+- enqueue initial sync where no published binding exists yet
+- do not require per-dataset manual edit
+- cutover still happens per dataset only after that dataset's first successful sync
+
+Response shape should include:
+
+- `targeted_count`
+- `updated_count`
+- `skipped_count`
+- `run_enqueued_count`
+- per-dataset skip reasons where relevant
 
 ## 12.3 Import config
 - `GET /datasets/{id}/import-config`
@@ -446,6 +571,7 @@ Required refactor:
 - introduce a single resolver such as `resolve_effective_dataset_access(dataset)`
 - direct mode returns origin datasource context
 - imported mode returns internal datasource context plus published execution view
+- resolver must also return the logical authorization/workspace context anchored on the original dataset ownership, not on the internal Lens datasource
 
 ## 14. Worker and Scheduler
 
@@ -491,7 +617,10 @@ Required refactor:
 Rules:
 
 - direct datasets continue to behave as today
-- imported datasets may only execute from internal storage when `data_status=ready`
+- imported datasets may only execute from internal storage when effective mode resolves to `imported`
+- `access_mode=imported` does not by itself guarantee imported execution
+- a dataset with an already-published imported binding may stay effectively `imported` during `syncing` or `error`
+- direct-mode datasets cannot execute joins that require spreadsheet-origin resources
 
 ## 16. Security and Compliance
 
@@ -571,6 +700,14 @@ Propagate request correlation id from API to worker and engine calls.
 11. Updating the logical dataset definition for an imported dataset requires a new successful sync before imported execution becomes ready again.
 12. Existing direct datasets and dashboards continue without regression.
 13. Credentials do not appear in API responses, logs, or run error details.
+14. Setting `access_mode=imported` on an existing dataset does not interrupt reads before the first successful sync.
+15. After the first successful sync of a dataset with `access_mode=imported`, runtime automatically switches that dataset to effective imported execution.
+16. A datasource-scoped bulk-enrollment operation can mark existing datasets as `imported` and enqueue their initial sync without per-dataset edits.
+17. Authorization and sharing continue to be evaluated from the logical dataset ownership/workspace context even when execution uses the internal datasource.
+18. Imported physical assets for a workspace are created under one internal schema (`lens_imp_t{workspace_id}`).
+19. Multiple datasets over the same logical origin relation still materialize independently by dataset id.
+20. An imported dataset may join DB-origin and spreadsheet-origin resources and materialize one unified dataset result.
+21. A dataset anchored on a datasource with `copy_policy=forbidden` cannot transition to imported and cannot execute spreadsheet-dependent joins.
 
 ## 20. Recommended Defaults
 

@@ -69,6 +69,8 @@ class DataSource(Base):
     source_type = Column(String(64), nullable=False, default="postgres_external", index=True)
     tenant_id = Column(Integer, nullable=True, index=True)
     status = Column(String(32), nullable=False, default="active", index=True)
+    copy_policy = Column(String(16), nullable=False, default="allowed", index=True)
+    default_dataset_access_mode = Column(String(16), nullable=False, default="direct", index=True)
     is_active = Column(Boolean, default=True, index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -77,7 +79,12 @@ class DataSource(Base):
     
     created_by_user = relationship("User", back_populates="datasources")
     views = relationship("View", back_populates="datasource", cascade="all, delete-orphan")
-    datasets = relationship("Dataset", back_populates="datasource", cascade="all, delete-orphan")
+    datasets = relationship(
+        "Dataset",
+        back_populates="datasource",
+        cascade="all, delete-orphan",
+        foreign_keys="Dataset.datasource_id",
+    )
     spreadsheet_imports = relationship(
         "SpreadsheetImport",
         back_populates="datasource",
@@ -99,7 +106,12 @@ class View(Base):
     
     datasource = relationship("DataSource", back_populates="views")
     columns = relationship("ViewColumn", back_populates="view", cascade="all, delete-orphan")
-    datasets = relationship("Dataset", back_populates="view", cascade="all, delete-orphan")
+    datasets = relationship(
+        "Dataset",
+        back_populates="view",
+        cascade="all, delete-orphan",
+        foreign_keys="Dataset.view_id",
+    )
     
     __table_args__ = (
         Index("view_datasource_schema_name_idx", "datasource_id", "schema_name", "view_name"),
@@ -128,6 +140,12 @@ class Dataset(Base):
     id = Column(Integer, primary_key=True, index=True)
     datasource_id = Column(Integer, ForeignKey("datasources.id"), nullable=False)
     view_id = Column(Integer, ForeignKey("views.id"), nullable=True)
+    access_mode = Column(String(16), nullable=False, default="direct", index=True)
+    execution_datasource_id = Column(Integer, ForeignKey("datasources.id"), nullable=True, index=True)
+    execution_view_id = Column(Integer, ForeignKey("views.id"), nullable=True, index=True)
+    data_status = Column(String(32), nullable=False, default="ready", index=True)
+    last_successful_sync_at = Column(DateTime, nullable=True)
+    last_sync_run_id = Column(Integer, nullable=True, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     base_query_spec = Column(JSON, nullable=True)
@@ -136,12 +154,22 @@ class Dataset(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    datasource = relationship("DataSource", back_populates="datasets")
-    view = relationship("View", back_populates="datasets")
+    datasource = relationship("DataSource", back_populates="datasets", foreign_keys=[datasource_id])
+    execution_datasource = relationship("DataSource", foreign_keys=[execution_datasource_id])
+    view = relationship("View", back_populates="datasets", foreign_keys=[view_id])
+    execution_view = relationship("View", foreign_keys=[execution_view_id])
     dashboards = relationship("Dashboard", back_populates="dataset", cascade="all, delete-orphan")
     email_shares = relationship("DatasetEmailShare", back_populates="dataset", cascade="all, delete-orphan")
     metrics = relationship("Metric", back_populates="dataset", cascade="all, delete-orphan")
     dimensions = relationship("Dimension", back_populates="dataset", cascade="all, delete-orphan")
+    import_config = relationship("DatasetImportConfig", back_populates="dataset", cascade="all, delete-orphan", uselist=False)
+    sync_schedule = relationship("DatasetSyncSchedule", back_populates="dataset", cascade="all, delete-orphan", uselist=False)
+    sync_runs = relationship(
+        "DatasetSyncRun",
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+        foreign_keys="DatasetSyncRun.dataset_id",
+    )
 
     __table_args__ = (
         Index("dataset_datasource_idx", "datasource_id"),
@@ -170,6 +198,72 @@ class Metric(Base):
     __table_args__ = (
         Index("metrics_dataset_name_idx", "dataset_id", "name", unique=True),
     )
+
+
+class DatasetImportConfig(Base):
+    __tablename__ = "dataset_import_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    refresh_mode = Column(String(32), nullable=False, default="full_refresh")
+    drift_policy = Column(String(32), nullable=False, default="block_on_breaking")
+    enabled = Column(Boolean, nullable=False, default=True)
+    max_runtime_seconds = Column(Integer, nullable=True)
+    state_hash = Column(String(128), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dataset = relationship("Dataset", back_populates="import_config")
+
+
+class DatasetSyncSchedule(Base):
+    __tablename__ = "dataset_sync_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    schedule_kind = Column(String(16), nullable=False, default="interval")
+    cron_expr = Column(String(128), nullable=True)
+    interval_minutes = Column(Integer, nullable=True)
+    timezone = Column(String(64), nullable=False, default="UTC")
+    next_run_at = Column(DateTime, nullable=True, index=True)
+    last_run_at = Column(DateTime, nullable=True)
+    misfire_policy = Column(String(16), nullable=False, default="run_once")
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dataset = relationship("Dataset", back_populates="sync_schedule")
+
+
+class DatasetSyncRun(Base):
+    __tablename__ = "dataset_sync_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    trigger_type = Column(String(16), nullable=False, default="manual")
+    status = Column(String(16), nullable=False, default="queued", index=True)
+    queued_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    attempt = Column(Integer, nullable=False, default=1)
+    worker_id = Column(String(128), nullable=True)
+    lock_expires_at = Column(DateTime, nullable=True, index=True)
+    input_snapshot = Column(JSON, nullable=False, default=dict)
+    stats = Column(JSON, nullable=False, default=dict)
+    published_execution_view_id = Column(Integer, ForeignKey("views.id"), nullable=True)
+    drift_summary = Column(JSON, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    error_details = Column(JSON, nullable=True)
+    correlation_id = Column(String(128), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    dataset = relationship("Dataset", back_populates="sync_runs", foreign_keys=[dataset_id])
+    published_execution_view = relationship("View", foreign_keys=[published_execution_view_id])
 
 
 class Dimension(Base):
