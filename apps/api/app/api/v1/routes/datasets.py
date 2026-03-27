@@ -60,7 +60,7 @@ from app.modules.auth.adapters.api.dependencies import get_current_user, get_cur
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 logger = logging.getLogger(__name__)
-_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SQL_IDENTIFIER_RE = re.compile(r"^(?!\d)\w+$", re.UNICODE)
 _JOIN_CARDINALITY_SAMPLE_LIMIT = 50000
 
 
@@ -74,7 +74,7 @@ def _to_psycopg_url(url: str) -> str:
 
 def _normalize_identifier(raw_value: str) -> str:
     value = str(raw_value or "").strip().strip('"')
-    if not value or not _SAFE_IDENTIFIER_RE.match(value):
+    if not value or not _SQL_IDENTIFIER_RE.match(value):
         raise ValueError(f"Invalid identifier: {raw_value!r}")
     return value
 

@@ -43,6 +43,7 @@ _ACTIVE_RUN_STATUSES = {"queued", "running"}
 _INTERNAL_IMPORT_SOURCE_TYPE = "postgres_internal_import"
 _SIMPLE_CRON_MINUTES_RE = re.compile(r"^\s*\*/(\d+)\s+\*\s+\*\s+\*\s+\*\s*$")
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SQL_IDENTIFIER_RE = re.compile(r"^(?!\d)\w+$", re.UNICODE)
 _IMPORT_SLOT_A = "a"
 _IMPORT_SLOT_B = "b"
 _LEGACY_LOAD_TABLE_RE = re.compile(r"^ds_(\d+)__load_(\d+)$")
@@ -115,7 +116,8 @@ def _parse_simple_cron_minutes(expr: str | None) -> int | None:
 
 def _normalize_identifier(raw_value: str) -> str:
     value = str(raw_value or "").strip().strip('"')
-    if not value or not _SAFE_IDENTIFIER_RE.match(value):
+    # Postgres quoted identifiers may include unicode letters (e.g. "contribuição").
+    if not value or not _SQL_IDENTIFIER_RE.match(value):
         raise ValueError(f"Invalid identifier: {raw_value!r}")
     return value
 
