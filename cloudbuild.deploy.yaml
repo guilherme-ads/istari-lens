@@ -129,7 +129,7 @@ substitutions:
   _API_PORT: "8000"
   _WEB_PORT: "3000"
   _ENGINE_PORT: "8010"
-  _INSTANCE_CONNECTION_NAME: ""
+  _INSTANCE_CONNECTION_NAME: "project:region:app-pg,project:region:lens-analytics-pg"
   _APP_CORS_ORIGINS: ""
   _ENGINE_ANALYTICS_DB_URL_SECRET: lens-api-analytics-db-url
   _ENGINE_SERVICE_SECRET_SECRET: lens-api-engine-service-secret
