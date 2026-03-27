@@ -1301,6 +1301,18 @@ class DatasetSyncWorkerService:
             db.commit()
             return
 
+        if run.status == "canceled":
+            run.finished_at = run.finished_at or _utcnow()
+            run.lock_expires_at = None
+            if dataset.import_config is not None and not bool(dataset.import_config.enabled):
+                dataset.data_status = "paused"
+            elif has_published_import_binding(dataset):
+                dataset.data_status = "ready"
+            else:
+                dataset.data_status = "initializing"
+            db.commit()
+            return
+
         if str(dataset.access_mode or "direct").strip().lower() != "imported":
             run.status = "skipped"
             run.finished_at = _utcnow()
@@ -1323,6 +1335,18 @@ class DatasetSyncWorkerService:
 
         try:
             result = self._materialize_imported_dataset(db=db, dataset=dataset, run=run)
+            db.refresh(run)
+            if run.status == "canceled":
+                run.finished_at = run.finished_at or _utcnow()
+                run.lock_expires_at = None
+                if dataset.import_config is not None and not bool(dataset.import_config.enabled):
+                    dataset.data_status = "paused"
+                elif has_published_import_binding(dataset):
+                    dataset.data_status = "ready"
+                else:
+                    dataset.data_status = "initializing"
+                db.commit()
+                return
             now = _utcnow()
             run.status = "success"
             run.finished_at = now

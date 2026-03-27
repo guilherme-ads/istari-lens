@@ -277,6 +277,38 @@ export type ApiDatasetSyncRunListResponse = {
   items: ApiDatasetSyncRun[];
 };
 
+export type ApiAdminDatasetSyncRun = {
+  id: number;
+  dataset_id: number;
+  dataset_name: string;
+  dataset_access_mode: string;
+  dataset_data_status: string;
+  datasource_id: number;
+  datasource_name: string;
+  import_enabled: boolean;
+  trigger_type: string;
+  status: string;
+  queued_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  attempt: number;
+  published_execution_view_id?: number | null;
+  drift_summary?: Record<string, unknown> | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  error_details?: Record<string, unknown> | null;
+  input_snapshot?: Record<string, unknown>;
+  stats?: Record<string, unknown>;
+  correlation_id?: string | null;
+};
+
+export type ApiAdminDatasetSyncRunListResponse = {
+  items: ApiAdminDatasetSyncRun[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type ApiDatasetSyncSchedule = {
   id: number;
   dataset_id: number;
@@ -1171,11 +1203,36 @@ export const api = {
   listDatasetSyncRuns: (datasetId: number, limit = 20) =>
     request<ApiDatasetSyncRunListResponse>(`/datasets/${datasetId}/syncs?limit=${limit}`),
 
+  listAdminDatasetSyncRuns: (payload: {
+    status?: string;
+    dataset_id?: number;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (payload.status) query.set("status", payload.status);
+    if (typeof payload.dataset_id === "number") query.set("dataset_id", String(payload.dataset_id));
+    if (payload.search) query.set("search", payload.search);
+    query.set("limit", String(payload.limit || 50));
+    query.set("offset", String(payload.offset || 0));
+    return request<ApiAdminDatasetSyncRunListResponse>(`/datasets/admin/syncs?${query.toString()}`);
+  },
+
   getDatasetSyncRun: (datasetId: number, runId: number) =>
     request<ApiDatasetSyncRun>(`/datasets/${datasetId}/syncs/${runId}`),
 
   retryDatasetSyncRun: (datasetId: number, runId: number) =>
     request<ApiDatasetSyncRun>(`/datasets/${datasetId}/syncs/${runId}/retry`, { method: "POST" }),
+
+  cancelAdminDatasetSyncRun: (runId: number) =>
+    request<ApiDatasetSyncRun>(`/datasets/admin/syncs/${runId}/cancel`, { method: "POST" }),
+
+  pauseAdminDatasetSync: (datasetId: number) =>
+    request<ApiDatasetImportConfig>(`/datasets/admin/datasets/${datasetId}/pause-sync`, { method: "POST" }),
+
+  resumeAdminDatasetSync: (datasetId: number) =>
+    request<ApiDatasetImportConfig>(`/datasets/admin/datasets/${datasetId}/resume-sync`, { method: "POST" }),
 
   getDatasetSyncSchedule: (datasetId: number) =>
     request<ApiDatasetSyncSchedule>(`/datasets/${datasetId}/sync-schedule`),

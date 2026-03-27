@@ -19,6 +19,7 @@ const DatasetCanvas = lazy(() => import("./pages/DatasetCanvas"));
 const DashboardsPage = lazy(() => import("./pages/DashboardsPage"));
 const DatasetDetailPage = lazy(() => import("./pages/DatasetDetailPage"));
 const DatasetsPage = lazy(() => import("./pages/DatasetsPage"));
+const DatasetSyncHistoryPage = lazy(() => import("./pages/DatasetSyncHistoryPage"));
 const HomePage = lazy(() => import("./pages/HomePage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -98,6 +99,7 @@ const App = () => {
                 <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
                   <Route path="/home" element={withInLayoutSuspense(<OverviewPage />)} />
                   <Route path="/datasets" element={withInLayoutSuspense(<DatasetsPage />)} />
+                  <Route path="/datasets/syncs" element={withInLayoutSuspense(<RequireAdmin><DatasetSyncHistoryPage /></RequireAdmin>)} />
                   <Route path="/datasets/new" element={withInLayoutSuspense(<DatasetCanvas />)} />
                   <Route path="/datasets/:datasetId/edit" element={withInLayoutSuspense(<DatasetCanvas />)} />
                   <Route path="/dashboards" element={withInLayoutSuspense(<DashboardsPage />)} />

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight, Search, LayoutGrid, List,
-  Layers, BarChart3, FolderOpen, Plus, Trash2,
+  Layers, BarChart3, FolderOpen, Plus, Trash2, Activity,
 } from "lucide-react";
 
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
@@ -119,6 +119,15 @@ const DatasetsPage = () => {
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {isAdmin ? (
+              <Button
+                variant="outline"
+                onClick={() => navigate("/datasets/syncs")}
+              >
+                <Activity className="h-4 w-4 mr-2" />
+                Historico de Syncs
+              </Button>
+            ) : null}
             <Button
               className="bg-accent text-accent-foreground hover:bg-accent/90"
               onClick={() => navigate("/datasets/new")}

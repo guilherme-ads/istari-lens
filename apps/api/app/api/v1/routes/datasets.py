@@ -6,7 +6,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import psycopg
 from psycopg import sql
-from sqlalchemy import func, or_
+from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session
 from typing import Any, List
 
@@ -38,6 +38,8 @@ from app.modules.datasets import (
     validate_and_resolve_base_query_spec,
 )
 from app.modules.core.legacy.schemas import (
+    AdminDatasetSyncRunListResponse,
+    AdminDatasetSyncRunResponse,
     DatasetBulkImportEnableRequest,
     DatasetBulkImportEnableResponse,
     DatasetBulkImportEnableSkipItem,
@@ -425,6 +427,47 @@ def _to_sync_run_response(run: DatasetSyncRun, *, coalesced: bool = False) -> Da
     payload = DatasetSyncRunResponse.model_validate(run)
     payload.coalesced = coalesced
     return payload
+
+
+def _to_admin_sync_run_response(
+    *,
+    run: DatasetSyncRun,
+    dataset: Dataset,
+    datasource: DataSource,
+    import_enabled: bool,
+) -> AdminDatasetSyncRunResponse:
+    return AdminDatasetSyncRunResponse(
+        id=int(run.id),
+        dataset_id=int(run.dataset_id),
+        dataset_name=str(dataset.name or ""),
+        dataset_access_mode=str(dataset.access_mode or "direct"),
+        dataset_data_status=str(dataset.data_status or "ready"),
+        datasource_id=int(datasource.id),
+        datasource_name=str(datasource.name or ""),
+        import_enabled=bool(import_enabled),
+        trigger_type=str(run.trigger_type or "manual"),
+        status=str(run.status or "queued"),
+        queued_at=run.queued_at,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        attempt=int(run.attempt or 1),
+        published_execution_view_id=run.published_execution_view_id,
+        drift_summary=run.drift_summary if isinstance(run.drift_summary, dict) else None,
+        error_code=run.error_code,
+        error_message=run.error_message,
+        error_details=run.error_details if isinstance(run.error_details, dict) else None,
+        input_snapshot=run.input_snapshot if isinstance(run.input_snapshot, dict) else {},
+        stats=run.stats if isinstance(run.stats, dict) else {},
+        correlation_id=run.correlation_id,
+    )
+
+
+def _resolve_dataset_idle_status(dataset: Dataset) -> str:
+    if dataset.import_config is not None and not bool(dataset.import_config.enabled):
+        return "paused"
+    if has_published_import_binding(dataset):
+        return "ready"
+    return "initializing"
 
 
 def _find_active_sync_run(*, db: Session, dataset_id: int) -> DatasetSyncRun | None:
@@ -816,6 +859,156 @@ async def upsert_dataset_import_config(
     config.enabled = request.enabled
     config.max_runtime_seconds = request.max_runtime_seconds
     config.updated_by_id = int(current_user.id)
+    db.commit()
+    db.refresh(config)
+    return DatasetImportConfigResponse.model_validate(config)
+
+
+@router.get("/admin/syncs", response_model=AdminDatasetSyncRunListResponse)
+async def list_admin_dataset_sync_runs(
+    status_filter: str | None = Query(default=None, alias="status"),
+    dataset_id: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    del current_user
+    query = (
+        db.query(DatasetSyncRun, Dataset, DataSource, DatasetImportConfig.enabled)
+        .join(Dataset, Dataset.id == DatasetSyncRun.dataset_id)
+        .join(DataSource, DataSource.id == Dataset.datasource_id)
+        .outerjoin(DatasetImportConfig, DatasetImportConfig.dataset_id == Dataset.id)
+    )
+    if dataset_id is not None:
+        query = query.filter(Dataset.id == dataset_id)
+    if status_filter:
+        raw_statuses = [item.strip() for item in status_filter.split(",")]
+        statuses = [item for item in raw_statuses if item]
+        if statuses:
+            query = query.filter(DatasetSyncRun.status.in_(statuses))
+    if search:
+        like = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                Dataset.name.ilike(like),
+                DataSource.name.ilike(like),
+                DatasetSyncRun.error_message.ilike(like),
+                DatasetSyncRun.correlation_id.ilike(like),
+            )
+        )
+
+    total = query.with_entities(func.count(DatasetSyncRun.id)).scalar() or 0
+    rows = (
+        query.order_by(desc(DatasetSyncRun.queued_at), desc(DatasetSyncRun.id))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AdminDatasetSyncRunListResponse(
+        items=[
+            _to_admin_sync_run_response(
+                run=run,
+                dataset=dataset,
+                datasource=datasource,
+                import_enabled=bool(import_enabled) if import_enabled is not None else True,
+            )
+            for run, dataset, datasource, import_enabled in rows
+        ],
+        total=int(total),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post("/admin/syncs/{run_id}/cancel", response_model=DatasetSyncRunResponse)
+async def cancel_admin_dataset_sync_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    run = db.query(DatasetSyncRun).filter(DatasetSyncRun.id == run_id).first()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Dataset sync run not found")
+    if run.status not in _ACTIVE_SYNC_RUN_STATUSES:
+        raise HTTPException(status_code=409, detail="Dataset sync run is not active")
+
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=int(run.dataset_id))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    run.status = "canceled"
+    run.finished_at = datetime.utcnow()
+    run.lock_expires_at = None
+    run.error_code = "cancel_requested"
+    run.error_message = f"Sync canceled by admin user #{int(current_user.id)}"
+    run.error_details = {
+        "canceled_by_user_id": int(current_user.id),
+        "canceled_at": datetime.utcnow().isoformat(),
+    }
+    dataset.data_status = _resolve_dataset_idle_status(dataset)
+    db.commit()
+    db.refresh(run)
+    return _to_sync_run_response(run, coalesced=False)
+
+
+@router.post("/admin/datasets/{dataset_id}/pause-sync", response_model=DatasetImportConfigResponse)
+async def pause_admin_dataset_sync(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    _ensure_dataset_import_mode(dataset)
+    config = _ensure_import_config(db=db, dataset=dataset, actor_user_id=int(current_user.id))
+    config.enabled = False
+    config.updated_by_id = int(current_user.id)
+
+    now = datetime.utcnow()
+    active_runs = (
+        db.query(DatasetSyncRun)
+        .filter(
+            and_(
+                DatasetSyncRun.dataset_id == dataset.id,
+                DatasetSyncRun.status.in_(list(_ACTIVE_SYNC_RUN_STATUSES)),
+            )
+        )
+        .all()
+    )
+    for run in active_runs:
+        run.status = "canceled"
+        run.finished_at = now
+        run.lock_expires_at = None
+        run.error_code = "paused_by_operator"
+        run.error_message = f"Sync canceled because dataset was paused by admin user #{int(current_user.id)}"
+        run.error_details = {
+            "paused_by_user_id": int(current_user.id),
+            "paused_at": now.isoformat(),
+        }
+
+    dataset.data_status = "paused"
+    db.commit()
+    db.refresh(config)
+    return DatasetImportConfigResponse.model_validate(config)
+
+
+@router.post("/admin/datasets/{dataset_id}/resume-sync", response_model=DatasetImportConfigResponse)
+async def resume_admin_dataset_sync(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    dataset = load_dataset_with_access_relations(db=db, dataset_id=dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    _ensure_dataset_import_mode(dataset)
+    config = _ensure_import_config(db=db, dataset=dataset, actor_user_id=int(current_user.id))
+    config.enabled = True
+    config.updated_by_id = int(current_user.id)
+    dataset.data_status = _resolve_dataset_idle_status(dataset)
     db.commit()
     db.refresh(config)
     return DatasetImportConfigResponse.model_validate(config)
