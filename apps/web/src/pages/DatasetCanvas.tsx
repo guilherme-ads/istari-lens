@@ -2601,7 +2601,7 @@ const DatasetCanvas = () => {
                             <Button
                               type="button"
                               size="sm"
-                              className="h-8 w-full gap-1.5 bg-primary text-xs font-medium text-white dark:text-black hover:bg-primary/90"
+                              className="h-8 w-full gap-1.5 bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90"
                               disabled={!importConfigQuery.data?.enabled || triggerSyncMutation.isPending}
                               onClick={() => triggerSyncMutation.mutate()}
                             >
@@ -2676,7 +2676,7 @@ const DatasetCanvas = () => {
                               <Button
                                 type="button"
                                 size="sm"
-                                className="h-7 w-full bg-primary text-[10px] font-medium text-white dark:text-black hover:bg-primary/90"
+                                className="h-7 w-full bg-primary text-[10px] font-medium text-primary-foreground hover:bg-primary/90"
                                 onClick={() => saveSyncScheduleMutation.mutate()}
                                 disabled={saveSyncScheduleMutation.isPending}
                               >
