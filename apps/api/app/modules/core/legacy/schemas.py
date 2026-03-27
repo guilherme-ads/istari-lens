@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 from typing import Any, List, Optional, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.modules.widgets.domain.config import FilterConfig, WidgetConfig, WidgetType
 
@@ -83,6 +84,11 @@ class DatasetResponse(BaseModel):
     id: int
     datasource_id: int
     view_id: Optional[int] = None
+    access_mode: Literal["direct", "imported"] = "direct"
+    execution_datasource_id: Optional[int] = None
+    execution_view_id: Optional[int] = None
+    data_status: str = "ready"
+    last_successful_sync_at: Optional[datetime] = None
     name: str
     description: Optional[str]
     base_query_spec: Optional[dict[str, Any]] = None
@@ -141,6 +147,7 @@ class AdminUserResetPasswordRequest(BaseModel):
 class DatasetCreateRequest(BaseModel):
     datasource_id: int
     view_id: Optional[int] = None
+    access_mode: Optional[Literal["direct", "imported"]] = None
     name: str
     description: Optional[str] = None
     base_query_spec: Optional[dict[str, Any]] = None
@@ -158,9 +165,123 @@ class DatasetUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     view_id: Optional[int] = None
+    access_mode: Optional[Literal["direct", "imported"]] = None
     base_query_spec: Optional[dict[str, Any]] = None
     semantic_columns: Optional[List[dict[str, Any]]] = None
     is_active: Optional[bool] = None
+
+
+class DatasetBulkImportEnableRequest(BaseModel):
+    dataset_ids: Optional[List[int]] = None
+    only_if_copy_policy_allowed: bool = True
+    enqueue_initial_sync: bool = True
+
+
+class DatasetBulkImportEnableSkipItem(BaseModel):
+    dataset_id: int
+    reason: str
+
+
+class DatasetBulkImportEnableResponse(BaseModel):
+    targeted_count: int
+    updated_count: int
+    skipped_count: int
+    run_enqueued_count: int
+    skipped_items: List[DatasetBulkImportEnableSkipItem] = Field(default_factory=list)
+
+
+class DatasetImportConfigUpsertRequest(BaseModel):
+    enabled: bool = True
+    max_runtime_seconds: Optional[int] = Field(default=None, ge=1)
+
+
+class DatasetImportConfigResponse(BaseModel):
+    id: int
+    dataset_id: int
+    refresh_mode: Literal["full_refresh"] = "full_refresh"
+    drift_policy: Literal["block_on_breaking"] = "block_on_breaking"
+    enabled: bool = True
+    max_runtime_seconds: Optional[int] = None
+    state_hash: Optional[str] = None
+    created_by_id: Optional[int] = None
+    updated_by_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetSyncRunCreateRequest(BaseModel):
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class DatasetSyncRunResponse(BaseModel):
+    id: int
+    dataset_id: int
+    trigger_type: str
+    status: str
+    queued_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    attempt: int
+    published_execution_view_id: Optional[int] = None
+    drift_summary: Optional[dict[str, Any]] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    stats: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: Optional[str] = None
+    coalesced: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetSyncRunListResponse(BaseModel):
+    items: List[DatasetSyncRunResponse] = Field(default_factory=list)
+
+
+class DatasetSyncScheduleUpsertRequest(BaseModel):
+    enabled: bool = True
+    schedule_kind: Literal["interval", "cron"] = "interval"
+    cron_expr: Optional[str] = None
+    interval_minutes: Optional[int] = Field(default=None, ge=1)
+    timezone: str = "UTC"
+    misfire_policy: Literal["run_once", "skip"] = "run_once"
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "DatasetSyncScheduleUpsertRequest":
+        if self.schedule_kind == "interval" and self.interval_minutes is None:
+            raise ValueError("interval_minutes is required for interval schedules")
+        if self.schedule_kind == "cron" and (self.cron_expr is None or not self.cron_expr.strip()):
+            raise ValueError("cron_expr is required for cron schedules")
+        timezone_name = str(self.timezone or "").strip() or "UTC"
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone is invalid") from exc
+        self.timezone = timezone_name
+        return self
+
+
+class DatasetSyncScheduleResponse(BaseModel):
+    id: int
+    dataset_id: int
+    enabled: bool
+    schedule_kind: str
+    cron_expr: Optional[str] = None
+    interval_minutes: Optional[int] = None
+    timezone: str
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    misfire_policy: str
+    updated_by_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class DatasetEmailShareResponse(BaseModel):
@@ -592,11 +713,15 @@ class DataSourceCreateRequest(BaseModel):
     description: Optional[str] = None
     database_url: str
     schema_pattern: Optional[str] = None
+    copy_policy: Literal["allowed", "forbidden"] = "allowed"
+    default_dataset_access_mode: Literal["direct", "imported"] = "direct"
 
 class DataSourceUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     schema_pattern: Optional[str] = None
+    copy_policy: Optional[Literal["allowed", "forbidden"]] = None
+    default_dataset_access_mode: Optional[Literal["direct", "imported"]] = None
     is_active: Optional[bool] = None
 
 class DataSourceResponse(BaseModel):
@@ -604,6 +729,8 @@ class DataSourceResponse(BaseModel):
     name: str
     description: Optional[str]
     schema_pattern: Optional[str]
+    copy_policy: Literal["allowed", "forbidden"] = "allowed"
+    default_dataset_access_mode: Literal["direct", "imported"] = "direct"
     source_type: str = "postgres_external"
     status: str = "active"
     is_active: bool

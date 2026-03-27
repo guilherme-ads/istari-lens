@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.core.legacy.models import View
+from app.modules.core.legacy.models import DataSource, View
 from app.modules.widgets.domain import normalize_column_type
 
 _ALLOWED_JOIN_TYPES = {"inner", "left"}
@@ -24,6 +24,16 @@ _ALLOWED_FILTER_OPS = {
     "not_null",
     "between",
 }
+_ALLOWED_COLUMN_AGGREGATIONS = {"none", "count", "sum", "avg", "min", "max", "distinct_count"}
+
+
+def _default_aggregation_for_type(semantic_type: str) -> str:
+    normalized = (semantic_type or "text").strip().lower()
+    if normalized == "numeric":
+        return "sum"
+    if normalized == "temporal":
+        return "max"
+    return "none"
 
 
 def _raise(message: str, *, field: str | None = None) -> None:
@@ -74,6 +84,12 @@ def _raw_type_from_semantic_type(value: str) -> str:
     return "text"
 
 
+def _are_join_types_compatible(left_type: str, right_type: str) -> bool:
+    left = normalize_column_type(left_type)
+    right = normalize_column_type(right_type)
+    return left == right
+
+
 def _validate_expr_node(
     node: Any,
     *,
@@ -114,6 +130,8 @@ def validate_and_resolve_base_query_spec(
     db: Session,
     datasource_id: int,
     base_query_spec: dict[str, Any],
+    allow_workspace_internal_resources: bool = False,
+    workspace_id: int | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not isinstance(base_query_spec, dict):
         _raise("base_query_spec must be an object")
@@ -140,6 +158,10 @@ def validate_and_resolve_base_query_spec(
     resources_by_id: dict[str, dict[str, Any]] = {}
     resources_by_resource_id: dict[str, dict[str, Any]] = {}
     seen_resource_ids: set[str] = set()
+    expected_internal_schema: str | None = None
+    if allow_workspace_internal_resources and workspace_id is not None:
+        expected_internal_schema = f"lens_imp_t{int(workspace_id)}"
+
     for index, raw in enumerate(resources_payload):
         item = _as_dict(raw, field=f"base.resources[{index}]")
         resource_key = _as_str(item.get("id"), field=f"base.resources[{index}].id")
@@ -166,6 +188,22 @@ def validate_and_resolve_base_query_spec(
             )
             .first()
         )
+        if (
+            view is None
+            and expected_internal_schema is not None
+            and schema_name == expected_internal_schema
+        ):
+            view = (
+                db.query(View)
+                .join(DataSource, DataSource.id == View.datasource_id)
+                .filter(
+                    DataSource.created_by_id == int(workspace_id),
+                    View.schema_name == schema_name,
+                    View.view_name == view_name,
+                    View.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
         if view is None:
             _raise(
                 f"Resource '{resource_id}' is not registered/active in datasource",
@@ -207,6 +245,13 @@ def validate_and_resolve_base_query_spec(
                 _raise("Unknown left join column", field=f"base.joins[{index}].on[{on_index}].left_column")
             if right_column not in resources_by_id[right_resource]["column_types"]:
                 _raise("Unknown right join column", field=f"base.joins[{index}].on[{on_index}].right_column")
+            left_type = str(resources_by_id[left_resource]["raw_column_types"].get(left_column) or "text")
+            right_type = str(resources_by_id[right_resource]["raw_column_types"].get(right_column) or "text")
+            if not _are_join_types_compatible(left_type, right_type):
+                _raise(
+                    f"Incompatible join key types: {left_column} ({left_type}) and {right_column} ({right_type})",
+                    field=f"base.joins[{index}].on[{on_index}]",
+                )
 
     preprocess = _as_dict(base_query_spec.get("preprocess"), field="preprocess")
     preprocess_columns = _as_dict(preprocess.get("columns"), field="preprocess.columns")
@@ -247,6 +292,22 @@ def validate_and_resolve_base_query_spec(
             if column_type is None:
                 _raise("Unknown include column", field=f"preprocess.columns.include[{index}].column")
             raw_column_type = resources_by_id[resource_key]["raw_column_types"].get(column_name)
+            semantic_type = _normalize_semantic_type(item.get("semantic_type") or column_type)
+            aggregation = str(item.get("aggregation") or "").strip().lower()
+            if aggregation not in _ALLOWED_COLUMN_AGGREGATIONS:
+                aggregation = _default_aggregation_for_type(semantic_type)
+            item["semantic_type"] = semantic_type
+            item["aggregation"] = aggregation
+            item["sql_type"] = str(item.get("sql_type") or raw_column_type or "text")
+            item["hidden"] = bool(item.get("hidden", False))
+            if not isinstance(item.get("order"), int):
+                item["order"] = index
+            if "prefix" in item and not isinstance(item.get("prefix"), str):
+                item["prefix"] = ""
+            if "suffix" in item and not isinstance(item.get("suffix"), str):
+                item["suffix"] = ""
+            if "description" in item and not isinstance(item.get("description"), str):
+                item["description"] = ""
             _add_semantic_column(alias, column_type, source="projected", raw_type=raw_column_type)
     else:
         primary_resource = resources_by_resource_id[primary_resource_id]

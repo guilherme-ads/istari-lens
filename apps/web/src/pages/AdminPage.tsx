@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import {
   Plus, RefreshCw, Trash2, Power, PowerOff, Database,
   Search, Eye, EyeOff, ServerCog, Layers,
-  Activity, AlertCircle, Clock, FileSpreadsheet, ArrowLeft,
+  Activity, AlertCircle, Clock, FileSpreadsheet, ArrowLeft, ArrowRightLeft,
 } from "lucide-react";
 
 import StatusBadge from "@/components/shared/StatusBadge";
@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -22,6 +23,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useToast } from "@/hooks/use-toast";
 import { useCoreData } from "@/hooks/use-core-data";
 import { api, ApiDatasourceDeletionImpact, ApiError } from "@/lib/api";
+import { isInternalWorkspaceDatasource } from "@/lib/datasource-visibility";
 import SpreadsheetImportFlow from "@/components/shared/SpreadsheetImportFlow";
 
 const SourceTypePill = ({ type }: { type: "database" | "spreadsheet" }) => (
@@ -108,11 +110,14 @@ const AdminPage = () => {
   const [tableSearch, setTableSearch] = useState("");
   const [deleteImpact, setDeleteImpact] = useState<ApiDatasourceDeletionImpact | null>(null);
   const [loadingDeleteImpactId, setLoadingDeleteImpactId] = useState<string | null>(null);
+  const [enablingImportedDatasourceId, setEnablingImportedDatasourceId] = useState<string | null>(null);
 
   const [formName, setFormName] = useState("");
   const [formSchema, setFormSchema] = useState("");
   const [formUrl, setFormUrl] = useState("");
   const [formDesc, setFormDesc] = useState("");
+  const [formCopyPolicy, setFormCopyPolicy] = useState<"allowed" | "forbidden">("allowed");
+  const [formDefaultDatasetAccessMode, setFormDefaultDatasetAccessMode] = useState<"direct" | "imported">("direct");
 
   const resetSheetForm = () => {
     setSourceType(null);
@@ -120,33 +125,50 @@ const AdminPage = () => {
     setFormSchema("");
     setFormUrl("");
     setFormDesc("");
+    setFormCopyPolicy("allowed");
+    setFormDefaultDatasetAccessMode("direct");
   };
 
+  const visibleDatasources = useMemo(
+    () => datasources.filter((datasource) => !isInternalWorkspaceDatasource(datasource)),
+    [datasources],
+  );
+
+  const visibleDatasourceIds = useMemo(
+    () => new Set(visibleDatasources.map((datasource) => datasource.id)),
+    [visibleDatasources],
+  );
+
+  const visibleTables = useMemo(
+    () => tables.filter((view) => visibleDatasourceIds.has(view.datasourceId)),
+    [tables, visibleDatasourceIds],
+  );
+
   const stats = useMemo(() => ({
-    totalDs: datasources.length,
-    activeDs: datasources.filter((d) => d.status === "active").length,
-    totalTables: tables.length,
-    activeTables: tables.filter((v) => v.status === "active").length,
-  }), [datasources, tables]);
+    totalDs: visibleDatasources.length,
+    activeDs: visibleDatasources.filter((d) => d.status === "active").length,
+    totalTables: visibleTables.length,
+    activeTables: visibleTables.filter((v) => v.status === "active").length,
+  }), [visibleDatasources, visibleTables]);
 
   const filteredDs = useMemo(() => {
     const byType = dsTypeFilter === "all"
-      ? datasources
-      : datasources.filter((d) => d.sourceType === dsTypeFilter);
+      ? visibleDatasources
+      : visibleDatasources.filter((d) => d.sourceType === dsTypeFilter);
     if (!dsSearch) return byType;
     const q = dsSearch.toLowerCase();
     return byType.filter((d) =>
       d.name.toLowerCase().includes(q) || d.schemaPattern.toLowerCase().includes(q),
     );
-  }, [datasources, dsSearch, dsTypeFilter]);
+  }, [visibleDatasources, dsSearch, dsTypeFilter]);
 
   const filteredTables = useMemo(() => {
-    if (!tableSearch) return tables;
+    if (!tableSearch) return visibleTables;
     const q = tableSearch.toLowerCase();
-    return tables.filter((v) =>
+    return visibleTables.filter((v) =>
       v.name.toLowerCase().includes(q) || v.schema.toLowerCase().includes(q),
     );
-  }, [tables, tableSearch]);
+  }, [visibleTables, tableSearch]);
 
   const createDatasource = useMutation({
     mutationFn: () =>
@@ -155,6 +177,8 @@ const AdminPage = () => {
         schema_pattern: formSchema || undefined,
         database_url: formUrl,
         description: formDesc || undefined,
+        copy_policy: formCopyPolicy,
+        default_dataset_access_mode: formDefaultDatasetAccessMode,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["datasources"] });
@@ -165,6 +189,30 @@ const AdminPage = () => {
     onError: (error: unknown) => {
       const message = error instanceof ApiError ? error.detail || error.message : "Falha ao registrar datasource";
       toast({ title: "Erro ao registrar datasource", description: message, variant: "destructive" });
+    },
+  });
+
+  const enableImportedDatasets = useMutation({
+    mutationFn: async (datasourceId: string) => {
+      setEnablingImportedDatasourceId(datasourceId);
+      return api.enableImportedDatasetsForDatasource(Number(datasourceId), {});
+    },
+    onSuccess: async (payload) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["datasets"] }),
+        queryClient.invalidateQueries({ queryKey: ["datasources"] }),
+      ]);
+      toast({
+        title: "Modo imported habilitado",
+        description: `${payload.updated_count} datasets atualizados, ${payload.run_enqueued_count} syncs enfileirados.`,
+      });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof ApiError ? error.detail || error.message : "Falha ao habilitar imported";
+      toast({ title: "Erro ao habilitar imported", description: message, variant: "destructive" });
+    },
+    onSettled: () => {
+      setEnablingImportedDatasourceId(null);
     },
   });
 
@@ -367,6 +415,47 @@ const AdminPage = () => {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label>Copy Policy</Label>
+                    <Select
+                      value={formCopyPolicy}
+                      onValueChange={(value) => {
+                        const nextPolicy = value as "allowed" | "forbidden";
+                        setFormCopyPolicy(nextPolicy);
+                        if (nextPolicy === "forbidden" && formDefaultDatasetAccessMode === "imported") {
+                          setFormDefaultDatasetAccessMode("direct");
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="allowed">allowed</SelectItem>
+                        <SelectItem value="forbidden">forbidden</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Default Dataset Access Mode</Label>
+                    <Select
+                      value={formDefaultDatasetAccessMode}
+                      onValueChange={(value) => setFormDefaultDatasetAccessMode(value as "direct" | "imported")}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="direct">direct</SelectItem>
+                        <SelectItem value="imported" disabled={formCopyPolicy === "forbidden"}>imported</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {formCopyPolicy === "forbidden" && (
+                      <p className="text-caption text-muted-foreground">
+                        Imported nao pode ser modo padrao quando copy policy for forbidden.
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="ds-url">Database URL <span className="text-destructive">*</span></Label>
                     <Input
                       id="ds-url"
@@ -434,14 +523,14 @@ const AdminPage = () => {
                 <ServerCog className="h-3.5 w-3.5" />
                 Datasources
                 <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                  {datasources.length}
+                  {visibleDatasources.length}
                 </span>
               </TabsTrigger>
               <TabsTrigger value="views" className="gap-1.5 data-[state=active]:bg-card data-[state=active]:shadow-card">
                 <Layers className="h-3.5 w-3.5" />
                 Tabelas
                 <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                  {tables.length}
+                  {visibleTables.length}
                 </span>
               </TabsTrigger>
             </TabsList>
@@ -497,6 +586,8 @@ const AdminPage = () => {
                       <TableRow className="bg-muted/30 hover:bg-muted/30">
                         <TableHead className="text-heading">Nome</TableHead>
                         <TableHead className="text-heading">Tipo</TableHead>
+                        <TableHead className="text-heading hidden xl:table-cell">Copy Policy</TableHead>
+                        <TableHead className="text-heading hidden xl:table-cell">Default Mode</TableHead>
                         <TableHead className="text-heading hidden lg:table-cell">Ultimo Sync</TableHead>
                         <TableHead className="text-heading">Status</TableHead>
                         <TableHead className="text-heading text-right">Acoes</TableHead>
@@ -518,6 +609,20 @@ const AdminPage = () => {
                           <TableCell>
                             <SourceTypePill type={ds.sourceType} />
                           </TableCell>
+                          <TableCell className="hidden xl:table-cell">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              ds.copyPolicy === "allowed"
+                                ? "bg-success/10 text-success"
+                                : "bg-destructive/10 text-destructive"
+                            }`}>
+                              {ds.copyPolicy}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden xl:table-cell">
+                            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                              {ds.defaultDatasetAccessMode}
+                            </span>
+                          </TableCell>
                           <TableCell className="hidden lg:table-cell">
                             <span className="text-caption flex items-center gap-1.5">
                               <Clock className="h-3 w-3" />
@@ -538,6 +643,23 @@ const AdminPage = () => {
                               </ActionBtn>
                               <ActionBtn tooltip={ds.status === "active" ? "Desativar" : "Ativar"} onClick={() => toggleStatus("ds", ds.id)}>
                                 {ds.status === "active" ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
+                              </ActionBtn>
+                              <ActionBtn
+                                tooltip={
+                                  ds.sourceType === "spreadsheet"
+                                    ? "So para datasource de banco"
+                                    : ds.copyPolicy === "forbidden"
+                                      ? "Copy policy bloqueia imported"
+                                      : "Migrar datasets para imported"
+                                }
+                                onClick={() => enableImportedDatasets.mutate(ds.id)}
+                                disabled={
+                                  ds.sourceType === "spreadsheet"
+                                  || ds.copyPolicy === "forbidden"
+                                  || enablingImportedDatasourceId === ds.id
+                                }
+                              >
+                                <ArrowRightLeft className={`h-3.5 w-3.5 ${enablingImportedDatasourceId === ds.id ? "animate-pulse" : ""}`} />
                               </ActionBtn>
                               {ds.status === "inactive" && (
                                 <ActionBtn

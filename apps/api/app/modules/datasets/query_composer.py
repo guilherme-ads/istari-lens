@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.modules.core.legacy.models import Dataset, View
+from app.modules.datasets.execution_mode import resolve_effective_access_mode
 
 _COMPOSED_RESOURCE_ID = "__dataset_base"
 
@@ -39,6 +40,20 @@ def resolve_dataset_base_query_spec(dataset: Dataset) -> dict[str, Any]:
     raise HTTPException(status_code=400, detail="Dataset has no base_query_spec and no legacy view_id")
 
 
+def resolve_dataset_runtime_base_query_spec(dataset: Dataset) -> dict[str, Any]:
+    if resolve_effective_access_mode(dataset) != "imported":
+        return resolve_dataset_base_query_spec(dataset)
+    execution_view = dataset.execution_view
+    if execution_view is None:
+        raise HTTPException(status_code=409, detail="Dataset imported execution view is unavailable")
+    if dataset.execution_datasource_id is None:
+        raise HTTPException(status_code=409, detail="Dataset imported execution datasource is unavailable")
+    return build_legacy_base_query_spec(
+        datasource_id=int(dataset.execution_datasource_id),
+        view=execution_view,
+    )
+
+
 def compose_engine_query_spec_with_dataset(
     *,
     dataset: Dataset,
@@ -46,6 +61,6 @@ def compose_engine_query_spec_with_dataset(
 ) -> dict[str, Any]:
     composed = deepcopy(query_spec)
     composed["resource_id"] = _COMPOSED_RESOURCE_ID
-    composed["base_query"] = resolve_dataset_base_query_spec(dataset)
+    composed["base_query"] = resolve_dataset_runtime_base_query_spec(dataset)
     return composed
 

@@ -4,10 +4,13 @@ from app.modules.datasets.query_composer import (
     compose_engine_query_spec_with_dataset,
     resolve_dataset_base_query_spec,
 )
+from app.modules.datasets.execution_mode import resolve_effective_access_mode, has_published_import_binding
 
 __all__ = [
     "validate_and_resolve_base_query_spec",
     "build_legacy_base_query_spec",
     "resolve_dataset_base_query_spec",
     "compose_engine_query_spec_with_dataset",
+    "resolve_effective_access_mode",
+    "has_published_import_binding",
 ]

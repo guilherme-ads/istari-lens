@@ -13,6 +13,13 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { useToast } from "@/hooks/use-toast";
 import { api, ApiError } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
+import { parseApiDate } from "@/lib/datetime";
+
+const formatDateTime = (value?: string | null): string => {
+  const parsed = parseApiDate(value);
+  if (!parsed) return "-";
+  return parsed.toLocaleString("pt-BR");
+};
 
 const ApiConfigPage = () => {
   const { toast } = useToast();
@@ -146,7 +153,7 @@ const ApiConfigPage = () => {
                         <TableCell>{activeIntegration.model}</TableCell>
                         <TableCell><code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{activeIntegration.masked_api_key}</code></TableCell>
                         <TableCell>{typeof activeIntegration.billing_estimated_remaining_usd === "number" ? `US$ ${activeIntegration.billing_estimated_remaining_usd.toFixed(2)}` : "Não disponível"}</TableCell>
-                        <TableCell>{new Date(activeIntegration.updated_at).toLocaleString("pt-BR")}</TableCell>
+                        <TableCell>{formatDateTime(activeIntegration.updated_at)}</TableCell>
                         <TableCell><Badge className="border-success/20 bg-success/10 text-success" variant="outline">Ativa</Badge></TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-2">
@@ -176,7 +183,7 @@ const ApiConfigPage = () => {
                           <TableCell>{item.model}</TableCell>
                           <TableCell><code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{item.masked_api_key}</code></TableCell>
                           <TableCell>{typeof item.billing_estimated_remaining_usd === "number" ? `US$ ${item.billing_estimated_remaining_usd.toFixed(2)}` : "Não disponível"}</TableCell>
-                          <TableCell>{new Date(item.updated_at).toLocaleString("pt-BR")}</TableCell>
+                          <TableCell>{formatDateTime(item.updated_at)}</TableCell>
                           <TableCell><Badge variant="outline" className="text-muted-foreground">Desativada</Badge></TableCell>
                           <TableCell>
                             <div className="flex justify-end gap-2">

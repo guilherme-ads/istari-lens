@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi import HTTPException
@@ -15,6 +16,7 @@ from app.api.v1.routes import queries
 class _FakeEngineClient:
     def __init__(self) -> None:
         self.last_single_spec: dict | None = None
+        self.last_single_call: dict | None = None
         self.last_batch_queries: list[dict] = []
         self.batch_calls: list[dict] = []
 
@@ -29,12 +31,14 @@ class _FakeEngineClient:
         actor_user_id: int | None = None,
         correlation_id: str | None = None,
     ) -> dict:
-        _ = datasource_id
-        _ = workspace_id
-        _ = dataset_id
-        _ = datasource_url
-        _ = actor_user_id
-        _ = correlation_id
+        self.last_single_call = {
+            "datasource_id": datasource_id,
+            "workspace_id": workspace_id,
+            "dataset_id": dataset_id,
+            "datasource_url": datasource_url,
+            "actor_user_id": actor_user_id,
+            "correlation_id": correlation_id,
+        }
         self.last_single_spec = query_spec
         return {
             "columns": ["m0"],
@@ -57,14 +61,11 @@ class _FakeEngineClient:
         actor_user_id: int | None = None,
         correlation_id: str | None = None,
     ) -> dict:
-        _ = datasource_id
-        _ = workspace_id
-        _ = datasource_url
-        _ = actor_user_id
-        _ = correlation_id
         self.last_batch_queries = queries
         self.batch_calls.append(
             {
+                "datasource_id": datasource_id,
+                "workspace_id": workspace_id,
                 "dataset_id": dataset_id,
                 "queries": queries,
             }
@@ -135,7 +136,13 @@ class _FailingEngineClient:
 
 
 
-def _create_test_data(session: Session, *, is_admin: bool = True, datasource_owner_id: int | None = None) -> User:
+def _create_test_data(
+    session: Session,
+    *,
+    is_admin: bool = True,
+    datasource_owner_id: int | None = None,
+    imported_ready: bool = False,
+) -> User:
     user = User(email="query@test.com", hashed_password="x", is_admin=is_admin, is_active=True)
     session.add(user)
     session.flush()
@@ -181,6 +188,29 @@ def _create_test_data(session: Session, *, is_admin: bool = True, datasource_own
         },
         is_active=True,
     )
+    if imported_ready:
+        execution_datasource = DataSource(
+            name="internal",
+            description="",
+            database_url="postgresql://fake-internal",
+            created_by_id=user.id,
+            is_active=True,
+        )
+        session.add(execution_datasource)
+        session.flush()
+        execution_view = View(
+            datasource_id=execution_datasource.id,
+            schema_name="lens_imp_t1",
+            view_name="ds_1",
+            is_active=True,
+        )
+        session.add(execution_view)
+        session.flush()
+        dataset.access_mode = "imported"
+        dataset.execution_datasource_id = execution_datasource.id
+        dataset.execution_view_id = execution_view.id
+        dataset.data_status = "ready"
+        dataset.last_successful_sync_at = datetime.utcnow()
     session.add(dataset)
 
     second_view = View(
@@ -203,7 +233,12 @@ def _create_test_data(session: Session, *, is_admin: bool = True, datasource_own
 
 
 
-def _build_client(*, is_admin: bool = True, datasource_owner_id: int | None = None) -> tuple[TestClient, _FakeEngineClient]:
+def _build_client(
+    *,
+    is_admin: bool = True,
+    datasource_owner_id: int | None = None,
+    imported_ready: bool = False,
+) -> tuple[TestClient, _FakeEngineClient]:
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -213,7 +248,12 @@ def _build_client(*, is_admin: bool = True, datasource_owner_id: int | None = No
     Base.metadata.create_all(bind=engine)
 
     session = TestingSessionLocal()
-    user = _create_test_data(session, is_admin=is_admin, datasource_owner_id=datasource_owner_id)
+    user = _create_test_data(
+        session,
+        is_admin=is_admin,
+        datasource_owner_id=datasource_owner_id,
+        imported_ready=imported_ready,
+    )
 
     def _get_db() -> Generator[Session, None, None]:
         db = TestingSessionLocal()
@@ -383,8 +423,8 @@ def test_preview_batch_splits_calls_for_different_dataset_ids() -> None:
         client._cleanup()  # type: ignore[attr-defined]
 
 
-def test_preview_allows_non_admin_user_when_datasource_is_active() -> None:
-    client, _ = _build_client(is_admin=False, datasource_owner_id=999)
+def test_preview_allows_non_admin_owner_user_when_datasource_is_active() -> None:
+    client, _ = _build_client(is_admin=False)
     try:
         response = client.post(
             "/query/preview",
@@ -399,6 +439,32 @@ def test_preview_allows_non_admin_user_when_datasource_is_active() -> None:
             },
         )
         assert response.status_code == 200, response.text
+    finally:
+        client._cleanup()  # type: ignore[attr-defined]
+
+
+def test_preview_uses_execution_datasource_when_imported_dataset_is_ready() -> None:
+    client, fake_engine = _build_client(imported_ready=True)
+    try:
+        response = client.post(
+            "/query/preview",
+            json={
+                "datasetId": 1,
+                "metrics": [{"field": "*", "agg": "count"}],
+                "dimensions": [],
+                "filters": [],
+                "sort": [],
+                "limit": 10,
+                "offset": 0,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert fake_engine.last_single_call is not None
+        assert fake_engine.last_single_call["datasource_id"] == 2
+        assert fake_engine.last_single_call["workspace_id"] == 1
+        assert fake_engine.last_single_spec is not None
+        assert fake_engine.last_single_spec["base_query"]["source"]["datasource_id"] == 2
+        assert fake_engine.last_single_spec["base_query"]["base"]["primary_resource"] == "lens_imp_t1.ds_1"
     finally:
         client._cleanup()  # type: ignore[attr-defined]
 

@@ -72,6 +72,8 @@ def create_datasource(
         description=request.description,
         database_url=encrypted_url,
         schema_pattern=request.schema_pattern,
+        copy_policy=request.copy_policy,
+        default_dataset_access_mode=request.default_dataset_access_mode,
         created_by_id=current_user.id,
     )
     db.add(datasource)
@@ -143,6 +145,10 @@ def update_datasource(
     if request.schema_pattern is not None:
         _validate_schema_pattern(request.schema_pattern)
         datasource.schema_pattern = request.schema_pattern
+    if request.copy_policy is not None:
+        datasource.copy_policy = request.copy_policy
+    if request.default_dataset_access_mode is not None:
+        datasource.default_dataset_access_mode = request.default_dataset_access_mode
     if request.is_active is not None:
         datasource.is_active = request.is_active
         datasource.status = "active" if request.is_active else "inactive"
@@ -286,8 +292,9 @@ def sync_views(
     db: Session = Depends(get_db),
 ):
     """
-    Sync views from remote PostgreSQL database.
-    Connects to the external DB, reads INFORMATION_SCHEMA, and creates View records.
+    Sync datasource resources from remote PostgreSQL database.
+    Connects to the external DB, reads INFORMATION_SCHEMA, and creates View records
+    for both tables and views exposed to Lens.
     """
     _require_psycopg2()
     datasource = db.query(models.DataSource).filter(
@@ -317,13 +324,15 @@ def sync_views(
         # Connect to remote database
         with psycopg2.connect(decrypted_url) as conn:
             with conn.cursor() as cursor:
-                # Get all views from information_schema
+                # Get all resources (tables/views) from information_schema.
+                # This keeps datasource sync aligned with engine catalog discovery.
                 sql_list_views = """
-                    SELECT 
+                    SELECT
                         table_schema,
                         table_name
-                    FROM information_schema.views
+                    FROM information_schema.tables
                     WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                      AND table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN TABLE')
                     ORDER BY table_schema, table_name
                 """
                 log_external_query(

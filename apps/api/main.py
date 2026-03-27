@@ -6,6 +6,7 @@ from sqlalchemy import text
 from app.shared.infrastructure.database import engine, Base, SessionLocal
 from app.modules.core.legacy.models import User
 from app.modules.auth.application.security import hash_password
+from app.modules.datasets.sync_runtime import DatasetSyncRuntimeManager
 from app.shared.infrastructure.settings import get_settings
 from app.api.v1.routes import (
     health,
@@ -491,6 +492,7 @@ def create_app() -> FastAPI:
 
 _bootstrap_admin_user()
 app = create_app()
+_dataset_sync_runtime = DatasetSyncRuntimeManager(settings=settings)
 
 # Include routers
 app.include_router(health.router)
@@ -506,6 +508,16 @@ app.include_router(api_config.router)
 app.include_router(imports.router)
 app.include_router(catalog.router)
 app.include_router(analyses.router)
+
+
+@app.on_event("startup")
+async def _start_dataset_sync_runtime() -> None:
+    _dataset_sync_runtime.start()
+
+
+@app.on_event("shutdown")
+async def _stop_dataset_sync_runtime() -> None:
+    _dataset_sync_runtime.stop()
 
 @app.get("/")
 async def root():

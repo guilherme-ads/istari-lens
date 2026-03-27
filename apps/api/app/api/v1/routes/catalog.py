@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import re
+from copy import deepcopy
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+import psycopg
+from psycopg import sql
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -16,10 +22,13 @@ from app.modules.datasets.access import (
     ensure_dataset_view_access,
 )
 from app.modules.datasets import validate_and_resolve_base_query_spec
+from app.modules.datasets.sync_services import DatasetSyncWorkerService
 from app.modules.engine import get_engine_client, resolve_datasource_access
 from app.shared.infrastructure.database import get_db
+from app.shared.infrastructure.settings import get_settings
 
 router = APIRouter(tags=["catalog"])
+_SAFE_ALIAS_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class CatalogResourceItem(BaseModel):
@@ -247,6 +256,87 @@ def _extract_single_metric_value(payload: dict) -> float | str | None:
                 return first_row.get(key)
         return None
     return None
+
+
+def _resource_schema_name(resource_id: str | None) -> str | None:
+    value = str(resource_id or "").strip()
+    if "." not in value:
+        return None
+    schema, _ = value.split(".", 1)
+    schema_name = schema.strip().strip('"')
+    if not schema_name:
+        return None
+    return schema_name.lower()
+
+
+def _base_query_spec_uses_workspace_internal_schema(
+    *,
+    base_query_spec: dict | None,
+    workspace_id: int,
+) -> bool:
+    if not isinstance(base_query_spec, dict):
+        return False
+    expected_schema = f"lens_imp_t{int(workspace_id)}".lower()
+    base = base_query_spec.get("base")
+    if not isinstance(base, dict):
+        return False
+
+    primary_resource = base.get("primary_resource")
+    if isinstance(primary_resource, str) and _resource_schema_name(primary_resource) == expected_schema:
+        return True
+
+    resources = base.get("resources")
+    if not isinstance(resources, list):
+        return False
+    for item in resources:
+        if not isinstance(item, dict):
+            continue
+        resource_id = item.get("resource_id")
+        if isinstance(resource_id, str) and _resource_schema_name(resource_id) == expected_schema:
+            return True
+    return False
+
+
+def _base_query_spec_is_mixed_internal_external(
+    *,
+    base_query_spec: dict | None,
+    workspace_id: int,
+) -> bool:
+    if not isinstance(base_query_spec, dict):
+        return False
+    base = base_query_spec.get("base")
+    if not isinstance(base, dict):
+        return False
+    resources = base.get("resources")
+    if not isinstance(resources, list):
+        return False
+    internal_schema = f"lens_imp_t{int(workspace_id)}"
+    has_internal = False
+    has_external = False
+    for item in resources:
+        if not isinstance(item, dict):
+            continue
+        resource_id = str(item.get("resource_id") or "").strip()
+        if "." not in resource_id:
+            continue
+        schema_name = resource_id.split(".", 1)[0].strip()
+        if not schema_name:
+            continue
+        if schema_name == internal_schema:
+            has_internal = True
+        else:
+            has_external = True
+        if has_internal and has_external:
+            return True
+    return False
+
+
+def _to_psycopg_url(url: str) -> str:
+    if url.startswith("postgresql+psycopg://"):
+        return url.replace("postgresql+psycopg://", "postgresql://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
 
 
 def _ensure_catalog_for_dataset(db: Session, *, dataset: Dataset) -> None:
@@ -603,10 +693,16 @@ async def catalog_profile_preview(
     datasource = _load_datasource_or_404(db, request.datasource_id)
     _ensure_datasource_access(datasource=datasource, current_user=current_user)
     access = resolve_datasource_access(datasource=datasource, dataset=None, current_user=current_user)
+    allow_workspace_internal_resources = _base_query_spec_uses_workspace_internal_schema(
+        base_query_spec=request.base_query_spec if isinstance(request.base_query_spec, dict) else None,
+        workspace_id=int(datasource.created_by_id),
+    )
     resolved_base_query_spec, semantic_columns = validate_and_resolve_base_query_spec(
         db=db,
         datasource_id=request.datasource_id,
         base_query_spec=request.base_query_spec,
+        allow_workspace_internal_resources=allow_workspace_internal_resources,
+        workspace_id=int(datasource.created_by_id),
     )
     semantic_type_by_name = {
         str(item.get("name")): str(item.get("type") or "text")
@@ -730,10 +826,16 @@ async def catalog_data_preview(
     datasource = _load_datasource_or_404(db, request.datasource_id)
     _ensure_datasource_access(datasource=datasource, current_user=current_user)
     access = resolve_datasource_access(datasource=datasource, dataset=None, current_user=current_user)
+    allow_workspace_internal_resources = _base_query_spec_uses_workspace_internal_schema(
+        base_query_spec=request.base_query_spec if isinstance(request.base_query_spec, dict) else None,
+        workspace_id=int(datasource.created_by_id),
+    )
     resolved_base_query_spec, semantic_columns = validate_and_resolve_base_query_spec(
         db=db,
         datasource_id=request.datasource_id,
         base_query_spec=request.base_query_spec,
+        allow_workspace_internal_resources=allow_workspace_internal_resources,
+        workspace_id=int(datasource.created_by_id),
     )
 
     available_dimension_names: list[str] = []
@@ -750,29 +852,134 @@ async def catalog_data_preview(
     requested_names = [str(name or "").strip() for name in request.columns]
     dimensions = [name for name in requested_names if name and name in seen_names]
     if not dimensions:
-        dimensions = available_dimension_names[:8]
+        dimensions = available_dimension_names
 
     if not dimensions:
         return CatalogDataPreviewResponse(columns=[], rows=[], row_count=0)
 
-    payload = await get_engine_client().execute_query(
-        datasource_id=access.datasource_id,
-        workspace_id=access.workspace_id,
-        dataset_id=None,
-        query_spec={
-            "resource_id": "__dataset_base",
-            "base_query": resolved_base_query_spec,
-            "metrics": [],
-            "dimensions": dimensions,
-            "filters": [],
-            "sort": [],
-            "limit": request.limit,
-            "offset": 0,
-        },
-        datasource_url=access.datasource_url,
-        actor_user_id=access.actor_user_id,
-        correlation_id=_resolve_correlation_id(http_request),
+    mixed_internal_external_preview = _base_query_spec_is_mixed_internal_external(
+        base_query_spec=resolved_base_query_spec if isinstance(resolved_base_query_spec, dict) else None,
+        workspace_id=int(datasource.created_by_id),
     )
+    if mixed_internal_external_preview:
+        settings = get_settings()
+        internal_url = (
+            settings.analytics_db_url
+            or settings.app_db_url
+            or settings.database_url
+        )
+        if not internal_url:
+            raise HTTPException(status_code=500, detail="Internal analytics datasource URL is not configured")
+
+        target_schema = f"lens_imp_t{int(datasource.created_by_id)}"
+        preview_load_table = f"preview_{uuid4().hex[:16]}"
+        worker_service = DatasetSyncWorkerService(settings=settings)
+        preview_dataset = Dataset(
+            id=(int(uuid4().int % 1_000_000_000) + 1),
+            name="preview_temp",
+            base_query_spec=deepcopy(resolved_base_query_spec),
+        )
+
+        try:
+            worker_service._materialize_base_query_spec_to_internal(
+                dataset=preview_dataset,
+                source_url=access.datasource_url,
+                internal_url=internal_url,
+                target_schema=target_schema,
+                load_table_name=preview_load_table,
+            )
+
+            safe_internal_url = _to_psycopg_url(internal_url)
+            with psycopg.connect(safe_internal_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("SELECT COUNT(*) FROM {}.{}").format(
+                            sql.Identifier(target_schema),
+                            sql.Identifier(preview_load_table),
+                        )
+                    )
+                    count_row = cur.fetchone()
+                    row_count = int(count_row[0] or 0) if count_row else 0
+                    cur.execute(
+                        sql.SQL("SELECT * FROM {}.{} LIMIT {}").format(
+                            sql.Identifier(target_schema),
+                            sql.Identifier(preview_load_table),
+                            sql.Literal(int(request.limit)),
+                        )
+                    )
+                    rows_raw = cur.fetchall() or []
+                    columns_raw = [str(desc[0]) for desc in (cur.description or [])]
+
+            if dimensions:
+                filtered_dimensions = [name for name in dimensions if name in columns_raw]
+            else:
+                filtered_dimensions = columns_raw
+            if not filtered_dimensions:
+                filtered_dimensions = columns_raw
+
+            index_by_name = {name: idx for idx, name in enumerate(columns_raw)}
+            filtered_indexes = [index_by_name[name] for name in filtered_dimensions if name in index_by_name]
+            rows = [
+                {filtered_dimensions[pos]: row[idx] for pos, idx in enumerate(filtered_indexes)}
+                for row in rows_raw
+            ]
+            return CatalogDataPreviewResponse(columns=filtered_dimensions, rows=rows, row_count=row_count)
+        finally:
+            worker_service._drop_internal_tables(
+                internal_url=internal_url,
+                target_schema=target_schema,
+                table_names=[preview_load_table],
+            )
+
+    query_spec = {
+        "resource_id": "__dataset_base",
+        "base_query": resolved_base_query_spec,
+        "metrics": [],
+        "dimensions": dimensions,
+        "filters": [],
+        "sort": [],
+        "limit": request.limit,
+        "offset": 0,
+    }
+    correlation_id = _resolve_correlation_id(http_request)
+
+    try:
+        payload = await get_engine_client().execute_query(
+            datasource_id=access.datasource_id,
+            workspace_id=access.workspace_id,
+            dataset_id=None,
+            query_spec=query_spec,
+            datasource_url=access.datasource_url,
+            actor_user_id=access.actor_user_id,
+            correlation_id=correlation_id,
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        nested_error = detail.get("error") if isinstance(detail, dict) else None
+        error_code = nested_error.get("code") if isinstance(nested_error, dict) else None
+        should_retry = (
+            exc.status_code >= 500
+            and error_code == "datasource_error"
+            and len(dimensions) > 1
+        )
+        if not should_retry:
+            raise
+
+        fallback_dimensions = [name for name in dimensions if _SAFE_ALIAS_PATTERN.match(name)]
+        if not fallback_dimensions:
+            fallback_dimensions = [name for name in available_dimension_names if _SAFE_ALIAS_PATTERN.match(name)]
+        if not fallback_dimensions:
+            raise
+
+        payload = await get_engine_client().execute_query(
+            datasource_id=access.datasource_id,
+            workspace_id=access.workspace_id,
+            dataset_id=None,
+            query_spec={**query_spec, "dimensions": fallback_dimensions},
+            datasource_url=access.datasource_url,
+            actor_user_id=access.actor_user_id,
+            correlation_id=correlation_id,
+        )
     rows = payload.get("rows") or []
     if not isinstance(rows, list):
         rows = []

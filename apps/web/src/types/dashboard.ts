@@ -191,7 +191,7 @@ export interface Dashboard {
   datasetId: string;
   isOwner: boolean;
   accessLevel: "owner" | "edit" | "view";
-  accessSource: "owner" | "direct" | "workspace" | "public";
+  accessSource: "owner" | "direct" | "workspace" | "public" | "organization";
   visibility: "private" | "workspace_view" | "workspace_edit" | "public_view";
   publicShareKey?: string;
   nativeFilters: DashboardNativeFilter[];

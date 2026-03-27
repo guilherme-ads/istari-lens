@@ -409,8 +409,8 @@ def build_table_name(
     return f"{base_slug[:max_base_len]}{suffix}"
 
 
-def build_resource_id(table_name: str) -> str:
-    return f"public.{table_name}"
+def build_resource_id(table_name: str, *, schema_name: str = "public") -> str:
+    return f"{schema_name}.{table_name}"
 
 
 def _to_psycopg_url(url: str) -> str:
@@ -447,6 +447,7 @@ def create_import_table_and_load_rows(
     *,
     analytics_db_url: str,
     table_name: str,
+    schema_name: str = "public",
     import_id: int,
     mapped_schema: list[dict[str, Any]],
     rows: list[dict[str, Any]],
@@ -464,14 +465,15 @@ def create_import_table_and_load_rows(
         for column in mapped_schema
     ]
 
+    create_schema_sql = sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema_name))
     create_sql = sql.SQL(
         "CREATE TABLE IF NOT EXISTS {} (row_id BIGSERIAL PRIMARY KEY, import_id INTEGER NOT NULL, {})"
-    ).format(sql.Identifier("public", table_name), sql.SQL(", ").join(column_defs))
-    truncate_sql = sql.SQL("TRUNCATE TABLE {}").format(sql.Identifier("public", table_name))
+    ).format(sql.Identifier(schema_name, table_name), sql.SQL(", ").join(column_defs))
+    truncate_sql = sql.SQL("TRUNCATE TABLE {}").format(sql.Identifier(schema_name, table_name))
 
     insert_identifiers = [sql.Identifier(str(column["target_name"])) for column in mapped_schema]
     insert_sql = sql.SQL("INSERT INTO {} (import_id, {}) VALUES ({})").format(
-        sql.Identifier("public", table_name),
+        sql.Identifier(schema_name, table_name),
         sql.SQL(", ").join(insert_identifiers),
         sql.SQL(", ").join([sql.Placeholder()] * (1 + len(mapped_schema))),
     )
@@ -479,6 +481,7 @@ def create_import_table_and_load_rows(
     batch_payload: list[tuple[Any, ...]] = []
     with psycopg.connect(safe_url) as conn:
         with conn.cursor() as cur:
+            cur.execute(create_schema_sql)
             cur.execute(create_sql)
             cur.execute(truncate_sql)
 

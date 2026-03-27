@@ -32,6 +32,7 @@ settings = get_settings()
 class ImportCreateRequest(BaseModel):
     tenant_id: int
     name: str = Field(min_length=1, max_length=255)
+    datasource_id: int | None = None
     description: str | None = Field(default=None, max_length=2000)
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
     header_row: int = Field(default=1, ge=1, le=100)
@@ -182,19 +183,33 @@ async def create_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    analytics_db_url = _require_analytics_db_url()
-    datasource = DataSource(
+    datasource: DataSource
+    if request.datasource_id is not None:
+        datasource = db.query(DataSource).filter(DataSource.id == request.datasource_id).first()
+        if datasource is None:
+            raise HTTPException(status_code=404, detail="Datasource not found")
+        if not current_user.is_admin and datasource.created_by_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to use this datasource")
+        if not datasource.is_active:
+            raise HTTPException(status_code=400, detail="Datasource is inactive")
+        if str(getattr(datasource, "copy_policy", "allowed") or "allowed").strip().lower() == "forbidden":
+            raise HTTPException(status_code=400, detail="Datasource copy_policy forbids imported mode")
+    else:
+        analytics_db_url = _require_analytics_db_url()
+        datasource = DataSource(
         name=request.name,
         description=(request.description or f"Fonte de dados de importação de planilha para {request.name}"),
         database_url=credential_encryptor.encrypt(analytics_db_url),
         source_type="file_spreadsheet_import",
         tenant_id=request.tenant_id,
         status="draft",
+        copy_policy="allowed",
+        default_dataset_access_mode="imported",
         is_active=True,
         created_by_id=current_user.id,
     )
-    db.add(datasource)
-    db.flush()
+        db.add(datasource)
+        db.flush()
 
     spreadsheet_import = SpreadsheetImport(
         datasource_id=datasource.id,
@@ -444,6 +459,8 @@ async def confirm_import(
         total_rows = 0
         datasource = db.query(DataSource).filter(DataSource.id == spreadsheet_import.datasource_id).first()
         datasource_display_name = datasource.name if datasource else spreadsheet_import.display_name
+        workspace_id = int(datasource.created_by_id if datasource is not None else spreadsheet_import.created_by_id)
+        target_schema = f"lens_imp_t{workspace_id}"
 
         for index, current_sheet_name in enumerate(sheet_names, start=1):
             current_parsed = parsed
@@ -471,10 +488,11 @@ async def confirm_import(
                 sheet_name=current_sheet_name,
                 sheet_index=index,
             )
-            resource_id = build_resource_id(table_name)
+            resource_id = build_resource_id(table_name, schema_name=target_schema)
             row_count, error_samples = create_import_table_and_load_rows(
                 analytics_db_url=analytics_db_url,
                 table_name=table_name,
+                schema_name=target_schema,
                 import_id=spreadsheet_import.id,
                 mapped_schema=mapped_schema,
                 rows=current_parsed.rows,
@@ -489,7 +507,7 @@ async def confirm_import(
                 db.query(View)
                 .filter(
                     View.datasource_id == spreadsheet_import.datasource_id,
-                    View.schema_name == "public",
+                    View.schema_name == target_schema,
                     View.view_name == table_name,
                 )
                 .first()
@@ -500,7 +518,7 @@ async def confirm_import(
             else:
                 view = View(
                     datasource_id=spreadsheet_import.datasource_id,
-                    schema_name="public",
+                    schema_name=target_schema,
                     view_name=table_name,
                     description=f"Planilha importada: {datasource_display_name}",
                     is_active=True,

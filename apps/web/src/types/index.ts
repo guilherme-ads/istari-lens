@@ -1,5 +1,14 @@
 export type DatasourceStatus = "active" | "inactive" | "syncing";
 export type ViewStatus = "active" | "inactive";
+export type DatasetAccessMode = "direct" | "imported";
+export type DatasetDataStatus =
+  | "draft"
+  | "initializing"
+  | "ready"
+  | "syncing"
+  | "error"
+  | "drift_blocked"
+  | "paused";
 
 export interface Datasource {
   id: string;
@@ -9,6 +18,8 @@ export interface Datasource {
   status: DatasourceStatus;
   sourceType: "database" | "spreadsheet";
   description: string;
+  copyPolicy: "allowed" | "forbidden";
+  defaultDatasetAccessMode: DatasetAccessMode;
 }
 
 export interface View {
@@ -35,6 +46,11 @@ export interface Dataset {
   description: string;
   viewId?: string;
   baseQuerySpec?: Record<string, unknown> | null;
+  accessMode: DatasetAccessMode;
+  executionDatasourceId?: string;
+  executionViewId?: string;
+  dataStatus: DatasetDataStatus;
+  lastSuccessfulSyncAt?: string | null;
   semanticColumns: Array<{
     name: string;
     type: "numeric" | "temporal" | "text" | "boolean";

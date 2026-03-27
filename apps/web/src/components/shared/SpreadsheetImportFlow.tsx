@@ -441,6 +441,15 @@ const SpreadsheetImportFlow = ({ onBack, onCompleted }: SpreadsheetImportFlowPro
                     <Input id="import-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Relatorio Financeiro Q1" />
                   </div>
                   <div className="space-y-1.5">
+                    <Label>Destino da importacao</Label>
+                    <div className="rounded-md border border-border bg-muted/10 px-3 py-2 text-sm text-foreground">
+                      Fonte dedicada de planilha
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Cada importacao de planilha cria uma fonte dedicada automaticamente.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
                     <Label htmlFor="import-desc">Descrição</Label>
                     <Textarea id="import-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Contexto e uso esperado..." />
                   </div>
