@@ -517,6 +517,54 @@ def test_resolve_next_slot_table_name_defaults_to_slot_a_when_view_missing(monke
     assert table_name == "ds_1__sales__slot_a"
 
 
+def test_publish_stable_view_recreates_view_to_allow_schema_drift(monkeypatch) -> None:
+    worker = DatasetSyncWorkerService(
+        session_factory=_build_session_factory(),
+        settings=get_settings(),
+        worker_id="test-worker",
+    )
+
+    executed_sql: list[str] = []
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def execute(self, query, params=None):  # noqa: ANN001
+            _ = params
+            executed_sql.append(str(query))
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr("app.modules.datasets.sync_services.psycopg.connect", lambda _url: _FakeConn())
+
+    worker._publish_stable_view(
+        internal_url="postgresql://internal",
+        target_schema="lens_imp_t1",
+        load_table_name="ds_1__sales__slot_b",
+        published_view_name="ds_1__sales",
+    )
+
+    assert len(executed_sql) == 2
+    assert "DROP VIEW IF EXISTS" in executed_sql[0]
+    assert "CREATE VIEW" in executed_sql[1]
+    assert "CREATE OR REPLACE VIEW" not in executed_sql[1]
+
+
 def test_build_imported_index_plan_prefers_temporal_and_id_columns() -> None:
     settings = get_settings().model_copy(
         update={

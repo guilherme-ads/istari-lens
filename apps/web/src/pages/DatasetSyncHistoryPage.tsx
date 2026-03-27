@@ -114,6 +114,8 @@ const DatasetSyncHistoryPage = () => {
   const [runDatasetId, setRunDatasetId] = useState("all");
   const [selectedRunRef, setSelectedRunRef] = useState<RunRef | null>(null);
   const [detailsTab, setDetailsTab] = useState("logs");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState("10");
 
   const importedDatasets = useMemo(() => datasets.filter((dataset) => dataset.accessMode === "imported"), [datasets]);
 
@@ -215,6 +217,22 @@ const DatasetSyncHistoryPage = () => {
 
   const runningRuns = useMemo(() => filteredRuns.filter((run) => run.status === "running" || run.status === "queued"), [filteredRuns]);
   const historyRuns = useMemo(() => filteredRuns.filter((run) => run.status !== "running" && run.status !== "queued"), [filteredRuns]);
+  const historyPageSizeNumber = useMemo(() => Math.max(1, Number.parseInt(historyPageSize, 10) || 10), [historyPageSize]);
+  const historyTotalPages = useMemo(() => Math.max(1, Math.ceil(historyRuns.length / historyPageSizeNumber)), [historyRuns.length, historyPageSizeNumber]);
+  const paginatedHistoryRuns = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSizeNumber;
+    return historyRuns.slice(start, start + historyPageSizeNumber);
+  }, [historyPage, historyPageSizeNumber, historyRuns]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [search, statusFilter, periodFilter, datasetFilter, triggerTypeFilter, historyPageSize]);
+
+  useEffect(() => {
+    if (historyPage > historyTotalPages) {
+      setHistoryPage(historyTotalPages);
+    }
+  }, [historyPage, historyTotalPages]);
 
   useEffect(() => {
     if (filteredRuns.length === 0) {
@@ -522,7 +540,53 @@ const DatasetSyncHistoryPage = () => {
         <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
           <div className="space-y-4">
             <RunsTableCard title="Em Execucao" subtitle={`${runningRuns.length} run(s)`} isLoading={runsQuery.isLoading} emptyLabel="Nenhuma execucao em andamento." rows={runningRuns} dateSource="start" renderRows={renderRows} />
-            <RunsTableCard title="Historico" subtitle={`${historyRuns.length} run(s)`} isLoading={runsQuery.isLoading} emptyLabel="Sem runs no historico para os filtros atuais." rows={historyRuns} dateSource="end" renderRows={renderRows} />
+            <RunsTableCard
+              title="Historico"
+              subtitle={`${historyRuns.length} run(s)`}
+              isLoading={runsQuery.isLoading}
+              emptyLabel="Sem runs no historico para os filtros atuais."
+              rows={paginatedHistoryRuns}
+              dateSource="end"
+              renderRows={renderRows}
+              footer={historyRuns.length > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 px-2 pt-3">
+                  <div className="flex items-center gap-2 text-caption text-muted-foreground">
+                    <span>Itens por pagina</span>
+                    <Select value={historyPageSize} onValueChange={setHistoryPageSize}>
+                      <SelectTrigger className="h-8 w-[78px]"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-caption text-muted-foreground">Pagina {historyPage} de {historyTotalPages}</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={historyPage <= 1}
+                      onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={historyPage >= historyTotalPages}
+                      onClick={() => setHistoryPage((prev) => Math.min(historyTotalPages, prev + 1))}
+                    >
+                      Proxima
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            />
           </div>
 
           <Card className="glass-card border-border-default">
@@ -537,7 +601,15 @@ const DatasetSyncHistoryPage = () => {
                     <div className="rounded-md border border-border p-3 text-caption">
                       <p className="font-semibold text-foreground">{selectedRun.dataset_name}</p>
                       <p className="text-muted-foreground">Run #{selectedRun.id}</p>
-                      {selectedRun.error_message ? <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-destructive">{selectedRun.error_message}</div> : <div className="mt-2 rounded-md border border-success/40 bg-success/10 p-2 text-success"><span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Sem erro registrado</span></div>}
+                      {selectedRun.error_message ? (
+                        <div className="mt-2 max-h-24 overflow-auto rounded-md border border-destructive/40 bg-destructive/10 p-2 text-destructive whitespace-pre-wrap break-all">
+                          {selectedRun.error_message}
+                        </div>
+                      ) : (
+                        <div className="mt-2 rounded-md border border-success/40 bg-success/10 p-2 text-success">
+                          <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Sem erro registrado</span>
+                        </div>
+                      )}
                     </div>
                     <pre className="max-h-72 overflow-auto rounded-md border border-border bg-muted/35 p-2 text-[11px] leading-snug">{toPrettyJson({ error_details: selectedRun.error_details || null, drift_summary: selectedRun.drift_summary || null, details_response: selectedRunDetails || null })}</pre>
                   </TabsContent>
@@ -578,6 +650,7 @@ const RunsTableCard = ({
   rows,
   dateSource,
   renderRows,
+  footer,
 }: {
   title: string;
   subtitle: string;
@@ -586,6 +659,7 @@ const RunsTableCard = ({
   rows: ApiAdminDatasetSyncRun[];
   dateSource: "start" | "end";
   renderRows: (rows: ApiAdminDatasetSyncRun[], dateSource: "start" | "end") => JSX.Element[];
+  footer?: JSX.Element | null;
 }) => (
   <Card className="glass-card border-border-default">
     <CardHeader className="pb-3">
@@ -615,6 +689,7 @@ const RunsTableCard = ({
           </TableBody>
         </Table>
       </div>
+      {footer}
     </CardContent>
   </Card>
 );

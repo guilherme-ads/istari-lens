@@ -2232,7 +2232,11 @@ class DatasetSyncWorkerService:
         published_view_name: str,
     ) -> None:
         safe_internal_url = _to_psycopg_url(internal_url)
-        publish_sql = sql.SQL("CREATE OR REPLACE VIEW {}.{} AS SELECT * FROM {}.{}").format(
+        drop_sql = sql.SQL("DROP VIEW IF EXISTS {}.{}").format(
+            sql.Identifier(target_schema),
+            sql.Identifier(published_view_name),
+        )
+        publish_sql = sql.SQL("CREATE VIEW {}.{} AS SELECT * FROM {}.{}").format(
             sql.Identifier(target_schema),
             sql.Identifier(published_view_name),
             sql.Identifier(target_schema),
@@ -2240,6 +2244,8 @@ class DatasetSyncWorkerService:
         )
         with psycopg.connect(safe_internal_url) as conn:
             with conn.cursor() as cur:
+                # Recreate to tolerate schema drift (renamed/reordered columns).
+                cur.execute(drop_sql)
                 cur.execute(publish_sql)
             conn.commit()
 
