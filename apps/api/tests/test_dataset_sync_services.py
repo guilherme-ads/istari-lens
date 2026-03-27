@@ -862,3 +862,77 @@ def test_materialize_base_query_spec_supports_formula_computed(monkeypatch) -> N
     assert rows_written == 1
     assert bytes_processed == 0
     assert executed_params == [100]
+
+
+def test_materialize_base_query_spec_supports_unicode_column_identifiers(monkeypatch) -> None:
+    worker = DatasetSyncWorkerService(
+        session_factory=_build_session_factory(),
+        settings=get_settings(),
+        worker_id="test-worker",
+    )
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def execute(self, _query, params=None):  # noqa: ANN001
+            _ = params
+
+        def fetchone(self):
+            return (1,)
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr("app.modules.datasets.sync_services.psycopg.connect", lambda _url: _FakeConn())
+
+    dataset = SimpleNamespace(
+        id=9,
+        name="Receita",
+        base_query_spec={
+            "base": {
+                "primary_resource": "lens_imp_t1.vw_receita",
+                "resources": [{"id": "r0", "resource_id": "lens_imp_t1.vw_receita"}],
+                "joins": [],
+            },
+            "preprocess": {
+                "columns": {
+                    "include": [
+                        {
+                            "resource": "r0",
+                            "column": "margem_contribuição_rede",
+                            "alias": "margem_contribuição_rede",
+                        },
+                    ],
+                    "exclude": [],
+                },
+                "computed_columns": [],
+                "filters": [],
+            },
+        },
+    )
+
+    rows_read, rows_written, bytes_processed = worker._materialize_base_query_spec_to_internal(
+        dataset=dataset,
+        source_url=None,
+        internal_url="postgresql://internal",
+        target_schema="lens_imp_t1",
+        load_table_name="ds_9__receita__slot_a",
+    )
+
+    assert rows_read == 1
+    assert rows_written == 1
+    assert bytes_processed == 0
