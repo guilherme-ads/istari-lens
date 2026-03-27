@@ -251,6 +251,41 @@ class DatasetSyncRunListResponse(BaseModel):
     items: List[DatasetSyncRunResponse] = Field(default_factory=list)
 
 
+class AdminDatasetSyncRunResponse(BaseModel):
+    id: int
+    dataset_id: int
+    dataset_name: str
+    dataset_access_mode: str
+    dataset_data_status: str
+    datasource_id: int
+    datasource_name: str
+    import_enabled: bool
+    trigger_type: str
+    status: str
+    queued_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    attempt: int
+    published_execution_view_id: Optional[int] = None
+    drift_summary: Optional[dict[str, Any]] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    error_details: Optional[dict[str, Any]] = None
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    stats: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminDatasetSyncRunListResponse(BaseModel):
+    items: List[AdminDatasetSyncRunResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+
+
 class DatasetSyncScheduleUpsertRequest(BaseModel):
     enabled: bool = True
     schedule_kind: Literal["interval", "cron"] = "interval"

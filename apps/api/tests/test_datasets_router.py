@@ -471,6 +471,166 @@ def test_sync_run_retry_enqueues_new_attempt_and_supports_list_and_get() -> None
     assert get_payload["trigger_type"] == "retry"
 
 
+def test_admin_sync_list_returns_global_runs_with_dataset_metadata() -> None:
+    client, session_factory, dataset_id, _dashboard_id, _widget_id, datasource_id = _create_app()
+    second_dataset_id: int | None = None
+    session: Session = session_factory()
+    try:
+        second_dataset = Dataset(
+            datasource_id=datasource_id,
+            view_id=None,
+            name="Inventory Imported",
+            description="",
+            access_mode="imported",
+            data_status="initializing",
+            is_active=True,
+        )
+        session.add(second_dataset)
+        session.flush()
+        second_dataset_id = int(second_dataset.id)
+        session.add(
+            DatasetSyncRun(
+                dataset_id=dataset_id,
+                trigger_type="manual",
+                status="failed",
+                attempt=1,
+                input_snapshot={},
+                stats={},
+                error_message="primary failed",
+            )
+        )
+        session.add(
+            DatasetSyncRun(
+                dataset_id=second_dataset_id,
+                trigger_type="scheduled",
+                status="running",
+                attempt=2,
+                input_snapshot={"from": "scheduler"},
+                stats={},
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    with client:
+        response = client.get("/datasets/admin/syncs?status=running,failed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 2
+    dataset_names = {item["dataset_name"] for item in payload["items"]}
+    assert "Sales" in dataset_names
+    assert "Inventory Imported" in dataset_names
+    assert all("datasource_name" in item for item in payload["items"])
+
+
+def test_admin_cancel_sync_run_marks_active_run_as_canceled() -> None:
+    client, session_factory, dataset_id, _dashboard_id, _widget_id, _datasource_id = _create_app()
+    queued_run_id: int | None = None
+    session: Session = session_factory()
+    try:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        dataset.access_mode = "imported"
+        dataset.data_status = "syncing"
+        queued_run = DatasetSyncRun(
+            dataset_id=dataset_id,
+            trigger_type="manual",
+            status="queued",
+            attempt=1,
+            input_snapshot={},
+            stats={},
+        )
+        session.add(queued_run)
+        session.flush()
+        queued_run_id = int(queued_run.id)
+        session.commit()
+    finally:
+        session.close()
+
+    with client:
+        response = client.post(f"/datasets/admin/syncs/{queued_run_id}/cancel")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "canceled"
+    assert payload["error_code"] == "cancel_requested"
+
+    session = session_factory()
+    try:
+        run = session.get(DatasetSyncRun, queued_run_id)
+        dataset = session.get(Dataset, dataset_id)
+        assert run is not None
+        assert run.status == "canceled"
+        assert dataset is not None
+        assert dataset.data_status in {"initializing", "ready", "paused"}
+    finally:
+        session.close()
+
+
+def test_admin_pause_and_resume_sync_updates_import_config_and_cancels_active_runs() -> None:
+    client, session_factory, dataset_id, _dashboard_id, _widget_id, _datasource_id = _create_app()
+    session: Session = session_factory()
+    queued_run_id: int | None = None
+    try:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        dataset.access_mode = "imported"
+        dataset.data_status = "syncing"
+        session.add(
+            DatasetImportConfig(
+                dataset_id=dataset_id,
+                refresh_mode="full_refresh",
+                drift_policy="block_on_breaking",
+                enabled=True,
+            )
+        )
+        queued_run = DatasetSyncRun(
+            dataset_id=dataset_id,
+            trigger_type="manual",
+            status="queued",
+            attempt=1,
+            input_snapshot={},
+            stats={},
+        )
+        session.add(queued_run)
+        session.flush()
+        queued_run_id = int(queued_run.id)
+        session.commit()
+    finally:
+        session.close()
+
+    with client:
+        pause_response = client.post(f"/datasets/admin/datasets/{dataset_id}/pause-sync")
+    assert pause_response.status_code == 200, pause_response.text
+    assert pause_response.json()["enabled"] is False
+
+    session = session_factory()
+    try:
+        config = session.query(DatasetImportConfig).filter(DatasetImportConfig.dataset_id == dataset_id).first()
+        run = session.get(DatasetSyncRun, queued_run_id)
+        dataset = session.get(Dataset, dataset_id)
+        assert config is not None
+        assert config.enabled is False
+        assert run is not None
+        assert run.status == "canceled"
+        assert dataset is not None
+        assert dataset.data_status == "paused"
+    finally:
+        session.close()
+
+    with client:
+        resume_response = client.post(f"/datasets/admin/datasets/{dataset_id}/resume-sync")
+    assert resume_response.status_code == 200, resume_response.text
+    assert resume_response.json()["enabled"] is True
+    session = session_factory()
+    try:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        assert dataset.data_status in {"ready", "initializing"}
+    finally:
+        session.close()
+
 def test_sync_schedule_put_get_and_delete() -> None:
     client, session_factory, dataset_id, _dashboard_id, _widget_id, _datasource_id = _create_app()
     session: Session = session_factory()
