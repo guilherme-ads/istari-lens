@@ -102,6 +102,15 @@ class DatasetResponse(BaseModel):
         from_attributes = True
 
 
+class DatasetComputedExpressionCatalogResponse(BaseModel):
+    mode: Literal["row_level"] = "row_level"
+    description: str
+    forbidden_aggregations: List[str] = Field(default_factory=list)
+    allowed_functions: dict[str, List[str]] = Field(default_factory=dict)
+    allowed_operators: List[str] = Field(default_factory=list)
+    examples: List[str] = Field(default_factory=list)
+
+
 class AdminUserBaseResponse(BaseModel):
     id: int
     email: str

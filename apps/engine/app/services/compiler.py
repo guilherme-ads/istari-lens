@@ -16,6 +16,7 @@ _TEMPORAL_DIMENSION_PREFIXES: dict[str, str] = {
     "__time_weekday__": "weekday",
     "__time_hour__": "hour",
 }
+_FORBIDDEN_ROW_LEVEL_AGGREGATIONS = {"sum", "avg", "count", "min", "max"}
 
 
 def _quote_ident(identifier: str) -> str:
@@ -329,6 +330,12 @@ def _compile_base_expr(node: Any) -> str:
     args = node.get("args")
     if not isinstance(op, str):
         raise EngineError(status_code=400, code="invalid_base_query", message="Computed column expression operator is required")
+    if op.lower() in _FORBIDDEN_ROW_LEVEL_AGGREGATIONS:
+        raise EngineError(
+            status_code=400,
+            code="invalid_base_query",
+            message="Agregacoes nao sao permitidas em colunas calculadas. Use metricas para isso.",
+        )
     if not isinstance(args, list) or not args:
         raise EngineError(status_code=400, code="invalid_base_query", message="Computed column expression args are required")
     rendered_args = [_compile_base_expr(item) for item in args]
@@ -350,12 +357,20 @@ def _compile_base_expr(node: Any) -> str:
         if len(rendered_args) != 2:
             raise EngineError(status_code=400, code="invalid_base_query", message="div expects 2 args")
         return f"(({rendered_args[0]})::double precision / NULLIF(({rendered_args[1]})::double precision, 0))"
+    if normalized_op == "mod":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="mod expects 2 args")
+        return f"MOD({rendered_args[0]}, {rendered_args[1]})"
     if normalized_op == "concat":
         if len(rendered_args) != 2:
             raise EngineError(status_code=400, code="invalid_base_query", message="concat expects 2 args")
         return f"({rendered_args[0]}::text || {rendered_args[1]}::text)"
     if normalized_op == "coalesce":
         return f"COALESCE({', '.join(rendered_args)})"
+    if normalized_op == "nullif":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="nullif expects 2 args")
+        return f"NULLIF({rendered_args[0]}, {rendered_args[1]})"
     if normalized_op == "lower":
         if len(rendered_args) != 1:
             raise EngineError(status_code=400, code="invalid_base_query", message="lower expects 1 arg")
@@ -364,10 +379,82 @@ def _compile_base_expr(node: Any) -> str:
         if len(rendered_args) != 1:
             raise EngineError(status_code=400, code="invalid_base_query", message="upper expects 1 arg")
         return f"UPPER({rendered_args[0]}::text)"
-    if normalized_op == "date_trunc":
+    if normalized_op == "substring":
+        if len(rendered_args) not in {2, 3}:
+            raise EngineError(status_code=400, code="invalid_base_query", message="substring expects 2 or 3 args")
+        if len(rendered_args) == 2:
+            return f"SUBSTRING({rendered_args[0]}::text FROM {rendered_args[1]})"
+        return f"SUBSTRING({rendered_args[0]}::text FROM {rendered_args[1]} FOR {rendered_args[2]})"
+    if normalized_op == "trim":
         if len(rendered_args) != 1:
-            raise EngineError(status_code=400, code="invalid_base_query", message="date_trunc expects 1 arg")
-        return f"DATE_TRUNC('day', {rendered_args[0]})"
+            raise EngineError(status_code=400, code="invalid_base_query", message="trim expects 1 arg")
+        return f"TRIM({rendered_args[0]}::text)"
+    if normalized_op == "extract":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="extract expects 2 args")
+        return f"EXTRACT({rendered_args[0]} FROM {rendered_args[1]})"
+    if normalized_op == "abs":
+        if len(rendered_args) != 1:
+            raise EngineError(status_code=400, code="invalid_base_query", message="abs expects 1 arg")
+        return f"ABS({rendered_args[0]})"
+    if normalized_op == "round":
+        if len(rendered_args) != 1:
+            raise EngineError(status_code=400, code="invalid_base_query", message="round expects 1 arg")
+        return f"ROUND({rendered_args[0]})"
+    if normalized_op == "ceil":
+        if len(rendered_args) != 1:
+            raise EngineError(status_code=400, code="invalid_base_query", message="ceil expects 1 arg")
+        return f"CEIL({rendered_args[0]})"
+    if normalized_op == "floor":
+        if len(rendered_args) != 1:
+            raise EngineError(status_code=400, code="invalid_base_query", message="floor expects 1 arg")
+        return f"FLOOR({rendered_args[0]})"
+    if normalized_op == "date_trunc":
+        if len(rendered_args) == 1:
+            return f"DATE_TRUNC('day', {rendered_args[0]})"
+        if len(rendered_args) == 2:
+            return f"DATE_TRUNC({rendered_args[0]}::text, {rendered_args[1]})"
+        raise EngineError(status_code=400, code="invalid_base_query", message="date_trunc expects 1 or 2 args")
+    if normalized_op == "eq":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="eq expects 2 args")
+        return f"({rendered_args[0]} = {rendered_args[1]})"
+    if normalized_op == "neq":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="neq expects 2 args")
+        return f"({rendered_args[0]} <> {rendered_args[1]})"
+    if normalized_op == "gt":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="gt expects 2 args")
+        return f"({rendered_args[0]} > {rendered_args[1]})"
+    if normalized_op == "gte":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="gte expects 2 args")
+        return f"({rendered_args[0]} >= {rendered_args[1]})"
+    if normalized_op == "lt":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="lt expects 2 args")
+        return f"({rendered_args[0]} < {rendered_args[1]})"
+    if normalized_op == "lte":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="lte expects 2 args")
+        return f"({rendered_args[0]} <= {rendered_args[1]})"
+    if normalized_op == "and":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="and expects 2 args")
+        return f"(({rendered_args[0]}) AND ({rendered_args[1]}))"
+    if normalized_op == "or":
+        if len(rendered_args) != 2:
+            raise EngineError(status_code=400, code="invalid_base_query", message="or expects 2 args")
+        return f"(({rendered_args[0]}) OR ({rendered_args[1]}))"
+    if normalized_op == "not":
+        if len(rendered_args) != 1:
+            raise EngineError(status_code=400, code="invalid_base_query", message="not expects 1 arg")
+        return f"(NOT ({rendered_args[0]}))"
+    if normalized_op == "case_when":
+        if len(rendered_args) != 3:
+            raise EngineError(status_code=400, code="invalid_base_query", message="case_when expects 3 args")
+        return f"(CASE WHEN {rendered_args[0]} THEN {rendered_args[1]} ELSE {rendered_args[2]} END)"
     raise EngineError(status_code=400, code="invalid_base_query", message=f"Unsupported computed column operator '{op}'")
 
 

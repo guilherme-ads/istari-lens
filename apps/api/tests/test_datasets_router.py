@@ -204,6 +204,26 @@ def test_list_datasets_recomputes_semantic_columns_from_base_query_spec() -> Non
     assert target["type"] == "temporal"
 
 
+def test_list_datasets_builds_legacy_base_query_spec_when_missing() -> None:
+    client, session_factory, dataset_id, _dashboard_id, _widget_id, _datasource_id = _create_app()
+    session: Session = session_factory()
+    try:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        dataset.base_query_spec = None
+        session.commit()
+    finally:
+        session.close()
+
+    with client:
+        response = client.get("/datasets")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    row = next(item for item in payload if item["id"] == dataset_id)
+    assert row["base_query_spec"]["base"]["primary_resource"] == "public.vw_sales"
+    assert row["base_query_spec"]["base"]["resources"] == [{"id": "base", "resource_id": "public.vw_sales"}]
+
+
 def test_bulk_import_enable_sets_access_mode_creates_config_and_queues_initial_sync() -> None:
     client, session_factory, dataset_id, _dashboard_id, _widget_id, datasource_id = _create_app()
 
@@ -226,6 +246,8 @@ def test_bulk_import_enable_sets_access_mode_creates_config_and_queues_initial_s
         assert dataset.access_mode == "imported"
         assert dataset.data_status == "initializing"
         assert dataset.last_sync_run_id is not None
+        assert dataset.base_query_spec is not None
+        assert dataset.base_query_spec["base"]["primary_resource"] == "public.vw_sales"
 
         config = session.query(DatasetImportConfig).filter(DatasetImportConfig.dataset_id == dataset_id).first()
         assert config is not None
@@ -239,6 +261,44 @@ def test_bulk_import_enable_sets_access_mode_creates_config_and_queues_initial_s
     finally:
         session.close()
 
+
+def test_bulk_import_enable_skips_dataset_without_view_or_base_query_source() -> None:
+    client, session_factory, _dataset_id, _dashboard_id, _widget_id, datasource_id = _create_app()
+    orphan_dataset_id: int | None = None
+    session: Session = session_factory()
+    try:
+        orphan = Dataset(
+            datasource_id=datasource_id,
+            view_id=None,
+            name="Orphan",
+            description="",
+            base_query_spec=None,
+            is_active=True,
+        )
+        session.add(orphan)
+        session.flush()
+        orphan_dataset_id = int(orphan.id)
+        session.commit()
+    finally:
+        session.close()
+
+    with client:
+        response = client.post(
+            f"/datasets/datasources/{datasource_id}/import-enable",
+            json={},
+        )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["targeted_count"] == 2
+    assert payload["updated_count"] == 1
+    assert payload["run_enqueued_count"] == 1
+    assert payload["skipped_count"] == 1
+    assert payload["skipped_items"] == [
+        {
+            "dataset_id": orphan_dataset_id,
+            "reason": "dataset_has_no_base_query_source",
+        }
+    ]
 
 def test_create_dataset_uses_datasource_default_access_mode_when_not_provided() -> None:
     client, session_factory, _dataset_id, _dashboard_id, _widget_id, datasource_id = _create_app()

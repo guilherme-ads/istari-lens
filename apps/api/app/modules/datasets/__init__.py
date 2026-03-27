@@ -5,6 +5,7 @@ from app.modules.datasets.query_composer import (
     resolve_dataset_base_query_spec,
 )
 from app.modules.datasets.execution_mode import resolve_effective_access_mode, has_published_import_binding
+from app.modules.datasets.computed_expression import build_computed_expression_catalog
 
 __all__ = [
     "validate_and_resolve_base_query_spec",
@@ -13,4 +14,5 @@ __all__ = [
     "compose_engine_query_spec_with_dataset",
     "resolve_effective_access_mode",
     "has_published_import_binding",
+    "build_computed_expression_catalog",
 ]

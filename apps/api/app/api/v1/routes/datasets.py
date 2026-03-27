@@ -33,6 +33,7 @@ from app.modules.datasets.access import (
 )
 from app.modules.datasets import (
     build_legacy_base_query_spec,
+    build_computed_expression_catalog,
     has_published_import_binding,
     validate_and_resolve_base_query_spec,
 )
@@ -41,6 +42,7 @@ from app.modules.core.legacy.schemas import (
     DatasetBulkImportEnableResponse,
     DatasetBulkImportEnableSkipItem,
     DatasetCreateRequest,
+    DatasetComputedExpressionCatalogResponse,
     DatasetEmailShareResponse,
     DatasetImportConfigResponse,
     DatasetImportConfigUpsertRequest,
@@ -288,6 +290,17 @@ def _apply_semantic_descriptions(
     return enriched
 
 
+def _resolve_or_build_dataset_base_query_spec(dataset: Dataset) -> dict[str, Any] | None:
+    if isinstance(dataset.base_query_spec, dict):
+        return dataset.base_query_spec
+    if dataset.view is None:
+        return None
+    return build_legacy_base_query_spec(
+        datasource_id=int(dataset.datasource_id),
+        view=dataset.view,
+    )
+
+
 def _resolve_dataset_view(
     *,
     db: Session,
@@ -530,24 +543,33 @@ async def list_datasets(
     datasets = query.all()
     response_items: list[DatasetResponse] = []
     for dataset in datasets:
+        resolved_base_query_spec = _resolve_or_build_dataset_base_query_spec(dataset)
         persisted_descriptions = _semantic_description_map(
             dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else None
         )
         runtime_semantic_columns = dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else []
-        if isinstance(dataset.base_query_spec, dict):
+        if isinstance(resolved_base_query_spec, dict):
             try:
                 _, runtime_semantic_columns = validate_and_resolve_base_query_spec(
                     db=db,
                     datasource_id=int(dataset.datasource_id),
-                    base_query_spec=dataset.base_query_spec,
+                    base_query_spec=resolved_base_query_spec,
                 )
             except HTTPException:
                 runtime_semantic_columns = dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else []
         runtime_semantic_columns = _apply_semantic_descriptions(runtime_semantic_columns, persisted_descriptions)
         payload = DatasetResponse.model_validate(dataset)
+        payload.base_query_spec = resolved_base_query_spec
         payload.semantic_columns = runtime_semantic_columns
         response_items.append(payload)
     return response_items
+
+
+@router.get("/computed-expression/catalog", response_model=DatasetComputedExpressionCatalogResponse)
+async def get_computed_expression_catalog(
+    current_user: User = Depends(get_current_user),  # noqa: ARG001
+):
+    return build_computed_expression_catalog()
 
 
 @router.post("", response_model=DatasetResponse)
@@ -1019,7 +1041,44 @@ async def bulk_enable_imported_mode(
     updated_count = 0
     run_enqueued_count = 0
     for dataset in rows:
+        resolved_base_query_spec = _resolve_or_build_dataset_base_query_spec(dataset)
+        if resolved_base_query_spec is None:
+            skipped_items.append(
+                DatasetBulkImportEnableSkipItem(
+                    dataset_id=int(dataset.id),
+                    reason="dataset_has_no_base_query_source",
+                )
+            )
+            continue
+
         changed = False
+        if not isinstance(dataset.base_query_spec, dict):
+            description_map = _semantic_description_map(
+                dataset.semantic_columns if isinstance(dataset.semantic_columns, list) else None
+            )
+            try:
+                resolved_base_query_spec, semantic_columns = validate_and_resolve_base_query_spec(
+                    db=db,
+                    datasource_id=int(dataset.datasource_id),
+                    base_query_spec=resolved_base_query_spec,
+                    allow_workspace_internal_resources=True,
+                    workspace_id=int(datasource.created_by_id),
+                )
+            except HTTPException as exc:
+                skipped_items.append(
+                    DatasetBulkImportEnableSkipItem(
+                        dataset_id=int(dataset.id),
+                        reason=f"dataset_invalid_base_query_spec:{exc.detail}",
+                    )
+                )
+                continue
+            dataset.base_query_spec = _estimate_join_cardinality_by_sampling(
+                datasource=datasource,
+                base_query_spec=resolved_base_query_spec,
+            )
+            dataset.semantic_columns = _apply_semantic_descriptions(semantic_columns, description_map)
+            changed = True
+
         if dataset.access_mode != "imported":
             dataset.access_mode = "imported"
             changed = True

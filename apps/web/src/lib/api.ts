@@ -293,6 +293,15 @@ export type ApiDatasetSyncSchedule = {
   updated_at: string;
 };
 
+export type ApiDatasetComputedExpressionCatalog = {
+  mode: "row_level";
+  description: string;
+  forbidden_aggregations: string[];
+  allowed_functions: Record<string, string[]>;
+  allowed_operators: string[];
+  examples: string[];
+};
+
 export type ApiDatasetBulkImportEnableResponse = {
   targeted_count: number;
   updated_count: number;
@@ -1080,8 +1089,11 @@ export const api = {
 
   deleteView: (viewId: number) => request<void>(`/admin/views/${viewId}`, { method: "DELETE" }),
 
-  getViewColumns: (viewName: string, schemaName?: string) => {
-    const query = schemaName ? `?schema_name=${encodeURIComponent(schemaName)}` : "";
+  getViewColumns: (viewName: string, schemaName?: string, datasourceId?: number) => {
+    const queryParts: string[] = [];
+    if (schemaName) queryParts.push(`schema_name=${encodeURIComponent(schemaName)}`);
+    if (typeof datasourceId === "number" && Number.isFinite(datasourceId)) queryParts.push(`datasource_id=${datasourceId}`);
+    const query = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
     return request<ApiViewSchemaColumn[]>(`/views/${encodeURIComponent(viewName)}/columns${query}`);
   },
 
@@ -1167,6 +1179,9 @@ export const api = {
 
   getDatasetSyncSchedule: (datasetId: number) =>
     request<ApiDatasetSyncSchedule>(`/datasets/${datasetId}/sync-schedule`),
+
+  getDatasetComputedExpressionCatalog: () =>
+    request<ApiDatasetComputedExpressionCatalog>("/datasets/computed-expression/catalog"),
 
   upsertDatasetSyncSchedule: (
     datasetId: number,

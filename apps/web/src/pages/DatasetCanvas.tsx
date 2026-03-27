@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Calculator, CalendarIcon, ChevronDown, ChevronUp, CircleHelp, Columns3, Copy, Database, Eye, EyeOff, Filter, FunctionSquare, Hash, Layers3, Loader2, Plus, Redo2, RefreshCw, Save, Table2, Trash2, Undo2, X, Zap } from "lucide-react";
+import { ArrowLeft, Calculator, CalendarIcon, ChevronDown, ChevronUp, CircleHelp, Columns3, Copy, Database, Eye, EyeOff, Filter, FunctionSquare, Hash, Layers3, Loader2, Pencil, Plus, Redo2, RefreshCw, Save, Table2, Trash2, Undo2, X, Zap } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 
 import CanvasStatusBar from "@/components/dataset-canvas/CanvasStatusBar";
@@ -27,7 +27,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Calendar } from "@/components/ui/calendar";
 import { useCoreData } from "@/hooks/use-core-data";
 import { useToast } from "@/hooks/use-toast";
-import { api, ApiCatalogDataPreviewResponse, ApiCatalogDimension, ApiCatalogMetric, ApiDataset, ApiDatasetBaseQuerySpec, ApiDatasetSyncRun, ApiDatasetSyncSchedule, ApiError } from "@/lib/api";
+import { api, ApiCatalogDataPreviewResponse, ApiCatalogDimension, ApiCatalogMetric, ApiDataset, ApiDatasetBaseQuerySpec, ApiDatasetComputedExpressionCatalog, ApiDatasetSyncRun, ApiDatasetSyncSchedule, ApiError } from "@/lib/api";
+import { evaluateExpression, exprNodeToFormula, getSuggestions, insertSuggestion, normalizeAlias, ROW_LEVEL_AGGREGATION_ERROR, validateAlias, validateAndParseComputedExpression } from "@/lib/computed-expression";
 import { parseApiDate } from "@/lib/datetime";
 import { isInternalWorkspaceDatasource } from "@/lib/datasource-visibility";
 import { cn } from "@/lib/utils";
@@ -101,6 +102,25 @@ const DATASET_RELATIVE_DATE_OPTIONS: Array<{ value: RelativeDatePreset; label: s
 ];
 const DATASET_FILTER_OPS_WITHOUT_VALUE = new Set(["is_null", "not_null"]);
 const DATASET_FILTER_OPS_WITH_LIST_VALUE = new Set(["in", "not_in"]);
+const DEFAULT_COMPUTED_EXPRESSION_CATALOG: ApiDatasetComputedExpressionCatalog = {
+  mode: "row_level",
+  description: "Expressoes calculadas por linha. Agregacoes verticais nao sao permitidas.",
+  forbidden_aggregations: ["sum", "avg", "count", "min", "max"],
+  allowed_functions: {
+    matematica: ["abs", "round", "ceil", "floor"],
+    nulos_e_seguranca: ["coalesce", "nullif"],
+    texto: ["concat", "lower", "upper", "substring", "trim"],
+    data: ["date_trunc", "extract"],
+    logica: ["case when"],
+  },
+  allowed_operators: ["+", "-", "*", "/", "%"],
+  examples: [
+    "receita - custo",
+    "valor * 0.1",
+    "coalesce(desconto, 0)",
+    "case when status = 'ativo' then 1 else 0 end",
+  ],
+};
 
 const formatDateBR = (date: Date) =>
   new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
@@ -185,9 +205,16 @@ const DatasetCanvas = () => {
   const [isComputedDialogOpen, setIsComputedDialogOpen] = useState(false);
   const [isMetricDialogOpen, setIsMetricDialogOpen] = useState(false);
   const [isDimensionDialogOpen, setIsDimensionDialogOpen] = useState(false);
+  const [editingComputedAlias, setEditingComputedAlias] = useState<string | null>(null);
   const [newComputedAlias, setNewComputedAlias] = useState("");
   const [newComputedFormula, setNewComputedFormula] = useState("");
   const [newComputedType, setNewComputedType] = useState<DatasetFieldSemanticType>("numeric");
+  const [computedEditorCursor, setComputedEditorCursor] = useState(0);
+  const [computedEditorSuggestionIndex, setComputedEditorSuggestionIndex] = useState(0);
+  const [computedColumnSearch, setComputedColumnSearch] = useState("");
+  const [computedFunctionSearch, setComputedFunctionSearch] = useState("");
+  const [isComputedEditorFocused, setIsComputedEditorFocused] = useState(false);
+  const computedFormulaRef = useRef<HTMLTextAreaElement | null>(null);
   const [draggingFieldId, setDraggingFieldId] = useState<string | null>(null);
   const [newMetricName, setNewMetricName] = useState("");
   const [newMetricFormula, setNewMetricFormula] = useState("");
@@ -211,6 +238,11 @@ const DatasetCanvas = () => {
     redo: [],
   });
   const isRestoringHistoryRef = useRef(false);
+  const computedExpressionCatalogQuery = useQuery({
+    queryKey: ["dataset-computed-expression-catalog"],
+    queryFn: () => api.getDatasetComputedExpressionCatalog(),
+    staleTime: 300_000,
+  });
 
   const cloneSnapshot = useCallback((snapshot: CanvasSnapshot): CanvasSnapshot => ({
     nodes: snapshot.nodes.map((node) => ({
@@ -439,6 +471,81 @@ const DatasetCanvas = () => {
     return index;
   }, [datasetFilterableColumns]);
 
+  const computedExpressionCatalog = computedExpressionCatalogQuery.data || DEFAULT_COMPUTED_EXPRESSION_CATALOG;
+  const computedAllowedFunctions = useMemo(
+    () => Object.values(computedExpressionCatalog.allowed_functions || {}).flat().filter((item) => item.toLowerCase() !== "case when"),
+    [computedExpressionCatalog.allowed_functions],
+  );
+  const computedColumnsSource = nodeDraftComputedColumns || computedColumns;
+  const computedAvailableColumns = useMemo(() => {
+    const seen = new Set<string>();
+    const items: Array<{ name: string; type: DatasetFieldSemanticType }> = [];
+    filterEditorColumns.forEach((item) => {
+      const name = item.field.trim();
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      items.push({ name, type: item.semanticType });
+    });
+    computedColumnsSource.forEach((item) => {
+      const name = String(item.alias || "").trim();
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      items.push({ name, type: item.data_type || "text" });
+    });
+    return items;
+  }, [computedColumnsSource, filterEditorColumns]);
+  const computedUnavailableAliasNames = useMemo(() => {
+    const taken = new Set<string>();
+    computedAvailableColumns.forEach((item) => taken.add(item.name.toLowerCase()));
+    computedColumnsSource.forEach((item) => taken.add(String(item.alias || "").trim().toLowerCase()));
+    if (editingComputedAlias) {
+      taken.delete(editingComputedAlias.toLowerCase());
+    }
+    return taken;
+  }, [computedAvailableColumns, computedColumnsSource, editingComputedAlias]);
+  const newComputedAliasNormalized = useMemo(() => normalizeAlias(newComputedAlias), [newComputedAlias]);
+  const newComputedAliasError = useMemo(
+    () => validateAlias(newComputedAlias, computedUnavailableAliasNames),
+    [computedUnavailableAliasNames, newComputedAlias],
+  );
+  const computedExpressionValidation = useMemo(
+    () => validateAndParseComputedExpression({
+      formula: newComputedFormula,
+      columns: computedAvailableColumns.map((item) => ({ name: item.name, type: item.type })),
+      allowedFunctions: computedAllowedFunctions,
+      forbiddenAggregations: computedExpressionCatalog.forbidden_aggregations,
+    }),
+    [computedAllowedFunctions, computedAvailableColumns, computedExpressionCatalog.forbidden_aggregations, newComputedFormula],
+  );
+  const computedInferredType = computedExpressionValidation.inferredType;
+  const computedTypeConflict = computedInferredType !== "desconhecido" && computedInferredType !== newComputedType;
+  const computedCanSubmit = !newComputedAliasError && computedExpressionValidation.errors.length === 0 && !!computedExpressionValidation.ast;
+  const computedExpressionSuggestions = useMemo(
+    () => getSuggestions({
+      input: newComputedFormula,
+      cursor: computedEditorCursor,
+      columns: computedAvailableColumns.map((item) => ({ name: item.name, type: item.type })),
+      functions: computedAllowedFunctions,
+    }),
+    [computedAllowedFunctions, computedAvailableColumns, computedEditorCursor, newComputedFormula],
+  );
+  const computedSelectedSuggestion = computedExpressionSuggestions.suggestions[
+    Math.max(0, Math.min(computedEditorSuggestionIndex, computedExpressionSuggestions.suggestions.length - 1))
+  ];
+  const computedPreviewRows = useMemo(() => {
+    if (!computedExpressionValidation.ast || !preview?.rows?.length) return [];
+    return preview.rows.slice(0, 5).map((row, index) => {
+      let result: unknown = null;
+      let error: string | null = null;
+      try {
+        result = evaluateExpression(computedExpressionValidation.ast as Parameters<typeof evaluateExpression>[0], row);
+      } catch (err) {
+        error = err instanceof Error ? err.message : "Falha ao calcular preview";
+      }
+      return { id: `computed-preview-${index}`, row, result, error };
+    });
+  }, [computedExpressionValidation.ast, preview?.rows]);
+
   const resolveDefaultDatasetFilterValue = useCallback((opUi: string, field: string): unknown => {
     const semanticType = datasetFilterTypeByField.get(field) || "text";
     if (opUi === "__relative__" && semanticType === "temporal") return { relative: "last_7_days" as RelativeDatePreset };
@@ -602,8 +709,6 @@ const DatasetCanvas = () => {
     return null;
   }, [accessMode, datasourceId, edges, joinTypeMismatchIssue, name, nodes.length]);
 
-  const hasImportedRestriction = accessMode === "imported" && computedColumns.length > 0;
-
   const resolveViewIdByResourceId = useCallback((resourceId: string, dsId: string): string | undefined => {
     const parsed = parseResourceId(resourceId);
     if (!parsed) return undefined;
@@ -616,17 +721,19 @@ const DatasetCanvas = () => {
   const resolveDatasourceIdForResource = useCallback((resourceId: string, fallbackDatasourceId: number): number => {
     const parsed = parseResourceId(resourceId);
     if (!parsed) return fallbackDatasourceId;
+    const schemaNorm = parsed.schema.toLowerCase();
+    const nameNorm = parsed.name.toLowerCase();
 
     const preferred = views.find((item) => (
       item.datasourceId === String(fallbackDatasourceId)
-      && item.schema.toLowerCase() === parsed.schema.toLowerCase()
-      && item.name.toLowerCase() === parsed.name.toLowerCase()
+      && item.schema.toLowerCase() === schemaNorm
+      && item.name.toLowerCase() === nameNorm
     ));
     if (preferred) return fallbackDatasourceId;
 
     const matches = views.filter((item) => (
-      item.schema.toLowerCase() === parsed.schema.toLowerCase()
-      && item.name.toLowerCase() === parsed.name.toLowerCase()
+      item.schema.toLowerCase() === schemaNorm
+      && item.name.toLowerCase() === nameNorm
     ));
     if (matches.length === 0) return fallbackDatasourceId;
     const resolved = Number(matches[0].datasourceId);
@@ -638,8 +745,14 @@ const DatasetCanvas = () => {
   ): Promise<Array<{ name: string; type: string }>> => {
     const dsId = resolveDatasourceIdForResource(resourceId, fallbackDatasourceId);
     const parsed = parseResourceId(resourceId);
+    const schemaNorm = parsed?.schema.toLowerCase() || "";
+    const nameNorm = parsed?.name.toLowerCase() || "";
     const byResource = parsed
-      ? views.find((item) => item.schema === parsed.schema && item.name === parsed.name && item.datasourceId === String(dsId))
+      ? views.find((item) => (
+        item.datasourceId === String(dsId)
+        && item.schema.toLowerCase() === schemaNorm
+        && item.name.toLowerCase() === nameNorm
+      ))
       : undefined;
     if (byResource?.columns?.length) {
       return byResource.columns.map((column) => ({ name: column.name, type: column.type }));
@@ -652,6 +765,17 @@ const DatasetCanvas = () => {
       }
     } catch {
       // fallback below
+    }
+
+    if (parsed) {
+      try {
+        const cols = await api.getViewColumns(parsed.name, parsed.schema, dsId);
+        if (cols.length > 0) {
+          return cols.map((col) => ({ name: col.column_name, type: col.column_type || col.normalized_type || "text" }));
+        }
+      } catch {
+        // fallback below
+      }
     }
 
     return [];
@@ -692,8 +816,19 @@ const DatasetCanvas = () => {
       const rawInclude = Array.isArray(baseSpec.preprocess?.columns?.include)
         ? baseSpec.preprocess?.columns?.include
         : [];
+      const knownResourceIds = new Set(
+        Array.isArray(baseSpec.base.resources) ? baseSpec.base.resources.map((item) => item.id) : [],
+      );
+      const hasIncludeForKnownResource = rawInclude.some((item) => {
+        if (!item || typeof item !== "object") return false;
+        const resource = (item as Record<string, unknown>).resource;
+        return typeof resource === "string" && knownResourceIds.has(resource);
+      });
+      // Some migrated datasets keep include rows bound to legacy resource ids.
+      // In this case, treat include as empty to avoid rendering a blank canvas.
+      const effectiveInclude = hasIncludeForKnownResource ? rawInclude : [];
       const includeByResource = new Map<string, Array<Record<string, unknown>>>();
-      rawInclude.forEach((item, index) => {
+      effectiveInclude.forEach((item, index) => {
         if (!item || typeof item !== "object") return;
         const rawResource = (item as Record<string, unknown>).resource;
         if (typeof rawResource !== "string" || !rawResource.trim()) return;
@@ -703,8 +838,18 @@ const DatasetCanvas = () => {
       });
 
       const loadedNodes = await Promise.all(baseSpec.base.resources.map(async (resource, index) => {
-        const fields = await hydrateResourceFields(resource.resource_id, Number(nextDatasourceId));
+        let fields = await hydrateResourceFields(resource.resource_id, Number(nextDatasourceId));
         const isPrimary = baseSpec.base.primary_resource === resource.resource_id;
+        const includeRows = includeByResource.get(resource.id) || [];
+        if (fields.length === 0 && includeRows.length > 0) {
+          const inferredByName = new Map<string, string>();
+          includeRows.forEach((row) => {
+            const columnName = String(row.column || "").trim();
+            if (!columnName || inferredByName.has(columnName)) return;
+            inferredByName.set(columnName, String(row.sql_type || "text"));
+          });
+          fields = Array.from(inferredByName.entries()).map(([name, type]) => ({ name, type }));
+        }
 
         return {
           id: resource.id,
@@ -715,7 +860,6 @@ const DatasetCanvas = () => {
             label: resource.resource_id.split(".").slice(-1)[0] || `resource_${index + 1}`,
             isPrimary,
             fields: (() => {
-              const includeRows = includeByResource.get(resource.id) || [];
               const byColumn = new Map<string, Array<Record<string, unknown>>>();
               includeRows.forEach((row) => {
                 const column = String(row.column || "").trim();
@@ -730,7 +874,7 @@ const DatasetCanvas = () => {
                 const semanticTypeDefault = inferFieldSemanticType(field.type);
                 const includeItems = byColumn.get(field.name) || [];
                 if (includeItems.length === 0) {
-                  const selected = rawInclude.length === 0 ? isPrimary : false;
+                  const selected = effectiveInclude.length === 0 ? isPrimary : false;
                   hydratedFields.push({
                     id: buildFieldId(field.name),
                     name: field.name,
@@ -773,7 +917,7 @@ const DatasetCanvas = () => {
                 });
               });
 
-              if (rawInclude.length === 0) return hydratedFields;
+              if (effectiveInclude.length === 0) return hydratedFields;
               return hydratedFields.sort((a, b) => {
                 const includeA = includeRows.find((row) => String(row.field_id || "").trim() === a.id || (row.column === a.name && row.alias === a.alias));
                 const includeB = includeRows.find((row) => String(row.field_id || "").trim() === b.id || (row.column === b.name && row.alias === b.alias));
@@ -1885,26 +2029,134 @@ const DatasetCanvas = () => {
     updateNodeDraftDirty();
   }, [updateNodeDraftDirty]);
 
-  const addComputedColumnFromEditor = useCallback(() => {
-    if (!newComputedAlias.trim() || !newComputedFormula.trim() || !selectedNode) return;
-    setNodeDraftComputedColumns((prev) => {
-      const next = prev ? [...prev] : [];
-      next.push({
-        alias: newComputedAlias.trim(),
-        data_type: newComputedType,
-        expr: {
-          formula: newComputedFormula.trim(),
-          resources: Array.from(connectedNodeIds),
-        },
-      });
-      return next;
-    });
+  const openAddComputedDialog = useCallback(() => {
+    setEditingComputedAlias(null);
     setNewComputedAlias("");
     setNewComputedFormula("");
     setNewComputedType("numeric");
+    setComputedEditorCursor(0);
+    setComputedEditorSuggestionIndex(0);
+    setComputedColumnSearch("");
+    setComputedFunctionSearch("");
+    setIsComputedDialogOpen(true);
+  }, []);
+
+  const openEditComputedDialog = useCallback((column: ApiDatasetBaseQuerySpec["preprocess"]["computed_columns"][number]) => {
+    setEditingComputedAlias(String(column.alias || ""));
+    setNewComputedAlias(String(column.alias || ""));
+    setNewComputedFormula(exprNodeToFormula((column.expr || null) as any));
+    setNewComputedType((column.data_type || "numeric") as DatasetFieldSemanticType);
+    setComputedEditorSuggestionIndex(0);
+    setComputedColumnSearch("");
+    setComputedFunctionSearch("");
+    setIsComputedDialogOpen(true);
+  }, []);
+
+  const addComputedColumnFromEditor = useCallback(() => {
+    if (!selectedNode) return;
+    if (!computedCanSubmit || !computedExpressionValidation.ast) {
+      const fallbackMessage = computedExpressionValidation.errors[0]
+        || newComputedAliasError
+        || "Revise alias e expressao por linha antes de adicionar.";
+      toast({
+        title: "Nao foi possivel adicionar coluna calculada",
+        description: fallbackMessage,
+        variant: "destructive",
+      });
+      return;
+    }
+    setNodeDraftComputedColumns((prev) => {
+      const next = prev ? [...prev] : [];
+      let replaced = false;
+      if (editingComputedAlias) {
+        for (let index = 0; index < next.length; index += 1) {
+          if (String(next[index].alias || "") !== editingComputedAlias) continue;
+          next[index] = {
+            ...next[index],
+            alias: newComputedAliasNormalized,
+            data_type: newComputedType,
+            expr: computedExpressionValidation.ast,
+          };
+          replaced = true;
+          break;
+        }
+      }
+      if (!replaced) {
+        next.push({
+          alias: newComputedAliasNormalized,
+          data_type: newComputedType,
+          expr: computedExpressionValidation.ast,
+        });
+      }
+      return next;
+    });
+    setEditingComputedAlias(null);
+    setNewComputedAlias("");
+    setNewComputedFormula("");
+    setNewComputedType("numeric");
+    setComputedEditorCursor(0);
+    setComputedEditorSuggestionIndex(0);
+    setComputedColumnSearch("");
+    setComputedFunctionSearch("");
     setIsComputedDialogOpen(false);
     updateNodeDraftDirty();
-  }, [connectedNodeIds, newComputedAlias, newComputedFormula, newComputedType, selectedNode, updateNodeDraftDirty]);
+  }, [
+    computedCanSubmit,
+    computedExpressionValidation.ast,
+    computedExpressionValidation.errors,
+    editingComputedAlias,
+    newComputedAliasError,
+    newComputedAliasNormalized,
+    newComputedType,
+    selectedNode,
+    toast,
+    updateNodeDraftDirty,
+  ]);
+
+  const insertComputedSuggestion = useCallback((label: string, kind: "column" | "function") => {
+    const target = computedExpressionSuggestions.suggestions.find((item) => item.label === label && item.kind === kind) || {
+      kind,
+      label,
+      detail: kind === "column" ? "column" : "funcao",
+      insertText: kind === "function" ? `${label}(` : label,
+      score: 0,
+    };
+    const applied = insertSuggestion({
+      input: newComputedFormula,
+      cursor: computedEditorCursor,
+      prefix: computedExpressionSuggestions.prefix,
+      suggestion: target,
+    });
+    setNewComputedFormula(applied.value);
+    setComputedEditorCursor(applied.cursor);
+    setComputedEditorSuggestionIndex(0);
+    requestAnimationFrame(() => {
+      if (!computedFormulaRef.current) return;
+      computedFormulaRef.current.focus();
+      computedFormulaRef.current.setSelectionRange(applied.cursor, applied.cursor);
+    });
+  }, [computedEditorCursor, computedExpressionSuggestions.prefix, computedExpressionSuggestions.suggestions, newComputedFormula]);
+
+  useEffect(() => {
+    if (!isComputedDialogOpen) return;
+    if (!computedFormulaRef.current) return;
+    const el = computedFormulaRef.current;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(260, Math.max(120, el.scrollHeight))}px`;
+  }, [isComputedDialogOpen, newComputedFormula]);
+
+  useEffect(() => {
+    setComputedEditorSuggestionIndex(0);
+  }, [computedExpressionSuggestions.prefix]);
+
+  useEffect(() => {
+    if (!isComputedDialogOpen) {
+      setIsComputedEditorFocused(false);
+      setComputedEditorSuggestionIndex(0);
+      return;
+    }
+    setComputedEditorCursor(newComputedFormula.length);
+  }, [isComputedDialogOpen, newComputedFormula.length]);
 
   const selectedNodeComputedColumns = useMemo(() => {
     if (!selectedNode || !nodeDraftComputedColumns) return [];
@@ -2334,7 +2586,7 @@ const DatasetCanvas = () => {
 
                         <div className="rounded-lg border border-border/60 bg-card/45 p-2.5 space-y-2">
                           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Acoes</p>
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-col items-stretch gap-2">
                             <div className="flex items-center gap-2">
                               <Switch
                                 checked={Boolean(importConfigQuery.data?.enabled)}
@@ -2345,7 +2597,7 @@ const DatasetCanvas = () => {
                             <Button
                               type="button"
                               size="sm"
-                              className="h-8 gap-1.5 bg-accent text-xs text-accent-foreground hover:bg-accent/90"
+                              className="h-8 w-full gap-1.5 bg-accent text-xs text-accent-foreground hover:bg-accent/90"
                               disabled={!importConfigQuery.data?.enabled || triggerSyncMutation.isPending}
                               onClick={() => triggerSyncMutation.mutate()}
                             >
@@ -2571,7 +2823,6 @@ const DatasetCanvas = () => {
                       dimensions={0}
                       dirty={isDirty}
                       hasValidationError={hasValidationError}
-                      hasImportedRestriction={hasImportedRestriction}
                       lastSavedAt={lastSavedAt}
                     />
                   </div>
@@ -2812,13 +3063,13 @@ const DatasetCanvas = () => {
                                 <button
                                   type="button"
                                   className="w-full rounded-lg border border-dashed border-border/70 bg-background/35 px-3 py-5 text-left transition hover:bg-muted/40"
-                                  onClick={() => setIsComputedDialogOpen(true)}
+                                  onClick={openAddComputedDialog}
                                 >
                                   <p className="text-xs font-semibold">Adicionar coluna calculada</p>
-                                  <p className="mt-1 text-[11px] text-muted-foreground">Defina uma formula baseada em colunas conectadas.</p>
+                                  <p className="mt-1 text-[11px] text-muted-foreground">Defina uma expressao calculada por linha (row-level).</p>
                                 </button>
                               ) : (
-                                <Button type="button" size="sm" variant="outline" className="h-9 w-full justify-start text-caption rounded-xl" onClick={() => setIsComputedDialogOpen(true)}>
+                                <Button type="button" size="sm" variant="outline" className="h-9 w-full justify-start text-caption rounded-xl" onClick={openAddComputedDialog}>
                                   <Plus className="mr-1.5 h-3.5 w-3.5" />
                                   Adicionar coluna calculada
                                 </Button>
@@ -2827,18 +3078,31 @@ const DatasetCanvas = () => {
                                 <div key={`computed-${column.alias}`} className="rounded-md border border-border/70 bg-background/40 p-2">
                                   <div className="flex items-center justify-between gap-2">
                                     <p className="text-xs font-semibold">{column.alias}</p>
-                                    <Button
-                                      type="button"
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-6 w-6 destructive-icon-btn"
-                                      onClick={() => {
-                                        setNodeDraftComputedColumns((prev) => (prev || []).filter((item) => item.alias !== column.alias));
-                                        updateNodeDraftDirty();
-                                      }}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
+                                    <div className="flex items-center gap-1">
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-6 w-6"
+                                        onClick={() => openEditComputedDialog(column)}
+                                        aria-label={`Editar coluna calculada ${column.alias}`}
+                                        title="Editar coluna calculada"
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-6 w-6 destructive-icon-btn"
+                                        onClick={() => {
+                                          setNodeDraftComputedColumns((prev) => (prev || []).filter((item) => item.alias !== column.alias));
+                                          updateNodeDraftDirty();
+                                        }}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
                                   </div>
                                   <p className="mt-1 text-[11px] font-mono text-muted-foreground">{JSON.stringify(column.expr)}</p>
                                 </div>
@@ -3483,31 +3747,273 @@ const DatasetCanvas = () => {
         </ResizablePanelGroup>
       </div>
 
-      <Dialog open={isComputedDialogOpen} onOpenChange={setIsComputedDialogOpen}>
-        <DialogContent>
+      <Dialog
+        open={isComputedDialogOpen}
+        onOpenChange={(open) => {
+          setIsComputedDialogOpen(open);
+          if (!open) setEditingComputedAlias(null);
+        }}
+      >
+        <DialogContent className="max-w-5xl">
           <DialogHeader>
-            <DialogTitle>Nova coluna calculada</DialogTitle>
-            <DialogDescription>Crie uma formula com base nas tabelas conectadas.</DialogDescription>
+            <DialogTitle>{editingComputedAlias ? "Editar coluna calculada" : "Nova coluna calculada"}</DialogTitle>
+            <DialogDescription>Crie uma expressao por linha (row-level), sem agregacoes verticais.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label className="text-xs">Alias da coluna</Label>
-            <Input value={newComputedAlias} onChange={(event) => setNewComputedAlias(event.target.value)} placeholder="Ex: ticket_medio" />
-            <Label className="text-xs">Formula</Label>
-            <Textarea value={newComputedFormula} onChange={(event) => setNewComputedFormula(event.target.value)} rows={4} className="font-mono text-xs" placeholder="sum(valor) / nullif(count(id),0)" />
-            <Label className="text-xs">Tipo semantico</Label>
-            <Select value={newComputedType} onValueChange={(value) => setNewComputedType(value as DatasetFieldSemanticType)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="numeric">numeric</SelectItem>
-                <SelectItem value="text">text</SelectItem>
-                <SelectItem value="temporal">temporal</SelectItem>
-                <SelectItem value="boolean">boolean</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="grid gap-3 md:grid-cols-[1.4fr_0.9fr]">
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Alias da coluna</Label>
+                <Input
+                  value={newComputedAlias}
+                  onChange={(event) => setNewComputedAlias(event.target.value)}
+                  placeholder="Ex: ticket_medio"
+                />
+                {!newComputedAliasError && newComputedAlias.trim() && newComputedAliasNormalized !== newComputedAlias.trim() ? (
+                  <p className="text-[11px] text-muted-foreground">Sugestao: <span className="font-mono">{newComputedAliasNormalized}</span></p>
+                ) : null}
+                {newComputedAliasError ? <p className="text-[11px] text-destructive">{newComputedAliasError}</p> : null}
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Expressao por linha</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Use colunas da linha atual, operadores e funcoes compativeis. Agregacoes nao sao permitidas.
+                </p>
+                <Textarea
+                  ref={computedFormulaRef}
+                  value={newComputedFormula}
+                  onFocus={() => setIsComputedEditorFocused(true)}
+                  onBlur={() => setTimeout(() => setIsComputedEditorFocused(false), 120)}
+                  onClick={(event) => setComputedEditorCursor((event.target as HTMLTextAreaElement).selectionStart || 0)}
+                  onKeyUp={(event) => setComputedEditorCursor((event.target as HTMLTextAreaElement).selectionStart || 0)}
+                  onKeyDown={(event) => {
+                    const hasSuggestions = computedExpressionSuggestions.suggestions.length > 0;
+                    if (hasSuggestions && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                      event.preventDefault();
+                      setComputedEditorSuggestionIndex((prev) => {
+                        const max = computedExpressionSuggestions.suggestions.length - 1;
+                        if (event.key === "ArrowDown") return prev >= max ? 0 : prev + 1;
+                        return prev <= 0 ? max : prev - 1;
+                      });
+                      return;
+                    }
+                    if (hasSuggestions && (event.key === "Enter" || event.key === "Tab") && computedSelectedSuggestion) {
+                      event.preventDefault();
+                      insertComputedSuggestion(computedSelectedSuggestion.label, computedSelectedSuggestion.kind);
+                    }
+                  }}
+                  onChange={(event) => {
+                    setNewComputedFormula(event.target.value);
+                    setComputedEditorCursor(event.target.selectionStart || 0);
+                  }}
+                  rows={6}
+                  className="min-h-[120px] max-h-[260px] font-mono text-xs leading-5"
+                  placeholder={"Ex: receita - custo\nEx: valor * 0.15\nEx: case when status = 'ativo' then 1 else 0 end"}
+                />
+                {isComputedEditorFocused && computedExpressionSuggestions.suggestions.length > 0 ? (
+                  <div className="rounded-md border border-border/60 bg-background/70 p-1">
+                    <div className="max-h-40 overflow-auto">
+                      {computedExpressionSuggestions.suggestions.map((item, index) => (
+                        <button
+                          key={`computed-suggestion-${item.kind}-${item.label}-${index}`}
+                          type="button"
+                          className={cn(
+                            "flex w-full items-center justify-between rounded-sm px-2 py-1 text-left text-[11px] transition-colors",
+                            index === computedEditorSuggestionIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted/40",
+                          )}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            insertComputedSuggestion(item.label, item.kind);
+                          }}
+                        >
+                          <span className="font-mono">{item.label}</span>
+                          <span className="text-muted-foreground">{item.detail}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {computedExpressionValidation.errors.length > 0 ? (
+                  <div className="space-y-1">
+                    {computedExpressionValidation.errors.map((error, index) => (
+                      <p key={`computed-expression-error-${index}`} className="text-[11px] text-destructive">{error}</p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-success">Expressao valida.</p>
+                )}
+                <div className="rounded-md border border-border/60 bg-background/45 px-2 py-1.5 text-[11px] text-muted-foreground">
+                  <p>Tipo inferido: <span className="font-medium">{computedInferredType}</span></p>
+                  {computedTypeConflict ? (
+                    <p className="mt-1 text-warning">O tipo inferido difere do tipo semantico selecionado.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Tipo semantico (opcional)</Label>
+                <Select value={newComputedType} onValueChange={(value) => setNewComputedType(value as DatasetFieldSemanticType)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="numeric">numeric</SelectItem>
+                    <SelectItem value="text">text</SelectItem>
+                    <SelectItem value="temporal">temporal</SelectItem>
+                    <SelectItem value="boolean">boolean</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1 rounded-md border border-border/60 bg-background/45 p-2">
+                <p className="text-[11px] font-medium">Colunas usadas</p>
+                {computedExpressionValidation.references.length > 0 ? (
+                  <p className="text-[11px] text-muted-foreground">{computedExpressionValidation.references.join(", ")}</p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">Nenhuma coluna detectada ainda.</p>
+                )}
+              </div>
+
+              <div className="space-y-1 rounded-md border border-border/60 bg-background/45 p-2">
+                <p className="text-[11px] font-medium">Preview da coluna calculada</p>
+                {computedPreviewRows.length > 0 ? (
+                  <div className="space-y-1">
+                    {computedPreviewRows.map((item) => (
+                      <div key={item.id} className="rounded border border-border/50 bg-background/40 px-2 py-1 text-[11px]">
+                        {item.error ? (
+                          <span className="text-destructive">{item.error}</span>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate text-muted-foreground">
+                              {computedExpressionValidation.references.slice(0, 2).map((ref) => `${ref}: ${String(item.row[ref] ?? "null")}`).join(" . ")}
+                            </span>
+                            <span className="font-mono text-foreground">{String(item.result ?? "null")}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">Salve ou atualize o preview para visualizar linhas de exemplo.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="rounded-md border border-border/60 bg-background/45 p-2">
+                <p className="text-[11px] font-medium">Colunas disponiveis</p>
+                <Input
+                  className="mt-2 h-7 text-[11px]"
+                  placeholder="Buscar coluna"
+                  value={computedColumnSearch}
+                  onChange={(event) => setComputedColumnSearch(event.target.value)}
+                />
+                <ScrollArea className="mt-2 h-40 pr-2">
+                  <div className="space-y-1">
+                    {computedAvailableColumns
+                      .filter((item) => item.name.toLowerCase().includes(computedColumnSearch.trim().toLowerCase()))
+                      .map((item) => (
+                        <button
+                          key={`computed-column-option-${item.name}`}
+                          type="button"
+                          className="flex w-full items-center justify-between rounded-sm border border-border/50 bg-background/30 px-2 py-1 text-left text-[11px] hover:bg-muted/40"
+                          onClick={() => insertComputedSuggestion(item.name, "column")}
+                        >
+                          <span className="font-mono">{item.name}</span>
+                          <span className="text-muted-foreground">{item.type}</span>
+                        </button>
+                      ))}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              <div className="rounded-md border border-border/60 bg-background/45 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium">Funcoes suportadas</p>
+                  <Badge variant="outline" className="text-[10px]">row-level</Badge>
+                </div>
+                <Input
+                  className="mt-2 h-7 text-[11px]"
+                  placeholder="Buscar funcao"
+                  value={computedFunctionSearch}
+                  onChange={(event) => setComputedFunctionSearch(event.target.value)}
+                />
+                <ScrollArea className="mt-2 h-40 pr-2">
+                  <div className="space-y-2">
+                    {Object.entries(computedExpressionCatalog.allowed_functions || {}).map(([category, names]) => (
+                      <div key={`computed-function-group-${category}`} className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{category.replace(/_/g, " ")}</p>
+                        {(names || [])
+                          .filter((name) => name.toLowerCase().includes(computedFunctionSearch.trim().toLowerCase()))
+                          .map((name) => (
+                            <button
+                              key={`computed-function-item-${category}-${name}`}
+                              type="button"
+                              className="flex w-full items-center justify-between rounded-sm border border-border/50 bg-background/30 px-2 py-1 text-left text-[11px] hover:bg-muted/40"
+                              onClick={() => {
+                                if (name.toLowerCase() === "case when") {
+                                  const snippet = "case when  then  else  end";
+                                  const next = `${newComputedFormula}${newComputedFormula.trim() ? " " : ""}${snippet}`;
+                                  setNewComputedFormula(next);
+                                  setComputedEditorCursor(next.length);
+                                  return;
+                                }
+                                insertComputedSuggestion(name, "function");
+                              }}
+                            >
+                              <span className="font-mono">{name}</span>
+                              <span className="text-muted-foreground">funcao</span>
+                            </button>
+                          ))}
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              <div className="rounded-md border border-border/60 bg-background/45 p-2">
+                <p className="text-[11px] font-medium">Ajuda rapida</p>
+                <div className="mt-2 space-y-1">
+                  {computedExpressionCatalog.examples.map((example, index) => (
+                    <button
+                      key={`computed-example-${index}`}
+                      type="button"
+                      className="block w-full rounded-sm border border-border/50 bg-background/30 px-2 py-1 text-left font-mono text-[11px] hover:bg-muted/40"
+                      onClick={() => {
+                        setNewComputedFormula(example);
+                        setComputedEditorCursor(example.length);
+                        requestAnimationFrame(() => {
+                          if (!computedFormulaRef.current) return;
+                          computedFormulaRef.current.focus();
+                          computedFormulaRef.current.setSelectionRange(example.length, example.length);
+                        });
+                      }}
+                    >
+                      {example}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Funcoes bloqueadas: {computedExpressionCatalog.forbidden_aggregations.join(", ")}.
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {ROW_LEVEL_AGGREGATION_ERROR}
+                </p>
+              </div>
+            </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setIsComputedDialogOpen(false)}>Cancelar</Button>
-            <Button type="button" onClick={addComputedColumnFromEditor} disabled={!newComputedAlias.trim() || !newComputedFormula.trim()}>Adicionar</Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsComputedDialogOpen(false);
+                setEditingComputedAlias(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" onClick={addComputedColumnFromEditor} disabled={!computedCanSubmit}>
+              {editingComputedAlias ? "Salvar alteracoes" : "Adicionar"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

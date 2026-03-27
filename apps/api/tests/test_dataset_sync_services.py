@@ -701,3 +701,164 @@ def test_materialize_base_query_spec_applies_preprocess_filters(monkeypatch) -> 
     assert rows_written == 3
     assert bytes_processed == 0
     assert executed_params == [True]
+
+
+def test_materialize_base_query_spec_supports_exclude_and_computed(monkeypatch) -> None:
+    worker = DatasetSyncWorkerService(
+        session_factory=_build_session_factory(),
+        settings=get_settings(),
+        worker_id="test-worker",
+    )
+
+    executed_params: list[object] = []
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def execute(self, _query, params=None):  # noqa: ANN001
+            if params:
+                executed_params.extend(list(params))
+
+        def fetchone(self):
+            return (2,)
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr("app.modules.datasets.sync_services.psycopg.connect", lambda _url: _FakeConn())
+
+    dataset = SimpleNamespace(
+        id=7,
+        name="Recargas",
+        base_query_spec={
+            "base": {
+                "primary_resource": "lens_imp_t1.vw_recargas",
+                "resources": [{"id": "r0", "resource_id": "lens_imp_t1.vw_recargas"}],
+                "joins": [],
+            },
+            "preprocess": {
+                "columns": {
+                    "include": [
+                        {"resource": "r0", "column": "id_recarga", "alias": "id_recarga"},
+                        {"resource": "r0", "column": "duracao_minutos", "alias": "duracao_minutos"},
+                    ],
+                    "exclude": ["id_recarga"],
+                },
+                "computed_columns": [
+                    {
+                        "alias": "duracao_com_bonus",
+                        "expr": {"op": "add", "args": [{"column": "duracao_minutos"}, {"literal": 5}]},
+                        "data_type": "numeric",
+                    }
+                ],
+                "filters": [{"field": "duracao_com_bonus", "op": "gt", "value": 10}],
+            },
+        },
+    )
+
+    rows_read, rows_written, bytes_processed = worker._materialize_base_query_spec_to_internal(
+        dataset=dataset,
+        source_url=None,
+        internal_url="postgresql://internal",
+        target_schema="lens_imp_t1",
+        load_table_name="ds_7__recargas__slot_a",
+    )
+
+    assert rows_read == 2
+    assert rows_written == 2
+    assert bytes_processed == 0
+    assert executed_params == [5, 10]
+
+
+def test_materialize_base_query_spec_supports_formula_computed(monkeypatch) -> None:
+    worker = DatasetSyncWorkerService(
+        session_factory=_build_session_factory(),
+        settings=get_settings(),
+        worker_id="test-worker",
+    )
+
+    executed_params: list[object] = []
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def execute(self, _query, params=None):  # noqa: ANN001
+            if params:
+                executed_params.extend(list(params))
+
+        def fetchone(self):
+            return (1,)
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr("app.modules.datasets.sync_services.psycopg.connect", lambda _url: _FakeConn())
+
+    dataset = SimpleNamespace(
+        id=8,
+        name="Clientes",
+        base_query_spec={
+            "base": {
+                "primary_resource": "lens_imp_t1.vw_clientes",
+                "resources": [{"id": "r0", "resource_id": "lens_imp_t1.vw_clientes"}],
+                "joins": [],
+            },
+            "preprocess": {
+                "columns": {
+                    "include": [
+                        {"resource": "r0", "column": "pontos", "alias": "pontos"},
+                    ],
+                    "exclude": [],
+                },
+                "computed_columns": [
+                    {
+                        "alias": "pontos_x2",
+                        "expr": {"formula": "pontos*2+10"},
+                        "data_type": "numeric",
+                    }
+                ],
+                "filters": [{"field": "pontos_x2", "op": "gte", "value": 100}],
+            },
+        },
+    )
+
+    rows_read, rows_written, bytes_processed = worker._materialize_base_query_spec_to_internal(
+        dataset=dataset,
+        source_url=None,
+        internal_url="postgresql://internal",
+        target_schema="lens_imp_t1",
+        load_table_name="ds_8__clientes__slot_a",
+    )
+
+    assert rows_read == 1
+    assert rows_written == 1
+    assert bytes_processed == 0
+    assert executed_params == [100]

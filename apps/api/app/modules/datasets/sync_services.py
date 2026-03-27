@@ -403,6 +403,150 @@ def _build_preprocess_filters_where_sql(
     return where_sql, params
 
 
+def _resolve_excluded_projection_aliases(
+    *,
+    exclude_columns: list[Any],
+    include_alias_by_resource_column: dict[tuple[str, str], str],
+    default_primary_column_aliases: dict[str, str],
+) -> set[str]:
+    excluded: set[str] = set()
+    default_columns_set = {column for column in default_primary_column_aliases}
+
+    for item in exclude_columns:
+        if isinstance(item, str):
+            raw = item.strip()
+            if raw:
+                excluded.add(raw)
+            continue
+        if not isinstance(item, dict):
+            continue
+        alias_value = item.get("alias")
+        if isinstance(alias_value, str) and alias_value.strip():
+            excluded.add(alias_value.strip())
+            continue
+        resource_value = item.get("resource")
+        column_value = item.get("column")
+        if not isinstance(resource_value, str) or not isinstance(column_value, str):
+            continue
+        resource_key = resource_value.strip()
+        column_key = column_value.strip()
+        if not resource_key or not column_key:
+            continue
+        mapped_alias = include_alias_by_resource_column.get((resource_key, column_key))
+        if mapped_alias:
+            excluded.add(mapped_alias)
+            continue
+        if column_key in default_columns_set:
+            excluded.add(default_primary_column_aliases[column_key])
+    return excluded
+
+
+def _compile_formula_expr_sql(
+    *,
+    formula: str,
+    available_fields: dict[str, str],
+) -> sql.SQL:
+    token_re = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/]")
+    raw = str(formula or "").strip()
+    if not raw:
+        raise RuntimeError("Computed formula cannot be empty")
+    compact = re.sub(r"\s+", "", raw)
+    tokens = token_re.findall(compact)
+    if not tokens or "".join(tokens) != compact:
+        raise RuntimeError("Computed formula contains unsupported tokens")
+
+    sql_parts: list[sql.SQL] = []
+    for token in tokens:
+        if token in {"+", "-", "*", "/", "(", ")"}:
+            sql_parts.append(sql.SQL(token))
+            continue
+        if re.fullmatch(r"\d+(?:\.\d+)?", token):
+            sql_parts.append(sql.SQL(token))
+            continue
+        mapped = available_fields.get(token)
+        if mapped is None:
+            raise RuntimeError(f"Computed formula references unknown column '{token}'")
+        sql_parts.append(sql.Identifier(mapped))
+    return sql.SQL("").join(sql_parts)
+
+
+def _compile_computed_expr_sql(
+    *,
+    expr: Any,
+    available_fields: dict[str, str],
+    params: list[Any],
+) -> sql.SQL:
+    if not isinstance(expr, dict):
+        raise RuntimeError("Computed expr must be an object")
+
+    if "formula" in expr:
+        formula = expr.get("formula")
+        if not isinstance(formula, str):
+            raise RuntimeError("Computed formula must be a string")
+        return _compile_formula_expr_sql(formula=formula, available_fields=available_fields)
+
+    if "column" in expr:
+        column_name = str(expr.get("column") or "").strip()
+        if not column_name:
+            raise RuntimeError("Computed column reference is empty")
+        mapped = available_fields.get(column_name)
+        if mapped is None:
+            raise RuntimeError(f"Computed expr references unknown column '{column_name}'")
+        return sql.Identifier(mapped)
+
+    if "literal" in expr:
+        params.append(expr.get("literal"))
+        return sql.Placeholder()
+
+    op = str(expr.get("op") or "").strip().lower()
+    args = expr.get("args")
+    if not isinstance(args, list) or not args:
+        raise RuntimeError("Computed expr args must be a non-empty array")
+    compiled_args = [
+        _compile_computed_expr_sql(expr=item, available_fields=available_fields, params=params)
+        for item in args
+    ]
+
+    if op == "add":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'add' expects 2 args")
+        return sql.SQL("({} + {})").format(compiled_args[0], compiled_args[1])
+    if op == "sub":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'sub' expects 2 args")
+        return sql.SQL("({} - {})").format(compiled_args[0], compiled_args[1])
+    if op == "mul":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'mul' expects 2 args")
+        return sql.SQL("({} * {})").format(compiled_args[0], compiled_args[1])
+    if op == "div":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'div' expects 2 args")
+        return sql.SQL("({} / NULLIF({}, 0))").format(compiled_args[0], compiled_args[1])
+    if op == "concat":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'concat' expects 2 args")
+        return sql.SQL("(COALESCE(({})::text, '') || COALESCE(({})::text, ''))").format(
+            compiled_args[0],
+            compiled_args[1],
+        )
+    if op == "coalesce":
+        return sql.SQL("COALESCE({})").format(sql.SQL(", ").join(compiled_args))
+    if op == "lower":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'lower' expects 1 arg")
+        return sql.SQL("LOWER(({})::text)").format(compiled_args[0])
+    if op == "upper":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'upper' expects 1 arg")
+        return sql.SQL("UPPER(({})::text)").format(compiled_args[0])
+    if op == "date_trunc":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'date_trunc' expects 1 arg")
+        return sql.SQL("DATE_TRUNC('day', {})").format(compiled_args[0])
+    raise RuntimeError(f"Unsupported computed op '{op}'")
+
+
 def cleanup_imported_dataset_assets(
     *,
     db: Session,
@@ -1694,8 +1838,6 @@ class DatasetSyncWorkerService:
         exclude_columns = columns_cfg.get("exclude") if isinstance(columns_cfg.get("exclude"), list) else []
         computed = preprocess.get("computed_columns") if isinstance(preprocess.get("computed_columns"), list) else []
         filters = preprocess.get("filters") if isinstance(preprocess.get("filters"), list) else []
-        if computed or exclude_columns:
-            raise RuntimeError("Dataset imported sync does not support computed/exclude preprocess yet")
 
         primary_resource = base.get("primary_resource")
         if not isinstance(primary_resource, str) or not primary_resource.strip():
@@ -1751,6 +1893,8 @@ class DatasetSyncWorkerService:
             resolved_resources[resource_key] = (target_schema, stage_table_name)
 
         select_parts: list[sql.SQL] = []
+        base_projection_aliases: list[str] = []
+        include_alias_by_resource_column: dict[tuple[str, str], str] = {}
         projected_field_alias_map: dict[str, str] = {}
         if include_columns:
             for item in include_columns:
@@ -1762,8 +1906,12 @@ class DatasetSyncWorkerService:
                 alias_name = _normalize_projection_alias(raw_alias_name)
                 if resource_key not in resolved_resources:
                     raise RuntimeError(f"Unknown include resource '{resource_key}'")
+                if alias_name in base_projection_aliases:
+                    raise RuntimeError(f"Duplicated projected alias '{alias_name}'")
                 projected_field_alias_map[raw_alias_name] = alias_name
                 projected_field_alias_map[alias_name] = alias_name
+                include_alias_by_resource_column[(resource_key, column_name)] = alias_name
+                base_projection_aliases.append(alias_name)
                 select_parts.append(
                     sql.SQL("{}.{} AS {}").format(
                         sql.Identifier(resource_key),
@@ -1771,18 +1919,15 @@ class DatasetSyncWorkerService:
                         sql.Identifier(alias_name),
                     )
                 )
-        if not select_parts:
-            select_parts.append(
-                sql.SQL("{}.*").format(sql.Identifier(_normalize_identifier(primary_key)))
-            )
 
         if primary_key not in resolved_resources:
             raise RuntimeError(f"Primary resource '{primary_key}' is unresolved")
         primary_schema, primary_relation = resolved_resources[primary_key]
+        primary_resource_alias = _normalize_identifier(primary_key)
         from_clause = sql.SQL(" FROM {}.{} AS {}").format(
             sql.Identifier(primary_schema),
             sql.Identifier(primary_relation),
-            sql.Identifier(_normalize_identifier(primary_key)),
+            sql.Identifier(primary_resource_alias),
         )
 
         join_clauses: list[sql.SQL] = []
@@ -1838,27 +1983,97 @@ class DatasetSyncWorkerService:
                             sql.Identifier(load_table_name),
                         )
                     )
-                    where_sql, where_params = _build_preprocess_filters_where_sql(
-                        filters=filters,
-                        field_alias_map=projected_field_alias_map,
+                    default_primary_column_aliases: dict[str, str] = {}
+                    if not select_parts:
+                        primary_columns = self._fetch_source_columns(
+                            source_url=internal_url,
+                            source_schema=primary_schema,
+                            source_relation=primary_relation,
+                        )
+                        for column_name, _column_type in primary_columns:
+                            alias_name = _normalize_projection_alias(column_name)
+                            if alias_name in base_projection_aliases:
+                                raise RuntimeError(f"Duplicated projected alias '{alias_name}'")
+                            default_primary_column_aliases[column_name] = alias_name
+                            base_projection_aliases.append(alias_name)
+                            projected_field_alias_map[column_name] = alias_name
+                            projected_field_alias_map[alias_name] = alias_name
+                            select_parts.append(
+                                sql.SQL("{}.{} AS {}").format(
+                                    sql.Identifier(primary_resource_alias),
+                                    sql.Identifier(column_name),
+                                    sql.Identifier(alias_name),
+                                )
+                            )
+
+                    excluded_aliases = _resolve_excluded_projection_aliases(
+                        exclude_columns=exclude_columns,
+                        include_alias_by_resource_column=include_alias_by_resource_column,
+                        default_primary_column_aliases=default_primary_column_aliases,
                     )
+                    selected_base_aliases = [
+                        alias_name for alias_name in base_projection_aliases if alias_name not in excluded_aliases
+                    ]
+                    if not selected_base_aliases:
+                        raise RuntimeError("Dataset preprocess excludes all projected columns")
+
                     projected_sql = (
                         sql.SQL("SELECT {}").format(sql.SQL(", ").join(select_parts))
                         + from_clause
                         + sql.SQL("").join(join_clauses)
                     )
+                    stage_sql = (
+                        sql.SQL("SELECT {} FROM (").format(
+                            sql.SQL(", ").join([sql.Identifier(alias_name) for alias_name in selected_base_aliases])
+                        )
+                        + projected_sql
+                        + sql.SQL(") AS {}").format(sql.Identifier("__dataset_projected_base"))
+                    )
+                    computed_params: list[Any] = []
+                    current_field_alias_map = {alias_name: alias_name for alias_name in selected_base_aliases}
+                    for item in computed:
+                        if not isinstance(item, dict):
+                            continue
+                        raw_alias_name = str(item.get("alias") or "").strip()
+                        if not raw_alias_name:
+                            raise RuntimeError("Computed column alias is required")
+                        alias_name = _normalize_projection_alias(raw_alias_name)
+                        if alias_name in current_field_alias_map:
+                            raise RuntimeError(f"Computed alias '{alias_name}' already exists in projected columns")
+                        expr_sql = _compile_computed_expr_sql(
+                            expr=item.get("expr"),
+                            available_fields=current_field_alias_map,
+                            params=computed_params,
+                        )
+                        stage_sql = (
+                            sql.SQL("SELECT {}.*, {} AS {} FROM (").format(
+                                sql.Identifier("__dataset_stage_prev"),
+                                expr_sql,
+                                sql.Identifier(alias_name),
+                            )
+                            + stage_sql
+                            + sql.SQL(") AS {}").format(sql.Identifier("__dataset_stage_prev"))
+                        )
+                        current_field_alias_map[raw_alias_name] = alias_name
+                        current_field_alias_map[alias_name] = alias_name
+
+                    where_sql, where_params = _build_preprocess_filters_where_sql(
+                        filters=filters,
+                        field_alias_map=current_field_alias_map,
+                    )
                     select_sql = (
                         sql.SQL("SELECT * FROM (")
-                        + projected_sql
-                        + sql.SQL(") AS {}").format(sql.Identifier("__dataset_projected"))
+                        + stage_sql
+                        + sql.SQL(") AS {}").format(sql.Identifier("__dataset_projected_final"))
                         + sql.SQL(where_sql)
                     )
                     create_sql = sql.SQL("CREATE TABLE {}.{} AS ").format(
                         sql.Identifier(target_schema),
                         sql.Identifier(load_table_name),
                     ) + select_sql
-                    if where_params:
-                        cur.execute(create_sql, where_params)
+                    all_params = computed_params + where_params
+                    if all_params:
+                        cur.execute(create_sql, all_params)
                     else:
                         cur.execute(create_sql)
                     cur.execute(
