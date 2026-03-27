@@ -2587,7 +2587,11 @@ const DatasetCanvas = () => {
                         <div className="rounded-lg border border-border/60 bg-card/45 p-2.5 space-y-2">
                           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Acoes</p>
                           <div className="flex flex-col items-stretch gap-2">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/45 px-2 py-1.5">
+                              <div className="min-w-0">
+                                <p className="truncate text-[11px] font-medium text-foreground">Sync automatica</p>
+                                <p className="truncate text-[10px] text-muted-foreground">Ativa agendamento e sincronizacao manual</p>
+                              </div>
                               <Switch
                                 checked={Boolean(importConfigQuery.data?.enabled)}
                                 disabled={upsertImportConfigMutation.isPending || importConfigQuery.isLoading}
@@ -2597,7 +2601,7 @@ const DatasetCanvas = () => {
                             <Button
                               type="button"
                               size="sm"
-                              className="h-8 w-full gap-1.5 bg-accent text-xs text-accent-foreground hover:bg-accent/90"
+                              className="h-8 w-full gap-1.5 bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90"
                               disabled={!importConfigQuery.data?.enabled || triggerSyncMutation.isPending}
                               onClick={() => triggerSyncMutation.mutate()}
                             >
@@ -2672,7 +2676,7 @@ const DatasetCanvas = () => {
                               <Button
                                 type="button"
                                 size="sm"
-                                className="h-7 w-full text-[10px]"
+                                className="h-7 w-full bg-primary text-[10px] font-medium text-primary-foreground hover:bg-primary/90"
                                 onClick={() => saveSyncScheduleMutation.mutate()}
                                 disabled={saveSyncScheduleMutation.isPending}
                               >
