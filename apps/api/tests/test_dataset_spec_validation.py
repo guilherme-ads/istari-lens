@@ -150,6 +150,29 @@ def test_validate_base_query_spec_rejects_unknown_expr_column(db_session: Sessio
     assert "preprocess.computed_columns[0].expr.args[0]" in detail["field_errors"]
 
 
+def test_validate_base_query_spec_rejects_aggregation_in_computed_column(db_session: Session) -> None:
+    datasource_id = int(db_session.query(DataSource).first().id)
+    spec = _valid_base_query_spec(datasource_id)
+    spec["preprocess"]["computed_columns"][0]["expr"] = {"op": "sum", "args": [{"column": "amount"}]}
+
+    with pytest.raises(HTTPException) as exc:
+        validate_and_resolve_base_query_spec(
+            db=db_session,
+            datasource_id=datasource_id,
+            base_query_spec=spec,
+        )
+
+    error = exc.value
+    assert error.status_code == 400
+    detail = error.detail
+    assert "field_errors" in detail
+    assert "preprocess.computed_columns[0].expr" in detail["field_errors"]
+    assert (
+        "Agregacoes nao sao permitidas em colunas calculadas. Use metricas para isso."
+        in detail["field_errors"]["preprocess.computed_columns[0].expr"]
+    )
+
+
 def test_validate_base_query_spec_enriches_include_metadata_defaults(db_session: Session) -> None:
     datasource_id = int(db_session.query(DataSource).first().id)
     spec = _valid_base_query_spec(datasource_id)

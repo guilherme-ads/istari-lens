@@ -6,10 +6,15 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.core.legacy.models import DataSource, View
+from app.modules.datasets.computed_expression import (
+    ALLOWED_EXPR_OPS,
+    FORBIDDEN_AGGREGATION_FUNCTIONS,
+    validate_no_forbidden_aggregation,
+    raise_row_level_aggregation_error,
+)
 from app.modules.widgets.domain import normalize_column_type
 
 _ALLOWED_JOIN_TYPES = {"inner", "left"}
-_ALLOWED_EXPR_OPS = {"add", "sub", "mul", "div", "concat", "coalesce", "lower", "upper", "date_trunc"}
 _ALLOWED_FILTER_OPS = {
     "eq",
     "neq",
@@ -98,6 +103,7 @@ def _validate_expr_node(
 ) -> None:
     if not isinstance(node, dict):
         _raise("Expression node must be an object", field=field)
+    validate_no_forbidden_aggregation(node, field=field)
     if "column" in node:
         column_name = node.get("column")
         if not isinstance(column_name, str) or not column_name.strip():
@@ -113,14 +119,42 @@ def _validate_expr_node(
 
     op = node.get("op")
     args = node.get("args")
-    if not isinstance(op, str) or op not in _ALLOWED_EXPR_OPS:
+    if isinstance(op, str) and op.strip().lower() in FORBIDDEN_AGGREGATION_FUNCTIONS:
+        raise_row_level_aggregation_error(field=field)
+    if not isinstance(op, str) or op not in ALLOWED_EXPR_OPS:
         _raise(f"Unsupported expression operator '{op}'", field=field)
     if not isinstance(args, list) or len(args) < 1:
         _raise("Expression operator args must be a non-empty array", field=field)
-    if op in {"lower", "upper", "date_trunc"} and len(args) != 1:
+    if op in {"lower", "upper", "trim", "abs", "round", "ceil", "floor", "not"} and len(args) != 1:
         _raise(f"Operator '{op}' expects exactly 1 argument", field=field)
-    if op in {"add", "sub", "mul", "div", "concat"} and len(args) != 2:
+    if op in {
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "mod",
+        "concat",
+        "nullif",
+        "eq",
+        "neq",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "and",
+        "or",
+    } and len(args) != 2:
         _raise(f"Operator '{op}' expects exactly 2 arguments", field=field)
+    if op == "coalesce" and len(args) < 1:
+        _raise("Operator 'coalesce' expects at least 1 argument", field=field)
+    if op == "date_trunc" and len(args) not in {1, 2}:
+        _raise("Operator 'date_trunc' expects 1 or 2 arguments", field=field)
+    if op == "extract" and len(args) != 2:
+        _raise("Operator 'extract' expects exactly 2 arguments", field=field)
+    if op == "substring" and len(args) not in {2, 3}:
+        _raise("Operator 'substring' expects 2 or 3 arguments", field=field)
+    if op == "case_when" and len(args) != 3:
+        _raise("Operator 'case_when' expects exactly 3 arguments", field=field)
     for idx, item in enumerate(args):
         _validate_expr_node(item, field=f"{field}.args[{idx}]", available_columns=available_columns)
 

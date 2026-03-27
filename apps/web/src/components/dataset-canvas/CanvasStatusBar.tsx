@@ -10,7 +10,6 @@ type CanvasStatusBarProps = {
   dimensions: number;
   dirty: boolean;
   hasValidationError: boolean;
-  hasImportedRestriction: boolean;
   lastSavedAt?: string | null;
 };
 
@@ -23,7 +22,6 @@ const CanvasStatusBar = ({
   dimensions,
   dirty,
   hasValidationError,
-  hasImportedRestriction,
   lastSavedAt,
 }: CanvasStatusBarProps) => {
   const statusLabel = hasValidationError
@@ -49,11 +47,6 @@ const CanvasStatusBar = ({
         <Badge variant="secondary">{dimensions} dimensoes</Badge>
       </div>
       <div className="flex items-center gap-2">
-        {hasImportedRestriction ? (
-          <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">
-            Restricao imported sync
-          </Badge>
-        ) : null}
         <span className={cn("rounded-md border px-2 py-1 font-medium", statusClass)}>{statusLabel}</span>
         {lastSavedAt ? <span className="text-muted-foreground">ultimo save: {new Date(lastSavedAt).toLocaleTimeString("pt-BR")}</span> : null}
       </div>
