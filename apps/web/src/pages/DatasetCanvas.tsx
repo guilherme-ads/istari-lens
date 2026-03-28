@@ -2477,7 +2477,7 @@ const DatasetCanvas = () => {
                 </div>
 
                 <TabsContent value="estrutura" className="m-0 min-h-0 flex-1">
-                  <ScrollArea className="h-full px-3 pb-3">
+                  <div className="h-full overflow-y-auto overflow-x-hidden px-3 pb-3">
                     <div className="space-y-3">
                       {!accessMode ? (
                         <p className="rounded-lg border border-border/60 bg-card/45 px-3 py-2 text-caption text-muted-foreground">
@@ -2532,11 +2532,11 @@ const DatasetCanvas = () => {
                         <p className="text-caption text-muted-foreground">Nenhum recurso disponivel para o tipo selecionado.</p>
                       ) : null}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="syncs" className="m-0 min-h-0 flex-1">
-                  <ScrollArea className="h-full px-3 pb-3">
+                  <div className="h-full overflow-y-auto overflow-x-hidden px-3 pb-3">
                     {!isEditing || !datasetId ? (
                       <p className="rounded-lg border border-border/60 bg-card/45 px-3 py-2 text-xs text-muted-foreground">
                         Salve o dataset para acompanhar o historico de syncs.
@@ -2762,7 +2762,7 @@ const DatasetCanvas = () => {
                         </div>
                       </div>
                     )}
-                  </ScrollArea>
+                  </div>
                 </TabsContent>
               </Tabs>
             </aside>
