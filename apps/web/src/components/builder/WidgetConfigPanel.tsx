@@ -2282,6 +2282,7 @@ export const WidgetConfigPanel = ({
                             ) : (
                               <>
                                 <SelectItem value="contains">cont</SelectItem>
+                                <SelectItem value="not_contains">nao contem</SelectItem>
                                 <SelectItem value="between">entre</SelectItem>
                               </>
                             )}

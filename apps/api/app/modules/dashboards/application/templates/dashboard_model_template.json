@@ -10,7 +10,7 @@
     "supported_widget_types": ["kpi", "line", "bar", "column", "donut", "table", "text", "dre"],
     "metric_ops": ["count", "sum", "avg", "min", "max", "distinct_count"],
     "time_granularity": ["day", "week", "month", "hour", "timestamp"],
-    "filter_ops": ["eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "is_null", "not_null", "between"],
+    "filter_ops": ["eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "not_contains", "is_null", "not_null", "between"],
     "order_direction": ["asc", "desc"],
     "visual_padding": ["compact", "normal", "comfortable"],
     "visual_palette": ["default", "warm", "cool", "mono", "vivid"]

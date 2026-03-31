@@ -765,11 +765,62 @@ def _to_engine_query_spec(config: WidgetConfig) -> dict[str, Any]:
     resolved_limit = config.limit if config.limit is not None else 500
     if config.widget_type != "table":
         resolved_limit = None
+    metrics_payload = [{"field": item.column, "agg": item.op, "alias": item.alias} for item in config.metrics]
+    dimensions_payload = list(config.dimensions)
+    columns_payload = list(config.columns) if config.columns else None
+
+    if config.widget_type == "table":
+        # Build table projection from selected columns/instances instead of relying on
+        # persisted metrics/dimensions (which are intentionally empty in widget config).
+        table_sources: list[str] = []
+        seen_sources: set[str] = set()
+        source_candidates = (
+            [item.source for item in config.table_column_instances]
+            if config.table_column_instances
+            else list(config.columns or [])
+        )
+        for raw_source in source_candidates:
+            source = str(raw_source or "").strip()
+            if not source or source in seen_sources:
+                continue
+            seen_sources.add(source)
+            table_sources.append(source)
+
+        aggregation_by_source: dict[str, str] = {}
+        for item in config.table_column_instances:
+            source = str(item.source or "").strip()
+            agg = str(item.aggregation or "").strip()
+            if not source or not agg or agg == "none":
+                continue
+            aggregation_by_source.setdefault(source, agg)
+        for source, agg in (config.table_column_aggs or {}).items():
+            normalized_source = str(source or "").strip()
+            normalized_agg = str(agg or "").strip()
+            if not normalized_source or not normalized_agg or normalized_agg == "none":
+                continue
+            aggregation_by_source.setdefault(normalized_source, normalized_agg)
+
+        metrics_payload = []
+        dimensions_payload = []
+        for source in table_sources:
+            agg = aggregation_by_source.get(source, "none")
+            if agg == "none":
+                dimensions_payload.append(source)
+            else:
+                metrics_payload.append({"field": source, "agg": agg})
+
+        # Force grouped execution for pure-dimensional tables (distinct-like rows),
+        # which prevents duplicates and stabilizes joined dataset queries.
+        if dimensions_payload and not metrics_payload:
+            metrics_payload.append({"field": "*", "agg": "count"})
+
+        columns_payload = table_sources or columns_payload
+
     payload: dict[str, Any] = {
         "resource_id": config.view_name,
         "widget_type": config.widget_type,
-        "metrics": [{"field": item.column, "agg": item.op, "alias": item.alias} for item in config.metrics],
-        "dimensions": list(config.dimensions),
+        "metrics": metrics_payload,
+        "dimensions": dimensions_payload,
         "filters": [{"field": item.column, "op": item.op, "value": item.value} for item in config.filters],
         "order_by": [
             {
@@ -779,7 +830,7 @@ def _to_engine_query_spec(config: WidgetConfig) -> dict[str, Any]:
             }
             for item in config.order_by
         ],
-        "columns": list(config.columns) if config.columns else None,
+        "columns": columns_payload,
         "top_n": config.top_n,
         "offset": config.offset if config.offset is not None else 0,
         "time": (
@@ -865,7 +916,7 @@ def _is_supported_consolidation_filter(filter_config: FilterConfig) -> bool:
         return isinstance(value, list) and len(value) == 2
     if op in {"in", "not_in"}:
         return isinstance(value, list) and len(value) > 0
-    if op in {"eq", "neq", "gt", "lt", "gte", "lte", "contains"}:
+    if op in {"eq", "neq", "gt", "lt", "gte", "lte", "contains", "not_contains"}:
         return not isinstance(value, (dict, list))
     return False
 
@@ -927,6 +978,10 @@ def _row_matches_filter(row: dict[str, Any], filter_config: FilterConfig) -> boo
         if value is None:
             return False
         return str(target or "") in str(value)
+    if op == "not_contains":
+        if value is None:
+            return True
+        return str(target or "") not in str(value)
     if op == "eq":
         return _values_equal(value, target)
     if op == "neq":

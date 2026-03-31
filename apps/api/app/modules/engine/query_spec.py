@@ -14,7 +14,7 @@ def to_engine_query_spec(
     filters_payload: list[dict[str, object]] = []
     for item in spec.filters:
         value = item.value
-        if isinstance(value, list) and item.op in {"eq", "neq", "contains", "gte", "lte", "gt", "lt"}:
+        if isinstance(value, list) and item.op in {"eq", "neq", "contains", "not_contains", "gte", "lte", "gt", "lt"}:
             value = value[0] if value else None
         filters_payload.append({"field": item.field, "op": item.op, "value": value})
 

@@ -83,7 +83,7 @@ Regras extras para filtros e ordenacao (obrigatorio):
 - Para filtros globais, use `native_filters` no nivel raiz da resposta.
 - Cada filtro usa:
   * `column`: nome exato da coluna
-  * `op`: `eq|neq|gt|lt|gte|lte|in|not_in|contains|is_null|not_null|between`
+  * `op`: `eq|neq|gt|lt|gte|lte|in|not_in|contains|not_contains|is_null|not_null|between`
   * `value`: obrigatorio para todos os `op` exceto `is_null` e `not_null`
 - Datas relativas devem usar `op: "between"` com `value: {"relative": "last_7_days|last_30_days|today|yesterday|this_month|last_month|this_year"}`.
 - Datas absolutas entre periodos devem usar `op: "between"` com `value: ["YYYY-MM-DD","YYYY-MM-DD"]`.

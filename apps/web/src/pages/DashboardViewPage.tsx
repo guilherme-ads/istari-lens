@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getStoredUser } from "@/lib/auth";
 
-type FilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative" | "in" | "not_in" | "is_null" | "not_null";
+type FilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "not_contains" | "between" | "relative" | "in" | "not_in" | "is_null" | "not_null";
 type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_year" | "this_month" | "last_month";
 type DraftGlobalFilter = {
   id: string;
@@ -68,6 +68,7 @@ const commonOps: Array<{ value: FilterOp; label: string }> = [
   { value: "not_in", label: "not in" },
   { value: "between", label: "entre" },
   { value: "contains", label: "contem" },
+  { value: "not_contains", label: "nao contem" },
   { value: "is_null", label: "nulo" },
   { value: "not_null", label: "nao nulo" },
 ];
@@ -212,6 +213,7 @@ const operatorLabel: Record<FilterOp, string> = {
   gte: ">=",
   lte: "<=",
   contains: "contem",
+  not_contains: "nao contem",
   in: "in",
   not_in: "not in",
   is_null: "nulo",

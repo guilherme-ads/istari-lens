@@ -289,6 +289,9 @@ def _apply_filter(filters: list[Any]) -> tuple[list[str], list[Any]]:
         elif op == "contains":
             where_parts.append(f"{column}::text ILIKE %s")
             params.append(f"%{value}%")
+        elif op == "not_contains":
+            where_parts.append(f"{column}::text NOT ILIKE %s")
+            params.append(f"%{value}%")
         elif op in {"in", "not_in"}:
             values = value if isinstance(value, list) else [value]
             placeholder = _date_param_expr() if use_date_expr else "%s"

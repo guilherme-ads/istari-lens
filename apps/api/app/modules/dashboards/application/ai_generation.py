@@ -26,7 +26,7 @@ AI_DASHBOARD_MODEL_PATH = Path(__file__).resolve().parent / "templates" / "dashb
 AI_DASHBOARD_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "dashboard_generation_system_prompt.txt"
 LEGACY_JSON_OUTPUT_INSTRUCTION = (
     "Responda exclusivamente em JSON valido, sem markdown, no formato: "
-    '{"explanation":"...","planning_steps":["..."],"native_filters":[{"column":"...","op":"eq|neq|gt|lt|gte|lte|in|not_in|contains|is_null|not_null|between","value":"...","visible":true}],"sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
+    '{"explanation":"...","planning_steps":["..."],"native_filters":[{"column":"...","op":"eq|neq|gt|lt|gte|lte|in|not_in|contains|not_contains|is_null|not_null|between","value":"...","visible":true}],"sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
 )
 logger = logging.getLogger("uvicorn.error")
 RELATIVE_DATE_PRESETS = {
@@ -246,6 +246,7 @@ def _dashboard_plan_response_schema() -> dict[str, Any]:
                                     "in",
                                     "not_in",
                                     "contains",
+                                    "not_contains",
                                     "is_null",
                                     "not_null",
                                     "between",
@@ -454,7 +455,7 @@ def _sanitize_native_filter_payload(raw_filters: Any) -> list[dict[str, Any]]:
         if not isinstance(column, str) or not column.strip():
             continue
         op = str(item.get("op") or "").strip().lower()
-        if op not in {"eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "is_null", "not_null", "between"}:
+        if op not in {"eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "not_contains", "is_null", "not_null", "between"}:
             op = "eq"
         visible = bool(item.get("visible", True))
         value = item.get("value")

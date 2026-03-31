@@ -38,6 +38,7 @@ export type FilterOp =
   | "in"
   | "not_in"
   | "contains"
+  | "not_contains"
   | "is_null"
   | "not_null"
   | "between";

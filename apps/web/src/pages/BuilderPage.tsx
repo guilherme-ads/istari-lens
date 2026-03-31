@@ -58,7 +58,7 @@ import { ChatInput, ChatMessages, type ChatMessageData } from "@/components/shar
 
 type SemanticColumnType = "numeric" | "temporal" | "text" | "boolean";
 type DatasetColumn = { name: string; type: SemanticColumnType };
-type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "between" | "relative" | "in" | "not_in" | "is_null" | "not_null";
+type DashboardFilterOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains" | "not_contains" | "between" | "relative" | "in" | "not_in" | "is_null" | "not_null";
 type RelativeDatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_year" | "this_month" | "last_month";
 type DraftGlobalFilter = {
   id: string;
@@ -266,6 +266,7 @@ const commonOps: Array<{ value: DashboardFilterOp; label: string }> = [
   { value: "in", label: "in" },
   { value: "not_in", label: "not in" },
   { value: "contains", label: "contem" },
+  { value: "not_contains", label: "nao contem" },
   { value: "between", label: "entre" },
   { value: "is_null", label: "nulo" },
   { value: "not_null", label: "nao nulo" },
@@ -304,6 +305,7 @@ const operatorLabel: Record<DashboardFilterOp, string> = {
   gte: ">=",
   lte: "<=",
   contains: "contem",
+  not_contains: "nao contem",
   in: "in",
   not_in: "not in",
   is_null: "nulo",
@@ -338,7 +340,7 @@ const parseDate = (value: unknown): Date | undefined => {
 };
 
 const normalizeDashboardFilterOp = (value: string): DashboardFilterOp =>
-  (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "between", "relative", "in", "not_in", "is_null", "not_null"].includes(value) ? value : "eq") as DashboardFilterOp;
+  (["eq", "neq", "gt", "lt", "gte", "lte", "contains", "not_contains", "between", "relative", "in", "not_in", "is_null", "not_null"].includes(value) ? value : "eq") as DashboardFilterOp;
 
 const prepareGlobalFilters = (
   filters: DraftGlobalFilter[],

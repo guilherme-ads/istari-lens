@@ -912,6 +912,98 @@ def test_materialize_base_query_spec_supports_formula_computed(monkeypatch) -> N
     assert executed_params == [100]
 
 
+def test_materialize_base_query_spec_supports_round_computed(monkeypatch) -> None:
+    worker = DatasetSyncWorkerService(
+        session_factory=_build_session_factory(),
+        settings=get_settings(),
+        worker_id="test-worker",
+    )
+
+    executed_params: list[object] = []
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def execute(self, _query, params=None):  # noqa: ANN001
+            if params:
+                executed_params.extend(list(params))
+
+        def fetchone(self):
+            return (4,)
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr("app.modules.datasets.sync_services.psycopg.connect", lambda _url: _FakeConn())
+
+    dataset = SimpleNamespace(
+        id=10,
+        name="Energia",
+        base_query_spec={
+            "base": {
+                "primary_resource": "lens_imp_t1.vw_energia",
+                "resources": [{"id": "r0", "resource_id": "lens_imp_t1.vw_energia"}],
+                "joins": [],
+            },
+            "preprocess": {
+                "columns": {
+                    "include": [
+                        {"resource": "r0", "column": "faturamento", "alias": "faturamento"},
+                        {"resource": "r0", "column": "kwh", "alias": "kwh"},
+                    ],
+                    "exclude": [],
+                },
+                "computed_columns": [
+                    {
+                        "alias": "faturamento_por_kwh_round",
+                        "expr": {
+                            "op": "round",
+                            "args": [
+                                {
+                                    "op": "div",
+                                    "args": [
+                                        {"column": "faturamento"},
+                                        {"column": "kwh"},
+                                    ],
+                                }
+                            ],
+                        },
+                        "data_type": "numeric",
+                    }
+                ],
+                "filters": [{"field": "faturamento_por_kwh_round", "op": "gte", "value": 1}],
+            },
+        },
+    )
+
+    rows_read, rows_written, bytes_processed = worker._materialize_base_query_spec_to_internal(
+        dataset=dataset,
+        source_url=None,
+        internal_url="postgresql://internal",
+        target_schema="lens_imp_t1",
+        load_table_name="ds_10__energia__slot_a",
+    )
+
+    assert rows_read == 4
+    assert rows_written == 4
+    assert bytes_processed == 0
+    assert executed_params == [1]
+
+
 def test_materialize_base_query_spec_supports_unicode_column_identifiers(monkeypatch) -> None:
     worker = DatasetSyncWorkerService(
         session_factory=_build_session_factory(),

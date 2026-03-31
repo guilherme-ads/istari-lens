@@ -5,7 +5,21 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 MetricAgg = Literal["count", "sum", "avg", "min", "max", "distinct_count"]
-FilterOp = Literal["eq", "neq", "gt", "lt", "gte", "lte", "in", "not_in", "contains", "is_null", "not_null", "between"]
+FilterOp = Literal[
+    "eq",
+    "neq",
+    "gt",
+    "lt",
+    "gte",
+    "lte",
+    "in",
+    "not_in",
+    "contains",
+    "not_contains",
+    "is_null",
+    "not_null",
+    "between",
+]
 SortDirection = Literal["asc", "desc"]
 WidgetType = Literal["kpi", "line", "bar", "column", "donut", "table", "text", "dre"]
 TimeGranularity = Literal["day", "week", "month", "hour", "timestamp"]

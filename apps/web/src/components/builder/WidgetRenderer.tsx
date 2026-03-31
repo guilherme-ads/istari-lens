@@ -512,6 +512,7 @@ type DraftPreviewPlan = {
   dimensionAliasMap?: Record<string, string>;
   dreRowMetricKeys?: Record<string, string[]>;
   tableMetricKeyByColumn?: Record<string, string>;
+  tableHiddenMetricKeys?: string[];
 };
 
 type ComparableDateWindow = {
@@ -624,6 +625,12 @@ const normalizeDraftRowsForWidget = (
     Object.entries(draftPreviewPlan.tableMetricKeyByColumn || {}).forEach(([target, sourceKey]) => {
       row[target] = row[sourceKey];
     });
+    Object.values(draftPreviewPlan.tableMetricKeyByColumn || {}).forEach((sourceKey) => {
+      delete row[sourceKey];
+    });
+    (draftPreviewPlan.tableHiddenMetricKeys || []).forEach((hiddenKey) => {
+      delete row[hiddenKey];
+    });
     return row;
   });
 };
@@ -669,6 +676,7 @@ const buildDraftPreviewSpec = ({
   if (isLine && (metrics.length < 1 || metrics.length > 2)) return null;
   const dreRowMetricKeys: Record<string, string[]> = {};
   const tableMetricKeyByColumn: Record<string, string> = {};
+  const tableHiddenMetricKeys: string[] = [];
   if (isDre) {
     const dreRows = widget.config.dre_rows || [];
     if (dreRows.length === 0) return null;
@@ -749,10 +757,16 @@ const buildDraftPreviewSpec = ({
     const configuredColumns = (widget.config.columns || [])
       .map((column) => column.trim())
       .filter((column) => !!column);
-    if (configuredColumns.length === 0) return null;
+    const fallbackColumnsFromInstances = (widget.config.table_column_instances || [])
+      .map((item) => String(item.source || "").trim())
+      .filter((column) => !!column);
+    const tableColumns = configuredColumns.length > 0
+      ? configuredColumns
+      : Array.from(new Set(fallbackColumnsFromInstances));
+    if (tableColumns.length === 0) return null;
     metrics = [];
     dimensions = [];
-    configuredColumns.forEach((columnName) => {
+    tableColumns.forEach((columnName) => {
       const aggregation = getTableColumnAggregation(widget, columnName);
       if (aggregation === "none") {
         dimensions.push(columnName);
@@ -764,6 +778,15 @@ const buildDraftPreviewSpec = ({
         agg: aggregation,
       });
     });
+    // For table widgets with only dimensions, force grouped execution (distinct-like rows)
+    // to avoid duplicated lines and edge-case failures on joined datasets.
+    if (dimensions.length > 0 && metrics.length === 0) {
+      tableHiddenMetricKeys.push(`m${metrics.length}`);
+      metrics.push({
+        field: "*",
+        agg: "count",
+      });
+    }
     if (dimensions.length === 0 && metrics.length === 0) return null;
   }
 
@@ -822,6 +845,7 @@ const buildDraftPreviewSpec = ({
     dimensionAliasMap: Object.keys(dimensionAliasMap).length > 0 ? dimensionAliasMap : undefined,
     dreRowMetricKeys: Object.keys(dreRowMetricKeys).length > 0 ? dreRowMetricKeys : undefined,
     tableMetricKeyByColumn: Object.keys(tableMetricKeyByColumn).length > 0 ? tableMetricKeyByColumn : undefined,
+    tableHiddenMetricKeys: tableHiddenMetricKeys.length > 0 ? tableHiddenMetricKeys : undefined,
   };
 };
 
@@ -1035,7 +1059,7 @@ const MiniTable = ({
       }))
     : (() => {
       const tableColumns = configured.length > 0
-        ? [...configured.filter((column) => rowKeys.includes(column)), ...rowKeys.filter((column) => !configured.includes(column))]
+        ? configured.filter((column) => rowKeys.includes(column))
         : rowKeys;
       return tableColumns.map((key, index) => ({
         id: `${key}__${index}`,
@@ -1047,6 +1071,18 @@ const MiniTable = ({
         suffix: getTableColumnSuffix(widget, key),
       }));
     })());
+  const visibleRows = useMemo(() => {
+    if (rows.length <= 1 || tableColumnDefs.length === 0) return rows;
+    const seen = new Set<string>();
+    const uniqueRows: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      const signature = JSON.stringify(tableColumnDefs.map((column) => row[column.source] ?? null));
+      if (seen.has(signature)) continue;
+      seen.add(signature);
+      uniqueRows.push(row);
+    }
+    return uniqueRows;
+  }, [rows, tableColumnDefs]);
   const tableDensity = widget.config.table_density || "normal";
   const densityClassByMode = {
     compact: {
@@ -1073,8 +1109,8 @@ const MiniTable = ({
   } as const;
 
   const sortedRows = useMemo(() => {
-    if (!sortBy) return rows;
-    const copy = [...rows];
+    if (!sortBy) return visibleRows;
+    const copy = [...visibleRows];
     copy.sort((a, b) => {
       const av = a[sortBy.source];
       const bv = b[sortBy.source];
@@ -1094,13 +1130,13 @@ const MiniTable = ({
         : String(bv).localeCompare(String(av), "pt-BR");
     });
     return copy;
-  }, [rows, sortBy]);
+  }, [visibleRows, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageRows = sortedRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  if (rows.length === 0) return <EmptyWidgetState text="Nenhum dado retornado" />;
+  if (visibleRows.length === 0) return <EmptyWidgetState text="Nenhum dado retornado" />;
 
   const exportCsv = () => {
     const escapeCsv = (value: string) => {
@@ -2131,7 +2167,7 @@ export const WidgetRenderer = ({
                 <XAxis
                   xAxisId="left"
                   type="number"
-                  hide={hasOverlayMetrics}
+                  hide
                   domain={[0, barAxisMax]}
                   allowDataOverflow={false}
                   tickFormatter={(value) => formatChartValueCompact(value)}

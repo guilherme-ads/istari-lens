@@ -525,6 +525,10 @@ def _compile_computed_expr_sql(
         if len(compiled_args) != 2:
             raise RuntimeError("Computed op 'div' expects 2 args")
         return sql.SQL("({} / NULLIF({}, 0))").format(compiled_args[0], compiled_args[1])
+    if op == "mod":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'mod' expects 2 args")
+        return sql.SQL("MOD({}, {})").format(compiled_args[0], compiled_args[1])
     if op == "concat":
         if len(compiled_args) != 2:
             raise RuntimeError("Computed op 'concat' expects 2 args")
@@ -534,6 +538,10 @@ def _compile_computed_expr_sql(
         )
     if op == "coalesce":
         return sql.SQL("COALESCE({})").format(sql.SQL(", ").join(compiled_args))
+    if op == "nullif":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'nullif' expects 2 args")
+        return sql.SQL("NULLIF({}, {})").format(compiled_args[0], compiled_args[1])
     if op == "lower":
         if len(compiled_args) != 1:
             raise RuntimeError("Computed op 'lower' expects 1 arg")
@@ -542,10 +550,118 @@ def _compile_computed_expr_sql(
         if len(compiled_args) != 1:
             raise RuntimeError("Computed op 'upper' expects 1 arg")
         return sql.SQL("UPPER(({})::text)").format(compiled_args[0])
-    if op == "date_trunc":
+    if op == "substring":
+        if len(compiled_args) not in {2, 3}:
+            raise RuntimeError("Computed op 'substring' expects 2 or 3 args")
+        if len(compiled_args) == 2:
+            return sql.SQL("SUBSTRING(({})::text FROM {})").format(compiled_args[0], compiled_args[1])
+        return sql.SQL("SUBSTRING(({})::text FROM {} FOR {})").format(compiled_args[0], compiled_args[1], compiled_args[2])
+    if op == "trim":
         if len(compiled_args) != 1:
-            raise RuntimeError("Computed op 'date_trunc' expects 1 arg")
-        return sql.SQL("DATE_TRUNC('day', {})").format(compiled_args[0])
+            raise RuntimeError("Computed op 'trim' expects 1 arg")
+        return sql.SQL("TRIM(({})::text)").format(compiled_args[0])
+    if op == "extract":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'extract' expects 2 args")
+        part_expr = args[0]
+        if not isinstance(part_expr, dict) or "literal" not in part_expr:
+            raise RuntimeError("Computed op 'extract' first arg must be a literal date part")
+        part_literal = part_expr.get("literal")
+        if not isinstance(part_literal, str) or not part_literal.strip():
+            raise RuntimeError("Computed op 'extract' first arg must be a non-empty string")
+        part = part_literal.strip().lower()
+        allowed_parts = {
+            "century",
+            "decade",
+            "dow",
+            "doy",
+            "epoch",
+            "hour",
+            "isodow",
+            "isoyear",
+            "julian",
+            "microseconds",
+            "millennium",
+            "milliseconds",
+            "minute",
+            "month",
+            "quarter",
+            "second",
+            "timezone",
+            "timezone_hour",
+            "timezone_minute",
+            "week",
+            "year",
+        }
+        if part not in allowed_parts:
+            raise RuntimeError(f"Computed op 'extract' received unsupported date part '{part_literal}'")
+        return sql.SQL("EXTRACT({} FROM {})").format(sql.SQL(part.upper()), compiled_args[1])
+    if op == "abs":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'abs' expects 1 arg")
+        return sql.SQL("ABS({})").format(compiled_args[0])
+    if op == "round":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'round' expects 1 arg")
+        return sql.SQL("ROUND({})").format(compiled_args[0])
+    if op == "ceil":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'ceil' expects 1 arg")
+        return sql.SQL("CEIL({})").format(compiled_args[0])
+    if op == "floor":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'floor' expects 1 arg")
+        return sql.SQL("FLOOR({})").format(compiled_args[0])
+    if op == "date_trunc":
+        if len(compiled_args) == 1:
+            return sql.SQL("DATE_TRUNC('day', {})").format(compiled_args[0])
+        if len(compiled_args) == 2:
+            return sql.SQL("DATE_TRUNC(({})::text, {})").format(compiled_args[0], compiled_args[1])
+        raise RuntimeError("Computed op 'date_trunc' expects 1 or 2 args")
+    if op == "eq":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'eq' expects 2 args")
+        return sql.SQL("({} = {})").format(compiled_args[0], compiled_args[1])
+    if op == "neq":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'neq' expects 2 args")
+        return sql.SQL("({} <> {})").format(compiled_args[0], compiled_args[1])
+    if op == "gt":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'gt' expects 2 args")
+        return sql.SQL("({} > {})").format(compiled_args[0], compiled_args[1])
+    if op == "gte":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'gte' expects 2 args")
+        return sql.SQL("({} >= {})").format(compiled_args[0], compiled_args[1])
+    if op == "lt":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'lt' expects 2 args")
+        return sql.SQL("({} < {})").format(compiled_args[0], compiled_args[1])
+    if op == "lte":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'lte' expects 2 args")
+        return sql.SQL("({} <= {})").format(compiled_args[0], compiled_args[1])
+    if op == "and":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'and' expects 2 args")
+        return sql.SQL("(({}) AND ({}))").format(compiled_args[0], compiled_args[1])
+    if op == "or":
+        if len(compiled_args) != 2:
+            raise RuntimeError("Computed op 'or' expects 2 args")
+        return sql.SQL("(({}) OR ({}))").format(compiled_args[0], compiled_args[1])
+    if op == "not":
+        if len(compiled_args) != 1:
+            raise RuntimeError("Computed op 'not' expects 1 arg")
+        return sql.SQL("(NOT ({}))").format(compiled_args[0])
+    if op == "case_when":
+        if len(compiled_args) != 3:
+            raise RuntimeError("Computed op 'case_when' expects 3 args")
+        return sql.SQL("(CASE WHEN {} THEN {} ELSE {} END)").format(
+            compiled_args[0],
+            compiled_args[1],
+            compiled_args[2],
+        )
     raise RuntimeError(f"Unsupported computed op '{op}'")
 
 

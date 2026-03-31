@@ -3758,13 +3758,14 @@ const DatasetCanvas = () => {
           if (!open) setEditingComputedAlias(null);
         }}
       >
-        <DialogContent className="max-w-5xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[92vh] w-[96vw] max-w-[72rem] flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-border/60 px-4 py-3 sm:px-6">
             <DialogTitle>{editingComputedAlias ? "Editar coluna calculada" : "Nova coluna calculada"}</DialogTitle>
             <DialogDescription>Crie uma expressao por linha (row-level), sem agregacoes verticais.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 md:grid-cols-[1.4fr_0.9fr]">
-            <div className="space-y-3">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6">
+            <div className="grid min-h-0 gap-3 md:grid-cols-[1.4fr_0.9fr]">
+              <div className="min-h-0 min-w-0 space-y-3 pr-1">
               <div className="space-y-1">
                 <Label className="text-xs">Alias da coluna</Label>
                 <Input
@@ -3830,8 +3831,8 @@ const DatasetCanvas = () => {
                             insertComputedSuggestion(item.label, item.kind);
                           }}
                         >
-                          <span className="font-mono">{item.label}</span>
-                          <span className="text-muted-foreground">{item.detail}</span>
+                          <span className="min-w-0 truncate pr-2 font-mono">{item.label}</span>
+                          <span className="shrink-0 text-muted-foreground">{item.detail}</span>
                         </button>
                       ))}
                     </div>
@@ -3889,7 +3890,7 @@ const DatasetCanvas = () => {
                             <span className="truncate text-muted-foreground">
                               {computedExpressionValidation.references.slice(0, 2).map((ref) => `${ref}: ${String(item.row[ref] ?? "null")}`).join(" . ")}
                             </span>
-                            <span className="font-mono text-foreground">{String(item.result ?? "null")}</span>
+                            <span className="max-w-[48%] break-all text-right font-mono text-foreground">{String(item.result ?? "null")}</span>
                           </div>
                         )}
                       </div>
@@ -3901,7 +3902,7 @@ const DatasetCanvas = () => {
               </div>
             </div>
 
-            <div className="space-y-3">
+              <div className="min-h-0 min-w-0 space-y-3 pr-1">
               <div className="rounded-md border border-border/60 bg-background/45 p-2">
                 <p className="text-[11px] font-medium">Colunas disponiveis</p>
                 <Input
@@ -3921,8 +3922,8 @@ const DatasetCanvas = () => {
                           className="flex w-full items-center justify-between rounded-sm border border-border/50 bg-background/30 px-2 py-1 text-left text-[11px] hover:bg-muted/40"
                           onClick={() => insertComputedSuggestion(item.name, "column")}
                         >
-                          <span className="font-mono">{item.name}</span>
-                          <span className="text-muted-foreground">{item.type}</span>
+                          <span className="min-w-0 truncate pr-2 font-mono">{item.name}</span>
+                          <span className="shrink-0 text-muted-foreground">{item.type}</span>
                         </button>
                       ))}
                   </div>
@@ -3963,8 +3964,8 @@ const DatasetCanvas = () => {
                                 insertComputedSuggestion(name, "function");
                               }}
                             >
-                              <span className="font-mono">{name}</span>
-                              <span className="text-muted-foreground">funcao</span>
+                              <span className="min-w-0 truncate pr-2 font-mono">{name}</span>
+                              <span className="shrink-0 text-muted-foreground">funcao</span>
                             </button>
                           ))}
                       </div>
@@ -3980,7 +3981,7 @@ const DatasetCanvas = () => {
                     <button
                       key={`computed-example-${index}`}
                       type="button"
-                      className="block w-full rounded-sm border border-border/50 bg-background/30 px-2 py-1 text-left font-mono text-[11px] hover:bg-muted/40"
+                      className="block w-full break-all rounded-sm border border-border/50 bg-background/30 px-2 py-1 text-left font-mono text-[11px] hover:bg-muted/40"
                       onClick={() => {
                         setNewComputedFormula(example);
                         setComputedEditorCursor(example.length);
@@ -4002,9 +4003,10 @@ const DatasetCanvas = () => {
                   {ROW_LEVEL_AGGREGATION_ERROR}
                 </p>
               </div>
+              </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-border/60 px-4 py-3 sm:px-6">
             <Button
               type="button"
               variant="outline"

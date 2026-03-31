@@ -280,6 +280,7 @@ export const TableWidgetDataSection = (props: TableWidgetDataSectionProps) => {
                   )}
                   onDragOver={(event) => {
                     if (!draggedTableColumn) return;
+                    event.stopPropagation();
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
                     setTableDropZone("selected");
@@ -287,6 +288,7 @@ export const TableWidgetDataSection = (props: TableWidgetDataSectionProps) => {
                   }}
                   onDrop={(event) => {
                     if (!draggedTableColumn) return;
+                    event.stopPropagation();
                     event.preventDefault();
                     moveTableColumn(draggedTableColumn, "selected", item.id);
                     resetTableDragState();
@@ -440,6 +442,7 @@ export const TableWidgetDataSection = (props: TableWidgetDataSectionProps) => {
                   )}
                   onDragOver={(event) => {
                     if (!draggedTableColumn) return;
+                    event.stopPropagation();
                     event.preventDefault();
                     setTableDropZone("available");
                     setTableDropColumn(column.name);

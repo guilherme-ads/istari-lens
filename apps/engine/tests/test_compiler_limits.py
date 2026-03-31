@@ -90,3 +90,18 @@ def test_kpi_derived_formula_compiles_with_named_aliases() -> None:
     assert 'AS "clientes_totais"' in sql
     assert '"clientes_ativos"' in sql
     assert '"clientes_totais"' in sql
+
+
+def test_table_widget_compiles_not_contains_filter() -> None:
+    spec = QuerySpec.model_validate(
+        {
+            "resource_id": "public.vw_sales",
+            "widget_type": "table",
+            "columns": ["id", "region"],
+            "filters": [{"field": "region", "op": "not_contains", "value": "sul"}],
+            "limit": 20,
+        }
+    )
+    sql, params, _row_limit = compile_query(spec, max_rows=5000)
+    assert '"region"::text NOT ILIKE %s' in sql
+    assert params == ["%sul%"]

@@ -55,6 +55,20 @@ def test_kpi_show_trend_accepts_true() -> None:
     assert config.kpi_show_trend is True
 
 
+def test_widget_filter_not_contains_is_valid() -> None:
+    config = WidgetConfig.model_validate(
+        {
+            "widget_type": "table",
+            "view_name": "public.vw_recargas",
+            "metrics": [],
+            "dimensions": [],
+            "filters": [{"column": "estacao", "op": "not_contains", "value": "posto"}],
+            "order_by": [],
+        }
+    )
+    validate_widget_config_against_columns(config, COLUMN_TYPES)
+
+
 def test_kpi_sum_non_numeric_column_fails() -> None:
     config = WidgetConfig.model_validate(
         {

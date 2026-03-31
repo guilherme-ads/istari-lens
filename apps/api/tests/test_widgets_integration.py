@@ -456,6 +456,40 @@ def test_identical_non_kpi_widgets_do_not_dedupe_in_monolith(client: TestClient)
     assert _FakeEngineClient.execute_count == 1
 
 
+def test_table_widget_uses_grouped_projection_when_only_dimensions_selected(client: TestClient) -> None:
+    create_response = client.post(
+        "/dashboards/1/widgets",
+        json={
+            "widget_type": "table",
+            "title": "Clientes",
+            "position": 0,
+            "config_version": 1,
+            "config": {
+                "widget_type": "table",
+                "view_name": "public.vw_recargas",
+                "metrics": [],
+                "dimensions": [],
+                "columns": ["estacao"],
+                "table_column_instances": [{"id": "estacao__0", "source": "estacao", "aggregation": "none"}],
+                "filters": [],
+                "order_by": [],
+                "limit": 25,
+            },
+        },
+    )
+    assert create_response.status_code == 200, create_response.text
+    widget_id = create_response.json()["id"]
+
+    data_response = client.get(f"/dashboards/1/widgets/{widget_id}/data")
+    assert data_response.status_code == 200, data_response.text
+    assert _FakeEngineClient.last_specs
+    spec = _FakeEngineClient.last_specs[-1]
+    assert spec["widget_type"] == "table"
+    assert spec["columns"] == ["estacao"]
+    assert spec["dimensions"] == ["estacao"]
+    assert spec["metrics"] == [{"field": "*", "agg": "count"}]
+
+
 def test_kpis_are_batched_by_engine_pipeline(client: TestClient) -> None:
     kpi_count = client.post(
         "/dashboards/1/widgets",

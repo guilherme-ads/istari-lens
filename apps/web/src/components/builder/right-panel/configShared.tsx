@@ -26,6 +26,7 @@ export const commonFilterOps: Array<{ value: WidgetFilter["op"]; label: string }
   { value: "in", label: "in" },
   { value: "not_in", label: "not in" },
   { value: "contains", label: "contém" },
+  { value: "not_contains", label: "nao contem" },
   { value: "between", label: "entre" },
   { value: "is_null", label: "nulo" },
   { value: "not_null", label: "não nulo" },

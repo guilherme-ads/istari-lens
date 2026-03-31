@@ -702,7 +702,7 @@ class MetricSpec(BaseModel):
 
 class FilterSpec(BaseModel):
     field: str
-    op: str = Field(..., description="eq, neq, in, not_in, contains, is_null, not_null, gte, lte, between")
+    op: str = Field(..., description="eq, neq, in, not_in, contains, not_contains, is_null, not_null, gte, lte, between")
     value: Optional[List] = None
 
 class SortSpec(BaseModel):
