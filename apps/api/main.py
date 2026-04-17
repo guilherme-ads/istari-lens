@@ -22,6 +22,8 @@ from app.api.v1.routes import (
     api_config,
     imports,
     catalog,
+    mcp,
+    bi_agent,
 )
 
 logger = logging.getLogger(__name__)
@@ -507,6 +509,8 @@ app.include_router(queries.router)
 app.include_router(api_config.router)
 app.include_router(imports.router)
 app.include_router(catalog.router)
+app.include_router(mcp.router)
+app.include_router(bi_agent.router)
 app.include_router(analyses.router)
 
 

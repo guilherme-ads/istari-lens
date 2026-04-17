@@ -891,6 +891,221 @@ export type ApiAIGenerateDashboardResponse = {
   sections: ApiAIGeneratedSection[];
 };
 
+export type ApiBiAgentRunMode = "answer" | "plan" | "draft";
+export type ApiBiAgentConversationRole = "user" | "assistant" | "ai";
+
+export type ApiBiAgentConversationTurn = {
+  role: ApiBiAgentConversationRole;
+  content: string;
+};
+
+export type ApiBiAgentRunRequest = {
+  dataset_id: number;
+  question: string;
+  mode: ApiBiAgentRunMode;
+  apply_changes?: boolean;
+  dashboard_id?: number;
+  conversation_history?: ApiBiAgentConversationTurn[];
+};
+
+export type ApiBiAgentAmbiguityItem = {
+  code: string;
+  description: string;
+  alternatives: string[];
+  suggested_refinement?: string | null;
+};
+
+export type ApiBiAgentEvidenceItem = {
+  tool: string;
+  summary: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+};
+
+export type ApiBiAgentToolCallItem = {
+  step_id: string;
+  tool: string;
+  category: string;
+  success: boolean;
+  attempt: number;
+  skipped: boolean;
+  error?: string | null;
+  warnings: string[];
+  validation_errors_count: number;
+  metadata: Record<string, unknown>;
+  executed_at: string;
+};
+
+export type ApiBiAgentValidationError = {
+  code: string;
+  field?: string | null;
+  message: string;
+};
+
+export type ApiBiAgentAnalysisState = {
+  question: string;
+  intent: string;
+  ambiguity_level: "low" | "medium" | "high";
+  covered_candidate_ids: string[];
+  covered_dimensions: string[];
+  temporal_coverage: boolean;
+  dimensional_coverage: boolean;
+  current_confidence: number;
+  last_decision_reason?: string | null;
+  open_ambiguities_count: number;
+  hypotheses: Array<Record<string, unknown>>;
+  evidence_gaps: Array<Record<string, unknown>>;
+};
+
+export type ApiBiAgentConversationMemory = {
+  applied: boolean;
+  original_question: string;
+  resolved_question: string;
+  references_used: string[];
+  inferred_metric?: string | null;
+  inferred_dimension?: string | null;
+  source_turns_count: number;
+  notes: string[];
+};
+
+export type ApiBiAgentDashboardPlan = {
+  title?: string | null;
+  explanation?: string | null;
+  planning_steps: string[];
+  native_filters: Array<Record<string, unknown>>;
+  sections: Array<Record<string, unknown>>;
+};
+
+export type ApiBiAgentDashboardDraft = {
+  dry_run: boolean;
+  applied: boolean;
+  dashboard_id?: number | null;
+  dashboard_id_source?: "input" | "created" | "none";
+  snapshot: Record<string, unknown>;
+  actions: string[];
+};
+
+export type ApiBiAgentResponseStatus = "answered" | "needs_clarification" | "insufficient_evidence";
+export type ApiBiExpectedAnswerShape =
+  | "single_best"
+  | "single_worst"
+  | "trend"
+  | "comparison"
+  | "drivers"
+  | "definition"
+  | "dashboard_plan"
+  | "open_exploration";
+export type ApiBiInterpretedAnswerType =
+  | "top_dimension"
+  | "bottom_dimension"
+  | "trend_summary"
+  | "comparison_summary"
+  | "drivers_summary"
+  | "definition"
+  | "insufficient_evidence"
+  | "needs_clarification";
+export type ApiBiAgentQualityTraceStage =
+  | "memory"
+  | "semantic_resolution"
+  | "answerability"
+  | "evidence_selection"
+  | "synthesis"
+  | "fallback"
+  | "finalization";
+
+export type ApiBiQuestionAnalysis = {
+  intent: string;
+  expected_answer_shape: ApiBiExpectedAnswerShape;
+  mentioned_metrics: string[];
+  inferred_metrics: string[];
+  mentioned_dimensions: string[];
+  inferred_dimensions: string[];
+  requires_temporal: boolean;
+  requires_comparison: boolean;
+  requires_diagnostic: boolean;
+  requires_visualization: boolean;
+  requires_dashboard: boolean;
+  ambiguity_level: "low" | "medium" | "high";
+  should_request_refinement: boolean;
+  assumptions: string[];
+  ambiguities: ApiBiAgentAmbiguityItem[];
+};
+
+export type ApiBiInterpretedAnswer = {
+  answer_type: ApiBiInterpretedAnswerType;
+  response_status_hint: ApiBiAgentResponseStatus;
+  selected_candidate_id?: string | null;
+  direct_answer?: string | null;
+  supporting_facts: string[];
+  caveats: string[];
+  recommended_next_step?: string | null;
+};
+
+export type ApiBiAgentFinalAnswer = {
+  response_status: ApiBiAgentResponseStatus;
+  short_chat_message: string;
+  direct_answer?: string | null;
+  why_not_fully_answered?: string | null;
+  assumptions_used: string[];
+  clarifying_questions: string[];
+  recommended_next_step?: string | null;
+  confidence_explanation?: string | null;
+  user_friendly_findings: string[];
+};
+
+export type ApiBiAgentChatPresentation = {
+  response_status: ApiBiAgentResponseStatus;
+  primary_message: string;
+  direct_answer?: string | null;
+  supporting_points: string[];
+  follow_up_questions: string[];
+  recommended_next_step?: string | null;
+  confidence_message?: string | null;
+};
+
+export type ApiBiAgentQualityTraceEvent = {
+  stage: ApiBiAgentQualityTraceStage;
+  decision: string;
+  detail?: string | null;
+  metadata: Record<string, unknown>;
+  timestamp: string;
+};
+
+export type ApiBiAgentRunResponse = {
+  success: boolean;
+  error?: string | null;
+  answer: string;
+  executive_summary?: string | null;
+  key_findings: string[];
+  limitations: string[];
+  ambiguities: ApiBiAgentAmbiguityItem[];
+  answer_confidence: number;
+  evidence: ApiBiAgentEvidenceItem[];
+  tool_calls: ApiBiAgentToolCallItem[];
+  warnings: string[];
+  validation_errors: ApiBiAgentValidationError[];
+  dashboard_plan?: ApiBiAgentDashboardPlan | null;
+  dashboard_draft?: ApiBiAgentDashboardDraft | null;
+  next_best_actions: string[];
+  final_answer?: ApiBiAgentFinalAnswer | null;
+  chat_presentation?: ApiBiAgentChatPresentation | null;
+  conversation_memory?: ApiBiAgentConversationMemory | null;
+  response_status?: ApiBiAgentResponseStatus | null;
+  short_chat_message?: string | null;
+  clarifying_questions: string[];
+  recommended_next_step?: string | null;
+  confidence_explanation?: string | null;
+  user_friendly_findings: string[];
+  answer_synthesis_trace?: Record<string, unknown> | null;
+  answer_synthesis_fallback_used?: boolean;
+  quality_trace?: ApiBiAgentQualityTraceEvent[];
+  trace_id: string;
+  stopping_reason?: string | null;
+  analysis_state?: ApiBiAgentAnalysisState | null;
+  question_analysis?: ApiBiQuestionAnalysis | null;
+  interpreted_answer?: ApiBiInterpretedAnswer | null;
+};
+
 export type ApiDashboardEditLockResponse = {
   dashboard_id: number;
   is_locked: boolean;
@@ -1433,6 +1648,9 @@ export const api = {
 
   generateDashboardWithAi: (payload: { dataset_id: number; prompt: string; title?: string }) =>
     request<ApiAIGenerateDashboardResponse>("/dashboards/ai/generate", { method: "POST", body: JSON.stringify(payload) }),
+
+  runBiAgent: (payload: ApiBiAgentRunRequest) =>
+    request<ApiBiAgentRunResponse>("/bi-agent/run", { method: "POST", body: JSON.stringify(payload) }),
 
   importDashboard: (payload: { dataset_id?: number; dashboard: Record<string, unknown> }) =>
     request<ApiDashboard>("/dashboards/import", { method: "POST", body: JSON.stringify(payload) }),

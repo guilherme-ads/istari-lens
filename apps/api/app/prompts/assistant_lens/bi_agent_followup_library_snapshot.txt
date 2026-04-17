@@ -1,0 +1,25 @@
+# Snapshot de follow-ups por intencao (origem: followups.py)
+
+[kpi_summary]
+- Quer que eu detalhe esses KPIs por periodo?
+- Quer focar em uma metrica especifica primeiro?
+
+[exploratory_analysis]
+- Quer que eu aprofunde em algum corte especifico?
+- Prefere ver essa analise por periodo ou por dimensao?
+
+[dashboard_generation]
+- Quer que eu monte um plano de dashboard executivo com esses achados?
+- Qual publico vai consumir esse dashboard?
+
+[visualization_help]
+- Voce quer comparar categorias, tendencia no tempo ou composicao?
+- Quer que eu sugira 2 opcoes de grafico e seus trade-offs?
+
+[diagnostic_analysis]
+- Quer que eu compare os periodos de maior queda antes e depois?
+- Qual dimensao deve ser priorizada para explicar a queda?
+
+[metric_explanation]
+- Quer exemplos praticos de como interpretar essa metrica?
+- Quer comparar essa metrica com outra complementar?

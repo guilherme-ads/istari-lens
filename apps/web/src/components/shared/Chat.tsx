@@ -23,6 +23,33 @@ const msgVariants = {
   transition: { duration: 0.3 },
 };
 
+const renderBoldText = (text: string): ReactNode[] => {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={`bold-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <span key={`txt-${index}`}>{part}</span>;
+  });
+};
+
+const renderChatParagraphs = (content: string): ReactNode => {
+  const paragraphs = String(content || "")
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {paragraphs.map((paragraph, index) => (
+        <p key={`p-${index}`} className="whitespace-pre-wrap">
+          {renderBoldText(paragraph)}
+        </p>
+      ))}
+    </div>
+  );
+};
+
 /* ─── Primitives ─── */
 
 /** Typing indicator (three bouncing dots with AI avatar) */
@@ -76,11 +103,7 @@ export const ChatAIBubble = ({
       {/* Content */}
       {content && (!status || status === "done") && (
         <div className="rounded-2xl rounded-tl-sm bg-secondary/60 border border-border/50 px-4 py-2.5 text-sm text-foreground">
-          <p
-            dangerouslySetInnerHTML={{
-              __html: content.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>"),
-            }}
-          />
+          {renderChatParagraphs(content)}
         </div>
       )}
 

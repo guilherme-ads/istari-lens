@@ -49,12 +49,12 @@ import { DashboardCanvas } from "@/components/builder/DashboardCanvas";
 import BuilderTopBar from "@/components/builder/BuilderTopBar";
 import BuilderLeftPanel from "@/components/builder/BuilderLeftPanel";
 import BuilderRightPanel from "@/components/builder/BuilderRightPanel";
+import BiAgentPanel from "@/components/builder/BiAgentPanel";
 import { FilterRuleRow } from "@/components/builder/FilterRuleRow";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 
 import EmptyState from "@/components/shared/EmptyState";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
-import { ChatInput, ChatMessages, type ChatMessageData } from "@/components/shared/Chat";
 
 type SemanticColumnType = "numeric" | "temporal" | "text" | "boolean";
 type DatasetColumn = { name: string; type: SemanticColumnType };
@@ -504,6 +504,10 @@ const BuilderPage = () => {
   const { datasetId, dashboardId } = useParams<{ datasetId: string; dashboardId?: string }>();
   const { toast } = useToast();
   const { datasets, views, dashboards, isLoading, isError, errorMessage } = useCoreData();
+  const datasetIdNumber = useMemo(() => {
+    const parsed = Number(datasetId);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [datasetId]);
 
   const dataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
   const view = useMemo(() => (dataset ? views.find((item) => item.id === dataset.viewId) : undefined), [dataset, views]);
@@ -531,8 +535,6 @@ const BuilderPage = () => {
   const [loadingCategoricalColumns, setLoadingCategoricalColumns] = useState<Record<string, boolean>>({});
   const [deleteDashboardOpen, setDeleteDashboardOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [assistantInput, setAssistantInput] = useState("");
-  const [assistantMessages, setAssistantMessages] = useState<ChatMessageData[]>([]);
   const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
   const [quickWidgetPickerOpen, setQuickWidgetPickerOpen] = useState(false);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
@@ -1612,26 +1614,8 @@ const BuilderPage = () => {
       return;
     }
 
-    toast({ title: "Exploracao de dataset em breve" });
+    setAssistantOpen(true);
   }, [toast]);
-
-  const handleAssistantSend = useCallback(() => {
-    const prompt = assistantInput.trim();
-    if (!prompt) return;
-    const userMessage: ChatMessageData = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: prompt,
-    };
-    const assistantMessage: ChatMessageData = {
-      id: `assistant-${Date.now() + 1}`,
-      role: "assistant",
-      content: "Posso ajudar a gerar widgets, secoes e filtros. Use os atalhos W, S, Cmd/Ctrl+S e Cmd/Ctrl+Shift+S para agilizar o fluxo.",
-      status: "done",
-    };
-    setAssistantMessages((prev) => [...prev, userMessage, assistantMessage]);
-    setAssistantInput("");
-  }, [assistantInput]);
 
   const handleEditWidget = useCallback((widget: DashboardWidget) => {
     setEditingWidget(widget);
@@ -2334,55 +2318,7 @@ const BuilderPage = () => {
           transition={{ type: "spring", stiffness: 320, damping: 28 }}
           className="fixed inset-y-0 right-0 z-50 w-full border-l border-border bg-card shadow-2xl sm:w-[400px]"
         >
-          <div className="flex h-full flex-col">
-            <div className="border-b border-border px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2.5">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent/10">
-                    <Sparkles className="h-4 w-4 text-accent" />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold">Assistente IA</p>
-                    <p className="text-[11px] text-muted-foreground">Ajuda com criacao de widgets e dashboard</p>
-                  </div>
-                </div>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setAssistantOpen(false)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-
-            <ChatMessages messages={assistantMessages} className="px-4 py-4">
-              {assistantMessages.length === 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    "Sugira 3 secoes para este dataset",
-                    "Crie um widget de tendencia mensal",
-                    "Quais filtros globais devo usar?",
-                  ].map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      className="rounded-full bg-secondary px-2.5 py-1.5 text-[11px]"
-                      onClick={() => setAssistantInput(suggestion)}
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </ChatMessages>
-
-            <div className="border-t border-border p-3">
-              <ChatInput
-                value={assistantInput}
-                onChange={setAssistantInput}
-                onSend={handleAssistantSend}
-                variant="textarea"
-                placeholder="Peça para gerar secoes, widgets ou filtros..."
-              />
-            </div>
-          </div>
+          <BiAgentPanel datasetId={datasetIdNumber} onClose={() => setAssistantOpen(false)} />
         </motion.aside>
       )}
 
@@ -2445,3 +2381,4 @@ const BuilderPage = () => {
 };
 
 export default BuilderPage;
+

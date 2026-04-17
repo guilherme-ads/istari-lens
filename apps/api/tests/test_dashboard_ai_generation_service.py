@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 
 from app.modules.dashboards.application import ai_generation
+from app.modules.openai_adapter.errors import OpenAIAdapterSchemaError
+from app.modules.openai_adapter.schemas import OpenAITraceMetadata
 
 
 def _mock_integration() -> SimpleNamespace:
@@ -450,3 +452,95 @@ def test_ai_generation_uses_section_columns_for_default_line_width(monkeypatch) 
     assert result["sections"][0]["columns"] == 2
     assert widget_config["widget_type"] == "line"
     assert widget_config["size"]["width"] == 2
+
+
+def test_dashboard_plan_generation_uses_openai_adapter_structured_path(monkeypatch) -> None:
+    class StubAdapter:
+        def __init__(self) -> None:
+            self.structured_calls = 0
+
+        async def responses_structured(self, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            self.structured_calls += 1
+            return (
+                {
+                    "explanation": "Plano estruturado",
+                    "planning_steps": ["Passo 1"],
+                    "native_filters": [],
+                    "sections": [{"title": "Resumo", "columns": 2, "widgets": []}],
+                },
+                OpenAITraceMetadata(
+                    call_id="call-structured",
+                    lens_trace_id="trace-structured",
+                    task="dashboard_plan_generation",
+                    model="gpt-4o-mini",
+                    schema_name="dashboard_plan",
+                ),
+            )
+
+    stub = StubAdapter()
+    monkeypatch.setattr(ai_generation, "get_openai_adapter_client", lambda: stub)
+
+    plan = asyncio.run(
+        ai_generation._generate_dashboard_plan_with_openai(
+            api_key="sk-test",
+            model="gpt-4o-mini",
+            dataset_name="sales",
+            columns=[{"name": "amount", "type": "numeric", "description": "Receita"}],
+            prompt="Resumo executivo",
+        )
+    )
+
+    assert stub.structured_calls == 1
+    assert plan["explanation"] == "Plano estruturado"
+    assert plan["sections"][0]["title"] == "Resumo"
+
+
+def test_dashboard_plan_generation_falls_back_to_legacy_when_structured_fails(monkeypatch) -> None:
+    class StubAdapter:
+        def __init__(self) -> None:
+            self.legacy_calls = 0
+
+        async def responses_structured(self, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            raise OpenAIAdapterSchemaError("schema fail")
+
+        async def responses_request(self, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            self.legacy_calls += 1
+            return (
+                {
+                    "output_text": (
+                        '{"explanation":"Fallback","planning_steps":["Fallback step"],'
+                        '"native_filters":[],"sections":[{"title":"Fallback","columns":2,"widgets":[]}]}'
+                    )
+                },
+                OpenAITraceMetadata(
+                    call_id="call-legacy",
+                    lens_trace_id="trace-legacy",
+                    task="dashboard_plan_generation_legacy_fallback",
+                    model="gpt-4o-mini",
+                ),
+            )
+
+        def extract_json_payload(self, payload):  # noqa: ANN001, ANN201
+            import json
+
+            return json.loads(payload["output_text"])
+
+    stub = StubAdapter()
+    monkeypatch.setattr(ai_generation, "get_openai_adapter_client", lambda: stub)
+
+    plan = asyncio.run(
+        ai_generation._generate_dashboard_plan_with_openai(
+            api_key="sk-test",
+            model="gpt-4o-mini",
+            dataset_name="sales",
+            columns=[{"name": "amount", "type": "numeric", "description": "Receita"}],
+            prompt="Resumo executivo",
+        )
+    )
+
+    assert stub.legacy_calls == 1
+    assert plan["explanation"] == "Fallback"
+    assert plan["sections"][0]["title"] == "Fallback"

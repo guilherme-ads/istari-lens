@@ -5,6 +5,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.modules.openai_adapter.client import OpenAIRuntimeConfig, get_openai_adapter_client
+from app.modules.openai_adapter.errors import OpenAIAdapterError, OpenAIAdapterHTTPError
 from app.modules.security.adapters.fernet_encryptor import credential_encryptor
 from app.shared.infrastructure.database import get_db
 from app.modules.auth.adapters.api.dependencies import get_current_admin_user, get_current_user
@@ -88,27 +90,23 @@ def _extract_billing_total_usd(payload: Any) -> float:
 
 
 async def _openai_chat_completion(api_key: str, model: str, messages: list[dict]) -> None:
-    payload: dict[str, Any] = {
-        "model": model,
-        "input": messages,
-        "store": False,
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        response = await client.post(f"{OPENAI_BASE_URL}/responses", headers=headers, json=payload)
-
-    if response.status_code >= 400:
-        try:
-            body = response.json()
-            detail = body.get("error", {}).get("message") or "OpenAI request failed"
-        except Exception:
-            detail = "OpenAI request failed"
-        if response.status_code in {401, 403}:
-            raise HTTPException(status_code=400, detail="OpenAI API key invalida ou sem permissao")
-        raise HTTPException(status_code=400, detail=f"Falha ao chamar OpenAI: {detail}")
+    runtime = OpenAIRuntimeConfig(api_key=api_key, model=model)
+    client = get_openai_adapter_client()
+    try:
+        await client.responses_request(
+            runtime=runtime,
+            input_payload=messages,
+            lens_trace_id="api_config_integration_test",
+            task="integration_test",
+            schema_name=None,
+        )
+    except OpenAIAdapterHTTPError as exc:
+        if exc.status_code in {401, 403}:
+            raise HTTPException(status_code=400, detail="OpenAI API key invalida ou sem permissao") from exc
+        detail = exc.detail or str(exc)
+        raise HTTPException(status_code=400, detail=f"Falha ao chamar OpenAI: {detail}") from exc
+    except OpenAIAdapterError as exc:
+        raise HTTPException(status_code=400, detail=f"Falha ao chamar OpenAI: {str(exc)}") from exc
 
 
 def _get_openai_integration(db: Session) -> LLMIntegration | None:

@@ -1,0 +1,7 @@
+# Snapshot de templates de clarificacao (origem: followups.py)
+
+missing_metric_reference = Qual metrica voce quer priorizar nesta analise?
+missing_dimension_reference = Qual dimensao voce quer usar como recorte principal?
+temporal_signal_without_temporal_field = Qual coluna representa o periodo para esta analise?
+low_semantic_signal = Pode detalhar metrica e recorte que voce quer analisar?
+underspecified_question = Pode detalhar melhor o que voce quer analisar neste dataset?

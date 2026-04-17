@@ -7,11 +7,12 @@ from functools import lru_cache
 import json
 import logging
 
-import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.core.legacy.models import LLMIntegration
+from app.modules.openai_adapter.client import OpenAIRuntimeConfig, get_openai_adapter_client
+from app.modules.openai_adapter.errors import OpenAIAdapterError, OpenAIAdapterSchemaError
 from app.modules.security.adapters.fernet_encryptor import credential_encryptor
 from app.modules.widgets.domain.config import (
     FilterConfig,
@@ -23,8 +24,13 @@ OPENAI_BASE_URL = "https://api.openai.com/v1"
 DATASET_WIDGET_VIEW_NAME = "__dataset_base"
 MAX_DASHBOARD_COLUMNS = 6
 AI_DASHBOARD_MODEL_PATH = Path(__file__).resolve().parent / "templates" / "dashboard_model_template.json"
-AI_DASHBOARD_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "dashboard_generation_system_prompt.txt"
-LEGACY_JSON_OUTPUT_INSTRUCTION = (
+AI_ASSISTANT_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "assistant_lens"
+AI_DASHBOARD_SYSTEM_PROMPT_PATH = AI_ASSISTANT_PROMPTS_DIR / "dashboard_generation_system_prompt.txt"
+AI_DASHBOARD_FALLBACK_PROMPT_PATH = AI_ASSISTANT_PROMPTS_DIR / "dashboard_generation_system_fallback_prompt.txt"
+AI_DASHBOARD_LEGACY_JSON_INSTRUCTION_PATH = AI_ASSISTANT_PROMPTS_DIR / "dashboard_generation_legacy_json_instruction.txt"
+AI_DASHBOARD_USER_TASK_PATH = AI_ASSISTANT_PROMPTS_DIR / "dashboard_generation_user_task.txt"
+AI_DASHBOARD_DEFAULT_USER_PROMPT_PATH = AI_ASSISTANT_PROMPTS_DIR / "dashboard_generation_default_user_prompt.txt"
+LEGACY_JSON_OUTPUT_INSTRUCTION_FALLBACK = (
     "Responda exclusivamente em JSON valido, sem markdown, no formato: "
     '{"explanation":"...","planning_steps":["..."],"native_filters":[{"column":"...","op":"eq|neq|gt|lt|gte|lte|in|not_in|contains|not_contains|is_null|not_null|between","value":"...","visible":true}],"sections":[{"title":"...","columns":1,"widgets":[{"type":"kpi|line|bar|column|donut|table|text|dre","title":"...","width":1,"height":1,"config":{...}}]}]}.'
 )
@@ -75,8 +81,41 @@ def _load_dashboard_system_prompt() -> str:
     try:
         raw = AI_DASHBOARD_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
     except Exception:
-        return fallback
+        try:
+            backup = AI_DASHBOARD_FALLBACK_PROMPT_PATH.read_text(encoding="utf-8").strip()
+        except Exception:
+            return fallback
+        return backup or fallback
     return raw or fallback
+
+
+@lru_cache(maxsize=1)
+def _load_legacy_json_output_instruction() -> str:
+    try:
+        loaded = AI_DASHBOARD_LEGACY_JSON_INSTRUCTION_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return LEGACY_JSON_OUTPUT_INSTRUCTION_FALLBACK
+    return loaded or LEGACY_JSON_OUTPUT_INSTRUCTION_FALLBACK
+
+
+@lru_cache(maxsize=1)
+def _load_dashboard_user_task() -> str:
+    fallback = "Gerar plano de dashboard em secoes e widgets"
+    try:
+        loaded = AI_DASHBOARD_USER_TASK_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return fallback
+    return loaded or fallback
+
+
+@lru_cache(maxsize=1)
+def _load_dashboard_default_user_prompt() -> str:
+    fallback = "Dashboard completo de visao geral"
+    try:
+        loaded = AI_DASHBOARD_DEFAULT_USER_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return fallback
+    return loaded or fallback
 
 
 def _active_openai_integration(db: Session) -> LLMIntegration | None:
@@ -633,10 +672,10 @@ async def _generate_dashboard_plan_with_openai(
             "role": "user",
             "content": json.dumps(
                 {
-                    "task": "Gerar plano de dashboard em secoes e widgets",
+                    "task": _load_dashboard_user_task(),
                     "dataset": dataset_name,
                     "columns": columns,
-                    "prompt": prompt or "Dashboard completo de visao geral",
+                    "prompt": prompt or _load_dashboard_default_user_prompt(),
                     "dashboard_model_reference": model_template,
                 },
                 ensure_ascii=False,
@@ -644,44 +683,73 @@ async def _generate_dashboard_plan_with_openai(
         },
     ]
     payload_with_schema = {
-        "model": model,
-        "store": False,
         "input": input_payload,
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "json_schema": _dashboard_plan_response_schema(),
-            }
-        },
+        "schema": _dashboard_plan_response_schema(),
     }
     payload_legacy = {
-        "model": model,
-        "store": False,
         "input": [
             {
                 "role": "system",
-                "content": f"{system_prompt}\n{LEGACY_JSON_OUTPUT_INSTRUCTION}",
+                "content": f"{system_prompt}\n{_load_legacy_json_output_instruction()}",
             },
             input_payload[1],
         ],
     }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(f"{OPENAI_BASE_URL}/responses", headers=headers, json=payload_with_schema)
-        if response.status_code >= 400:
-            # Compatibility fallback for models/endpoints that do not accept schema formatting.
-            response = await client.post(f"{OPENAI_BASE_URL}/responses", headers=headers, json=payload_legacy)
-    if response.status_code >= 400:
+    adapter = get_openai_adapter_client()
+    runtime = OpenAIRuntimeConfig(api_key=api_key, model=model)
+
+    data: dict[str, Any] | None = None
+    used_fallback = False
+    try:
+        parsed, trace = await adapter.responses_structured(
+            runtime=runtime,
+            input_payload=payload_with_schema["input"],
+            lens_trace_id=f"dashboard_plan_{uuid4().hex[:10]}",
+            task="dashboard_plan_generation",
+            schema_name="dashboard_plan",
+            schema=payload_with_schema["schema"],
+            output_model=None,
+        )
+        logger.debug(
+            "OpenAI structured dashboard plan accepted: call_id=%s model=%s latency_ms=%s",
+            trace.call_id,
+            trace.model,
+            trace.latency_ms,
+        )
+        if isinstance(parsed, dict):
+            return parsed
+    except OpenAIAdapterSchemaError:
+        used_fallback = True
+    except OpenAIAdapterError:
+        used_fallback = True
+
+    try:
+        fallback_raw, trace = await adapter.responses_request(
+            runtime=runtime,
+            input_payload=payload_legacy["input"],
+            lens_trace_id=f"dashboard_plan_{uuid4().hex[:10]}",
+            task="dashboard_plan_generation_legacy_fallback",
+            schema_name=None,
+        )
+        data = fallback_raw
+        if isinstance(data, dict):
+            parsed = adapter.extract_json_payload(data)
+            if isinstance(parsed, dict):
+                logger.debug(
+                    "OpenAI dashboard legacy fallback accepted: call_id=%s model=%s latency_ms=%s",
+                    trace.call_id,
+                    trace.model,
+                    trace.latency_ms,
+                )
+                return parsed
+    except OpenAIAdapterError:
         raise HTTPException(status_code=400, detail="Falha ao gerar dashboard com IA.")
 
-    data = response.json()
-    parsed = _extract_plan_from_responses_output(data)
-    if isinstance(parsed, dict):
-        return parsed
     logger.warning(
-        "AI dashboard generation returned unparsable payload: model=%s keys=%s",
+        "AI dashboard generation returned unparsable payload: model=%s keys=%s used_fallback=%s",
         model,
         sorted([str(key) for key in data.keys()]) if isinstance(data, dict) else [],
+        used_fallback,
     )
     raise HTTPException(status_code=400, detail="Resposta da IA em formato invalido.")
 
