@@ -1223,6 +1223,8 @@ const DashboardViewPage = () => {
                 key={section.id}
                 section={section}
                 dashboardId={dashboardId}
+                datasetId={resolvedDatasetId ? Number(resolvedDatasetId) : undefined}
+                nativeFilters={effectiveAppliedFilters}
                 delay={idx * 0.06}
                 dataByWidgetId={widgetDataById}
                 kpiComparisonByWidgetId={kpiComparisonByWidgetId}
@@ -1505,6 +1507,8 @@ const ShareDashboardDialog = ({
 const ViewSection = ({
   section,
   dashboardId,
+  datasetId,
+  nativeFilters,
   delay,
   dataByWidgetId,
   kpiComparisonByWidgetId,
@@ -1513,6 +1517,8 @@ const ViewSection = ({
 }: {
   section: DashboardSection;
   dashboardId: string;
+  datasetId?: number;
+  nativeFilters?: Array<{ column: string; op: string; value?: unknown }>;
   delay: number;
   dataByWidgetId: Record<string, ApiDashboardWidgetDataResponse>;
   kpiComparisonByWidgetId: KpiComparisonMap;
@@ -1603,6 +1609,8 @@ const ViewSection = ({
                   <WidgetRenderer
                     widget={widgetForRender}
                     dashboardId={dashboardId}
+                    datasetId={datasetId}
+                    nativeFilters={nativeFilters}
                     disableFetch
                     heightMultiplier={height as 0.5 | 1 | 2}
                     layoutRows={layout?.h}

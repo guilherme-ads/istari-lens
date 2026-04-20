@@ -982,6 +982,107 @@ const formatTemporalBucket = (
   return String(value ?? "");
 };
 
+const normalizeToken = (value: unknown): string =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+const weekdayOrderFromValue = (value: unknown): number | null => {
+  const parsedDate = parseDateLike(value);
+  if (parsedDate) {
+    const day = parsedDate.getDay();
+    return day === 0 ? 7 : day;
+  }
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    const day = Math.trunc(numeric);
+    if (day >= 1 && day <= 7) return day;
+    if (day >= 0 && day <= 6) return day === 0 ? 7 : day;
+  }
+
+  const normalized = normalizeToken(value).replace(/\./g, "");
+  const map: Record<string, number> = {
+    seg: 1,
+    segunda: 1,
+    monday: 1,
+    mon: 1,
+    ter: 2,
+    terca: 2,
+    tuesday: 2,
+    tue: 2,
+    qua: 3,
+    quarta: 3,
+    wednesday: 3,
+    wed: 3,
+    qui: 4,
+    quinta: 4,
+    thursday: 4,
+    thu: 4,
+    sex: 5,
+    sexta: 5,
+    friday: 5,
+    fri: 5,
+    sab: 6,
+    sabado: 6,
+    saturday: 6,
+    sat: 6,
+    dom: 7,
+    domingo: 7,
+    sunday: 7,
+    sun: 7,
+  };
+  return map[normalized] ?? null;
+};
+
+const temporalComparableValue = (
+  value: unknown,
+  granularity: "day" | "month" | "week" | "weekday" | "hour",
+): number | null => {
+  const parsedDate = parseDateLike(value);
+  if (parsedDate) {
+    if (granularity === "hour") {
+      return (parsedDate.getHours() * 60) + parsedDate.getMinutes();
+    }
+    if (granularity === "weekday") {
+      return weekdayOrderFromValue(parsedDate);
+    }
+    if (granularity === "week") {
+      const year = parsedDate.getFullYear();
+      return (year * 100) + isoWeekNumber(parsedDate);
+    }
+    if (granularity === "month") {
+      return (parsedDate.getFullYear() * 12) + parsedDate.getMonth();
+    }
+    return parsedDate.getTime();
+  }
+
+  if (granularity === "weekday") {
+    return weekdayOrderFromValue(value);
+  }
+
+  if (granularity === "week") {
+    const normalized = normalizeToken(value);
+    const byLabel = /^s(\d+)$/.exec(normalized);
+    if (byLabel) return Number(byLabel[1]);
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.trunc(numeric) : null;
+  }
+
+  if (granularity === "hour") {
+    const normalized = normalizeToken(value);
+    const byClock = /^(\d{1,2}):(\d{2})$/.exec(normalized);
+    if (byClock) return (Number(byClock[1]) * 60) + Number(byClock[2]);
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.trunc(numeric) * 60 : null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 const niceNumber = (value: number): number => {
   if (!Number.isFinite(value) || value <= 0) return 1;
   const exponent = Math.floor(Math.log10(value));
@@ -1035,13 +1136,18 @@ const MiniTable = ({
   rows,
   widget,
   hideExport = false,
+  exportQuerySpec,
+  exportDraftPreviewPlan,
 }: {
   rows: Record<string, unknown>[];
   widget: DashboardWidget;
   hideExport?: boolean;
+  exportQuerySpec?: ApiQuerySpec;
+  exportDraftPreviewPlan?: DraftPreviewPlan | null;
 }) => {
   const [sortBy, setSortBy] = useState<{ column_id: string; source: string; direction: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
   const configured = widget.config.columns || [];
   const rowKeys = Object.keys(rows[0] || {});
   const pageSize = Math.max(1, widget.config.table_page_size || 25);
@@ -1071,18 +1177,42 @@ const MiniTable = ({
         suffix: getTableColumnSuffix(widget, key),
       }));
     })());
-  const visibleRows = useMemo(() => {
-    if (rows.length <= 1 || tableColumnDefs.length === 0) return rows;
+  const dedupeRows = (sourceRows: Record<string, unknown>[]): Record<string, unknown>[] => {
+    if (sourceRows.length <= 1 || tableColumnDefs.length === 0) return sourceRows;
     const seen = new Set<string>();
     const uniqueRows: Record<string, unknown>[] = [];
-    for (const row of rows) {
+    for (const row of sourceRows) {
       const signature = JSON.stringify(tableColumnDefs.map((column) => row[column.source] ?? null));
       if (seen.has(signature)) continue;
       seen.add(signature);
       uniqueRows.push(row);
     }
     return uniqueRows;
-  }, [rows, tableColumnDefs]);
+  };
+  const sortRows = (sourceRows: Record<string, unknown>[]): Record<string, unknown>[] => {
+    if (!sortBy) return sourceRows;
+    const copy = [...sourceRows];
+    copy.sort((a, b) => {
+      const av = a[sortBy.source];
+      const bv = b[sortBy.source];
+      if (av === bv) return 0;
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      const aDate = parseDateLike(av);
+      const bDate = parseDateLike(bv);
+      if (aDate && bDate) {
+        return sortBy.direction === "asc" ? aDate.getTime() - bDate.getTime() : bDate.getTime() - aDate.getTime();
+      }
+      if (typeof av === "number" && typeof bv === "number") {
+        return sortBy.direction === "asc" ? av - bv : bv - av;
+      }
+      return sortBy.direction === "asc"
+        ? String(av).localeCompare(String(bv), "pt-BR")
+        : String(bv).localeCompare(String(av), "pt-BR");
+    });
+    return copy;
+  };
+  const visibleRows = useMemo(() => dedupeRows(rows), [rows, tableColumnDefs]);
   const tableDensity = widget.config.table_density || "normal";
   const densityClassByMode = {
     compact: {
@@ -1108,29 +1238,7 @@ const MiniTable = ({
     right: "text-right",
   } as const;
 
-  const sortedRows = useMemo(() => {
-    if (!sortBy) return visibleRows;
-    const copy = [...visibleRows];
-    copy.sort((a, b) => {
-      const av = a[sortBy.source];
-      const bv = b[sortBy.source];
-      if (av === bv) return 0;
-      if (av === null || av === undefined) return 1;
-      if (bv === null || bv === undefined) return -1;
-      const aDate = parseDateLike(av);
-      const bDate = parseDateLike(bv);
-      if (aDate && bDate) {
-        return sortBy.direction === "asc" ? aDate.getTime() - bDate.getTime() : bDate.getTime() - aDate.getTime();
-      }
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortBy.direction === "asc" ? av - bv : bv - av;
-      }
-      return sortBy.direction === "asc"
-        ? String(av).localeCompare(String(bv), "pt-BR")
-        : String(bv).localeCompare(String(av), "pt-BR");
-    });
-    return copy;
-  }, [visibleRows, sortBy]);
+  const sortedRows = useMemo(() => sortRows(visibleRows), [visibleRows, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -1138,7 +1246,31 @@ const MiniTable = ({
 
   if (visibleRows.length === 0) return <EmptyWidgetState text="Nenhum dado retornado" />;
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      let rowsForExport = sortedRows;
+      if (exportQuerySpec) {
+        const chunkSize = 5000;
+        const collectedRows: Record<string, unknown>[] = [];
+        let nextOffset = 0;
+        for (let page = 0; page < 2000; page += 1) {
+          const response = await api.previewQuery({
+            ...exportQuerySpec,
+            limit: chunkSize,
+            offset: nextOffset,
+          });
+          const rawBatchRows = response.rows || [];
+          if (rawBatchRows.length === 0) break;
+          const normalizedBatchRows = normalizeDraftRowsForWidget(rawBatchRows, exportDraftPreviewPlan || null);
+          collectedRows.push(...normalizedBatchRows);
+          nextOffset += rawBatchRows.length;
+          if (rawBatchRows.length < chunkSize) break;
+        }
+        rowsForExport = sortRows(dedupeRows(collectedRows));
+      }
+
     const escapeCsv = (value: string) => {
       if (value.includes("\"") || value.includes(",") || value.includes("\n")) {
         return `"${value.replace(/"/g, "\"\"")}"`;
@@ -1146,7 +1278,7 @@ const MiniTable = ({
       return value;
     };
     const header = tableColumnDefs.map((column) => escapeCsv(column.label)).join(",");
-    const body = sortedRows.map((row) =>
+    const body = rowsForExport.map((row) =>
       tableColumnDefs
         .map((column) => escapeCsv(`${column.prefix}${formatByTableConfig(row[column.source], column.format)}${column.suffix}`))
         .join(","))
@@ -1161,6 +1293,9 @@ const MiniTable = ({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -1168,9 +1303,9 @@ const MiniTable = ({
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted-foreground">{sortedRows.length.toLocaleString("pt-BR")} linhas</span>
         {!hideExport && (
-          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={exportCsv}>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={exportCsv} disabled={isExporting}>
             <Download className="h-3.5 w-3.5 mr-1.5" />
-            Exportar CSV
+            {isExporting ? "Exportando..." : "Exportar CSV"}
           </Button>
         )}
       </div>
@@ -1305,6 +1440,13 @@ export const WidgetRenderer = ({
       return buildDraftPreviewSpec({ widget, datasetId, nativeFilters });
     },
     [builderMode, datasetId, disableFetch, hasPersistedWidgetId, isTextWidget, nativeFilters, widget],
+  );
+  const tableExportPreviewPlan = useMemo(
+    () => {
+      if (widget.config.widget_type !== "table" || !datasetId || isTextWidget) return null;
+      return buildDraftPreviewSpec({ widget, datasetId, nativeFilters });
+    },
+    [datasetId, isTextWidget, nativeFilters, widget],
   );
   const shouldFetchDraftPreview = !disableFetch && (builderMode || !hasPersistedWidgetId) && !!draftPreviewPlan?.spec;
   // Use persisted fetch when: not in builder mode (normal), OR in builder mode as fallback when draft spec can't be built
@@ -1780,7 +1922,15 @@ export const WidgetRenderer = ({
   const type = widget.config.widget_type;
 
   if (type === "table") {
-    return <MiniTable rows={rows} widget={widget} hideExport={hideTableExport} />;
+    return (
+      <MiniTable
+        rows={rows}
+        widget={widget}
+        hideExport={hideTableExport}
+        exportQuerySpec={tableExportPreviewPlan?.spec}
+        exportDraftPreviewPlan={tableExportPreviewPlan}
+      />
+    );
   }
 
   if (type === "dre") {
@@ -2332,18 +2482,34 @@ export const WidgetRenderer = ({
     const primaryMetricKey = chartMetricKeys[0] || metricKey;
     const overlayMetricKeys = chartMetricKeys.slice(1);
     const hasOverlayMetrics = overlayMetricKeys.length > 0;
+    const firstOrder = widget.config.order_by?.[0];
+    const sortDirectionFactor = firstOrder?.direction === "desc" ? -1 : 1;
+    const isOrderingByDimension = firstOrder?.column === dim;
     const columnRows = [...chartRows].sort((left, right) => {
       const leftDim = left[dimKey];
       const rightDim = right[dimKey];
+      if (categoryTemporalGranularity) {
+        const leftTemporal = temporalComparableValue(leftDim, categoryTemporalGranularity);
+        const rightTemporal = temporalComparableValue(rightDim, categoryTemporalGranularity);
+        if (leftTemporal !== null && rightTemporal !== null && leftTemporal !== rightTemporal) {
+          const base = leftTemporal - rightTemporal;
+          return (isOrderingByDimension ? sortDirectionFactor : 1) * base;
+        }
+      }
       const leftDate = parseDateLike(leftDim);
       const rightDate = parseDateLike(rightDim);
-      if (leftDate && rightDate) return leftDate.getTime() - rightDate.getTime();
+      if (leftDate && rightDate) {
+        const base = leftDate.getTime() - rightDate.getTime();
+        return (isOrderingByDimension ? sortDirectionFactor : 1) * base;
+      }
       const leftNumeric = Number(leftDim);
       const rightNumeric = Number(rightDim);
       if (Number.isFinite(leftNumeric) && Number.isFinite(rightNumeric)) {
-        return leftNumeric - rightNumeric;
+        const base = leftNumeric - rightNumeric;
+        return (isOrderingByDimension ? sortDirectionFactor : 1) * base;
       }
-      return String(leftDim ?? "").localeCompare(String(rightDim ?? ""), "pt-BR");
+      const base = String(leftDim ?? "").localeCompare(String(rightDim ?? ""), "pt-BR");
+      return (isOrderingByDimension ? sortDirectionFactor : 1) * base;
     });
     const columnTotal = columnRows.reduce((sum, row) => sum + toFiniteNumber(row[primaryMetricKey]), 0);
     const columnDataMax = columnRows.reduce((maxValue, row) => Math.max(maxValue, toFiniteNumber(row[primaryMetricKey])), 0);
@@ -2447,7 +2613,7 @@ export const WidgetRenderer = ({
             cursor={{ fill: "hsl(var(--muted)/0.28)" }}
             content={(props) => {
               const payload = (props.payload || []) as Array<{ value?: unknown; name?: string; color?: string; dataKey?: string }>;
-              if (!props.active || payload.length === 0) return null;
+              if (!props.active || (payload.length === 0 && !hasOverlayMetrics)) return null;
               if (!hasOverlayMetrics) {
                 return (
                   <GlassTooltip
@@ -2460,6 +2626,9 @@ export const WidgetRenderer = ({
                   />
                 );
               }
+              const rowForLabel = columnRows.find((row) =>
+                row[dimKey] === props.label || formatCategoricalBucketLabel(row[dimKey]) === formatCategoricalBucketLabel(props.label));
+              const allSeriesKeys = [primaryMetricKey, ...overlayMetricKeys];
               return (
                 <div
                   className="min-w-[170px] rounded-xl border border-border/60 bg-[hsl(var(--card)/0.72)] px-3 py-2 shadow-xl backdrop-blur-md"
@@ -2467,17 +2636,18 @@ export const WidgetRenderer = ({
                 >
                   <p className="text-[11px] font-semibold text-foreground/95">{formatCategoricalBucketLabel(props.label)}</p>
                   <div className="mt-1 space-y-1 text-[11px]">
-                    {payload.map((entry) => {
-                      const key = String(entry.dataKey || "");
+                    {allSeriesKeys.map((key, index) => {
+                      const payloadEntry = payload.find((entry) => String(entry.dataKey || "") === key);
                       const isPrimary = key === primaryMetricKey;
+                      const seriesValue = payloadEntry?.value ?? rowForLabel?.[key];
                       const formatted = isPrimary
-                        ? formatColumnMetricLabel(entry.value, false)
-                        : formatMetricValueFull(key, entry.value);
+                        ? formatColumnMetricLabel(seriesValue, false)
+                        : formatMetricValueFull(key, seriesValue);
                       return (
-                        <div key={`${key}-${entry.name}`} className="flex items-center justify-between gap-3">
+                        <div key={key} className="flex items-center justify-between gap-3">
                           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color || "hsl(var(--chart-1))" }} />
-                            {entry.name || chartMetricLabelByKey[key] || key}
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: payloadEntry?.color || chartPalette[index % chartPalette.length] }} />
+                            {payloadEntry?.name || chartMetricLabelByKey[key] || key}
                           </span>
                           <span className="font-semibold tabular-nums text-foreground">{formatted}</span>
                         </div>
