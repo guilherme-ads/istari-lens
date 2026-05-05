@@ -317,10 +317,23 @@ const operatorLabel: Record<DashboardFilterOp, string> = {
 const appliedFilterSignature = (filter: PreparedGlobalFilter) =>
   `${filter.column}|${filter.op}|${JSON.stringify(filter.value)}`;
 
+const relativeDateLabelByPreset: Record<RelativeDatePreset, string> = {
+  today: "Hoje",
+  yesterday: "Ontem",
+  last_7_days: "Ultimos 7 dias",
+  last_30_days: "Ultimos 30 dias",
+  this_year: "Este ano",
+  this_month: "Este mes",
+  last_month: "Mes passado",
+};
+
 const appliedFilterLabel = (filter: PreparedGlobalFilter) => {
   if (filter.op === "is_null" || filter.op === "not_null") return `${filter.column} ${operatorLabel[filter.op]}`;
   const valueLabel = typeof filter.value === "object" && filter.value !== null && !Array.isArray(filter.value)
-    ? String((filter.value as { relative?: string }).relative || "")
+    ? (() => {
+        const preset = String((filter.value as { relative?: string }).relative || "") as RelativeDatePreset;
+        return relativeDateLabelByPreset[preset] || preset;
+      })()
     : Array.isArray(filter.value)
       ? filter.value.join(" .. ")
       : String(filter.value || "");

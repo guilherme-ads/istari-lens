@@ -455,6 +455,11 @@ class DashboardWidgetBatchDataRequest(BaseModel):
     global_filters: List[FilterConfig] = Field(default_factory=list)
 
 
+class DashboardWidgetCsvExportRequest(BaseModel):
+    global_filters: List[FilterConfig] = Field(default_factory=list)
+    delimiter: str = ","
+
+
 class DashboardWidgetBatchDataItemResponse(BaseModel):
     widget_id: int
     columns: List[str]

@@ -104,6 +104,62 @@ async function request<T>(
   return payload as T;
 }
 
+async function requestBlob(
+  path: string,
+  init: RequestInit = {},
+  requiresAuth = true,
+  includeCredentials = false,
+  retryOn401 = true,
+): Promise<{ blob: Blob; headers: Headers }> {
+  const token = getAuthToken();
+  const headers = new Headers(init.headers);
+
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  if (requiresAuth && token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: includeCredentials ? "include" : init.credentials,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const rawDetail = payload?.detail as unknown;
+    const detail =
+      typeof rawDetail === "string"
+        ? rawDetail
+        : rawDetail
+          ? JSON.stringify(rawDetail)
+          : undefined;
+
+    if (requiresAuth && response.status === 401) {
+      if (retryOn401) {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          return requestBlob(path, init, requiresAuth, includeCredentials, false);
+        }
+      }
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        clearAuthSession();
+        window.location.assign("/login");
+      }
+    }
+
+    throw new ApiError(detail || `Request failed with status ${response.status}`, response.status, detail);
+  }
+
+  return {
+    blob: await response.blob(),
+    headers: response.headers,
+  };
+}
+
 export type ApiUser = {
   id: number;
   email: string;
@@ -1387,6 +1443,27 @@ export const api = {
 
   getDashboardWidgetData: (dashboardId: number, widgetId: number) =>
     request<ApiDashboardWidgetDataResponse>(`/dashboards/${dashboardId}/widgets/${widgetId}/data`),
+
+  exportDashboardWidgetCsv: async (
+    dashboardId: number,
+    widgetId: number,
+    payload: { global_filters?: Array<{ column: string; op: string; value?: unknown }>; delimiter?: string } = {},
+  ) => {
+    const response = await requestBlob(`/dashboards/${dashboardId}/widgets/${widgetId}/export/csv`, {
+      method: "POST",
+      body: JSON.stringify({
+        global_filters: payload.global_filters || [],
+        delimiter: payload.delimiter || ",",
+      }),
+    });
+    const contentDisposition = response.headers.get("content-disposition") || "";
+    const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+    const quotedMatch = /filename="?([^\";]+)"?/i.exec(contentDisposition);
+    const filename = utf8Match
+      ? decodeURIComponent(utf8Match[1])
+      : (quotedMatch?.[1] || "tabela.csv");
+    return { blob: response.blob, filename };
+  },
 
   getDashboardWidgetsData: (
     dashboardId: number,

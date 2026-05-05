@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from statistics import mean
+import csv
+import io
 import json
 import logging
+import math
+import re
 from uuid import uuid4
 
 from app.shared.infrastructure.database import get_db
@@ -33,6 +38,7 @@ from app.modules.core.legacy.schemas import (
     DashboardWidgetCreateRequest,
     DashboardWidgetUpdateRequest,
     DashboardWidgetDataResponse,
+    DashboardWidgetCsvExportRequest,
     DashboardWidgetBatchDataRequest,
     DashboardWidgetBatchDataResponse,
     DashboardWidgetBatchDataItemResponse,
@@ -284,6 +290,180 @@ def _combined_load_score(
 
 def _widget_response(widget: DashboardWidget) -> DashboardWidgetResponse:
     return DashboardWidgetResponse.model_validate(widget)
+
+
+def _safe_csv_delimiter(raw_delimiter: str | None) -> str:
+    delimiter = (raw_delimiter or ",").strip()
+    if len(delimiter) != 1:
+        return ","
+    if delimiter in {"\n", "\r", '"'}:
+        return ","
+    return delimiter
+
+
+def _safe_export_filename(raw_title: str | None) -> str:
+    base = (raw_title or "tabela").strip().lower() or "tabela"
+    normalized = "".join(char if (char.isalnum() or char in {"-", "_"}) else "_" for char in base)
+    normalized = "_".join(part for part in normalized.split("_") if part)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return f"{normalized or 'tabela'}_{timestamp}.csv"
+
+
+def _csv_serialize_row(values: list[object], delimiter: str) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=delimiter, quotechar='"', lineterminator="\n")
+    writer.writerow(values)
+    return buffer.getvalue()
+
+
+def _parse_date_like(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not (re.match(r"^\d{4}-\d{2}-\d{2}", trimmed) or re.match(r"^\d{4}/\d{2}/\d{2}", trimmed)):
+        return None
+    normalized = trimmed.replace("/", "-")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+
+
+def _format_number_ptbr(value: float, *, min_decimals: int = 0, max_decimals: int = 2, fixed: bool = False) -> str:
+    if not math.isfinite(value):
+        return "0"
+    decimals = max_decimals if fixed else max_decimals
+    text = f"{value:,.{decimals}f}"
+    if not fixed and max_decimals > min_decimals:
+        integer_part, _, decimal_part = text.partition(".")
+        decimal_part = decimal_part.rstrip("0")
+        if len(decimal_part) < min_decimals:
+            decimal_part = decimal_part.ljust(min_decimals, "0")
+        text = integer_part if not decimal_part else f"{integer_part}.{decimal_part}"
+    return text.replace(",", "§").replace(".", ",").replace("§", ".")
+
+
+def _format_date_br(value: datetime, *, include_time: bool = False, include_seconds: bool = False) -> str:
+    if not include_time:
+        return value.strftime("%d/%m/%Y")
+    return value.strftime("%d/%m/%Y %H:%M:%S" if include_seconds else "%d/%m/%Y %H:%M")
+
+
+def _format_table_value(value: object, format_name: str) -> str:
+    if value is None:
+        return ""
+    as_number: float | None = None
+    try:
+        as_number = float(value)  # Mirrors Number(value) behavior used on frontend.
+    except Exception:
+        as_number = None
+    as_date = _parse_date_like(value)
+
+    if format_name == "text":
+        return str(value)
+    if format_name == "currency_brl" and as_number is not None and math.isfinite(as_number):
+        sign = "-" if as_number < 0 else ""
+        return f"{sign}R$ {_format_number_ptbr(abs(as_number), min_decimals=2, max_decimals=2, fixed=True)}"
+    if format_name == "number_2" and as_number is not None and math.isfinite(as_number):
+        return _format_number_ptbr(as_number, min_decimals=2, max_decimals=2, fixed=True)
+    if format_name == "integer" and as_number is not None and math.isfinite(as_number):
+        return _format_number_ptbr(float(math.trunc(as_number)), min_decimals=0, max_decimals=0, fixed=True)
+
+    if as_date is not None:
+        if format_name == "datetime":
+            return _format_date_br(as_date, include_time=True)
+        if format_name == "time":
+            return as_date.strftime("%H:%M")
+        if format_name == "year":
+            return str(as_date.year)
+        if format_name == "month":
+            return f"{as_date.month:02d}"
+        if format_name == "day":
+            return f"{as_date.day:02d}"
+        return _format_date_br(as_date, include_time=False)
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return _format_number_ptbr(float(value), min_decimals=0, max_decimals=3, fixed=False)
+    return str(value)
+
+
+def _resolve_table_export_columns(config: WidgetConfig, fallback_columns: list[str]) -> list[dict[str, str]]:
+    ordered_sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    source_candidates: list[dict[str, str | None]] = []
+    if config.table_column_instances:
+        source_candidates.extend(
+            {
+                "source": str(item.source or "").strip(),
+                "label": (str(item.label or "").strip() or str(item.source or "").strip()),
+                "format": item.format or config.table_column_formats.get(str(item.source or "").strip(), "native"),
+                "prefix": item.prefix if item.prefix is not None else config.table_column_prefixes.get(str(item.source or "").strip(), ""),
+                "suffix": item.suffix if item.suffix is not None else config.table_column_suffixes.get(str(item.source or "").strip(), ""),
+            }
+            for item in config.table_column_instances
+        )
+    elif config.columns:
+        source_candidates.extend(
+            {
+                "source": str(column).strip(),
+                "label": str(column).strip(),
+                "format": config.table_column_formats.get(str(column).strip(), "native"),
+                "prefix": config.table_column_prefixes.get(str(column).strip(), ""),
+                "suffix": config.table_column_suffixes.get(str(column).strip(), ""),
+            }
+            for column in config.columns
+        )
+
+    if not source_candidates:
+        source_candidates.extend(
+            {
+                "source": str(column).strip(),
+                "label": str(column).strip(),
+                "format": config.table_column_formats.get(str(column).strip(), "native"),
+                "prefix": config.table_column_prefixes.get(str(column).strip(), ""),
+                "suffix": config.table_column_suffixes.get(str(column).strip(), ""),
+            }
+            for column in fallback_columns
+        )
+
+    for item in source_candidates:
+        source = str(item.get("source") or "").strip()
+        label = str(item.get("label") or source).strip()
+        if not source or source in seen:
+            continue
+        seen.add(source)
+        ordered_sources.append(
+            {
+                "source": source,
+                "label": label or source,
+                "format": str(item.get("format") or "native"),
+                "prefix": str(item.get("prefix") or ""),
+                "suffix": str(item.get("suffix") or ""),
+            }
+        )
+
+    if not ordered_sources:
+        ordered_sources = [
+            {
+                "source": str(column),
+                "label": str(column),
+                "format": config.table_column_formats.get(str(column), "native"),
+                "prefix": config.table_column_prefixes.get(str(column), ""),
+                "suffix": config.table_column_suffixes.get(str(column), ""),
+            }
+            for column in fallback_columns
+        ]
+
+    return ordered_sources
 
 
 def _dashboard_snapshot_payload(dashboard: Dashboard, *, include_visibility: bool = True) -> dict:
@@ -2056,6 +2236,117 @@ async def get_widget_data(
         degraded=result.metadata.degraded,
         execution_time_ms=result.metadata.execution_time_ms,
         sql_hash=result.metadata.sql_hash,
+    )
+
+
+@router.post("/{dashboard_id}/widgets/{widget_id}/export/csv")
+async def export_widget_data_csv(
+    dashboard_id: int,
+    widget_id: int,
+    request_payload: DashboardWidgetCsvExportRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _load_dashboard_for_user(
+        db,
+        dashboard_id,
+        current_user,
+        min_level="view",
+        options=[joinedload(Dashboard.email_shares)],
+    )
+    widget = (
+        db.query(DashboardWidget)
+        .options(
+            joinedload(DashboardWidget.dashboard)
+            .joinedload(Dashboard.dataset)
+            .joinedload(Dataset.view)
+            .joinedload(View.columns),
+            joinedload(DashboardWidget.dashboard).joinedload(Dashboard.dataset).joinedload(Dataset.datasource),
+        )
+        .filter(
+            DashboardWidget.id == widget_id,
+            DashboardWidget.dashboard_id == dashboard_id,
+        )
+        .first()
+    )
+    if not widget:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+    dashboard = widget.dashboard
+    if not dashboard or not dashboard.dataset:
+        raise HTTPException(status_code=400, detail="Dashboard dataset is unavailable")
+    _ensure_dashboard_dataset_is_refreshable(dashboard)
+
+    base_config = _resolve_widget_config(widget, request_payload.global_filters)
+    if base_config.widget_type != "table":
+        raise HTTPException(status_code=400, detail="CSV export is only available for table widgets")
+
+    executor = get_dashboard_widget_executor()
+    delimiter = _safe_csv_delimiter(request_payload.delimiter)
+    base_offset = max(0, int(base_config.offset or 0))
+    page_size = 1000
+    correlation_id = _resolve_correlation_id(http_request)
+
+    async def row_stream():
+        offset = base_offset
+        ordered_columns: list[dict[str, str]] | None = None
+        yielded_header = False
+        max_pages = 20000
+
+        for _ in range(max_pages):
+            page_config = base_config.model_copy(
+                deep=True,
+                update={
+                    "limit": page_size,
+                    "offset": offset,
+                },
+            )
+            result_by_widget = await executor.execute_widgets(
+                dashboard_id=dashboard_id,
+                dataset_id=dashboard.dataset_id,
+                dataset=dashboard.dataset,
+                datasource=dashboard.dataset.datasource,
+                widgets=[widget],
+                configs_by_widget_id={widget.id: page_config},
+                user=current_user,
+                runtime_filters=request_payload.global_filters,
+                correlation_id=correlation_id,
+            )
+            execution = result_by_widget[widget.id]
+            columns = execution.payload.columns or []
+            rows = execution.payload.rows or []
+
+            if ordered_columns is None:
+                ordered_columns = _resolve_table_export_columns(page_config, columns)
+                header_labels = [item["label"] for item in ordered_columns]
+                yielded_header = True
+                yield _csv_serialize_row(header_labels, delimiter)
+
+            if not rows:
+                break
+
+            for row in rows:
+                values: list[str] = []
+                for column in ordered_columns:
+                    raw_value = row.get(column["source"])
+                    formatted = _format_table_value(raw_value, column["format"])
+                    values.append(f'{column["prefix"]}{formatted}{column["suffix"]}')
+                yield _csv_serialize_row(values, delimiter)
+
+            offset += len(rows)
+
+            if len(rows) < page_size:
+                break
+
+        if not yielded_header:
+            # Keep CSV shape valid even when no rows are returned.
+            yield _csv_serialize_row([], delimiter)
+
+    filename = _safe_export_filename(widget.title)
+    return StreamingResponse(
+        row_stream(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -1138,12 +1138,18 @@ const MiniTable = ({
   hideExport = false,
   exportQuerySpec,
   exportDraftPreviewPlan,
+  backendExportContext,
 }: {
   rows: Record<string, unknown>[];
   widget: DashboardWidget;
   hideExport?: boolean;
   exportQuerySpec?: ApiQuerySpec;
   exportDraftPreviewPlan?: DraftPreviewPlan | null;
+  backendExportContext?: {
+    dashboardId: number;
+    widgetId: number;
+    globalFilters: Array<{ column: string; op: string; value?: unknown }>;
+  };
 }) => {
   const [sortBy, setSortBy] = useState<{ column_id: string; source: string; direction: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(1);
@@ -1250,6 +1256,26 @@ const MiniTable = ({
     if (isExporting) return;
     setIsExporting(true);
     try {
+      if (backendExportContext) {
+        const exported = await api.exportDashboardWidgetCsv(
+          backendExportContext.dashboardId,
+          backendExportContext.widgetId,
+          {
+            global_filters: backendExportContext.globalFilters,
+            delimiter: ",",
+          },
+        );
+        const url = URL.createObjectURL(exported.blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", exported.filename || `${(widget.title || "tabela").replace(/\s+/g, "_").toLowerCase()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        return;
+      }
+
       let rowsForExport = sortedRows;
       if (exportQuerySpec) {
         const chunkSize = 5000;
@@ -1266,7 +1292,6 @@ const MiniTable = ({
           const normalizedBatchRows = normalizeDraftRowsForWidget(rawBatchRows, exportDraftPreviewPlan || null);
           collectedRows.push(...normalizedBatchRows);
           nextOffset += rawBatchRows.length;
-          if (rawBatchRows.length < chunkSize) break;
         }
         rowsForExport = sortRows(dedupeRows(collectedRows));
       }
@@ -1922,6 +1947,20 @@ export const WidgetRenderer = ({
   const type = widget.config.widget_type;
 
   if (type === "table") {
+    const numericDashboardId = Number(dashboardId);
+    const numericWidgetId = Number(widget.id);
+    const backendExportContext = Number.isFinite(numericDashboardId)
+      && numericDashboardId > 0
+      && Number.isFinite(numericWidgetId)
+      && numericWidgetId > 0
+      ? {
+          dashboardId: numericDashboardId,
+          widgetId: numericWidgetId,
+          globalFilters: (nativeFilters || [])
+            .filter((filter) => !!filter.column && !!filter.op)
+            .map((filter) => ({ column: filter.column, op: filter.op, value: filter.value })),
+        }
+      : undefined;
     return (
       <MiniTable
         rows={rows}
@@ -1929,6 +1968,7 @@ export const WidgetRenderer = ({
         hideExport={hideTableExport}
         exportQuerySpec={tableExportPreviewPlan?.spec}
         exportDraftPreviewPlan={tableExportPreviewPlan}
+        backendExportContext={backendExportContext}
       />
     );
   }
