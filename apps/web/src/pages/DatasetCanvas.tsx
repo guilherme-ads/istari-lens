@@ -1441,6 +1441,32 @@ const DatasetCanvas = () => {
   const availableDatasourceIds = useMemo(() => selectableDatasources
     .filter((item) => accessMode !== "imported" || item.copyPolicy === "allowed")
     .map((item) => item.id), [accessMode, selectableDatasources]);
+  const liveResourcesQuery = useQuery({
+    queryKey: ["catalog-resources-bulk", accessMode || "none", datasourceId || "none", availableDatasourceIds.join(",")],
+    enabled: !!accessMode && availableDatasourceIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const targetDatasourceIds = availableDatasourceIds.filter((id) => (
+        accessMode === "imported" || !datasourceId || id === datasourceId
+      ));
+      const results = await Promise.allSettled(
+        targetDatasourceIds.map(async (id) => ({
+          datasourceId: id,
+          response: await api.listCatalogResources(Number(id)),
+        })),
+      );
+
+      return results
+        .filter((item): item is PromiseFulfilledResult<{
+          datasourceId: string;
+          response: Awaited<ReturnType<typeof api.listCatalogResources>>;
+        }> => item.status === "fulfilled")
+        .map((item) => ({
+          datasourceId: item.value.datasourceId,
+          items: item.value.response.items || [],
+        }));
+    },
+  });
   const refreshResourcesMutation = useMutation({
     mutationFn: async () => {
       const candidates = selectableDatasources.filter((item) => {
@@ -1465,6 +1491,7 @@ const DatasetCanvas = () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["views"] }),
         queryClient.invalidateQueries({ queryKey: ["datasources"] }),
+        queryClient.invalidateQueries({ queryKey: ["catalog-resources-bulk"] }),
       ]);
       if (result.total === 0) {
         toast({ title: "Nenhuma fonte elegivel para atualizar" });
@@ -1504,22 +1531,58 @@ const DatasetCanvas = () => {
       }>;
     }>();
 
-    views.forEach((view) => {
-      if (!availableDatasourceIds.includes(view.datasourceId)) return;
-      if (accessMode !== "imported" && datasourceId && view.datasourceId !== datasourceId) return;
-      const next = grouped.get(view.datasourceId) || {
-        datasourceId: view.datasourceId,
-        datasourceName: datasourceNameById.get(view.datasourceId) || `Fonte ${view.datasourceId}`,
+    const upsertResource = (input: {
+      datasourceId: string;
+      resourceId: string;
+      label: string;
+      schema: string;
+      name: string;
+      fields: Array<{ name: string; type: string }>;
+    }) => {
+      if (!availableDatasourceIds.includes(input.datasourceId)) return;
+      if (accessMode !== "imported" && datasourceId && input.datasourceId !== datasourceId) return;
+
+      const next = grouped.get(input.datasourceId) || {
+        datasourceId: input.datasourceId,
+        datasourceName: datasourceNameById.get(input.datasourceId) || `Fonte ${input.datasourceId}`,
         resources: [],
       };
-      next.resources.push({
+      const existingIndex = next.resources.findIndex((item) => item.resourceId.toLowerCase() === input.resourceId.toLowerCase());
+      if (existingIndex >= 0) {
+        const existing = next.resources[existingIndex];
+        next.resources[existingIndex] = {
+          ...existing,
+          ...input,
+          fields: existing.fields.length > 0 ? existing.fields : input.fields,
+        };
+      } else {
+        next.resources.push(input);
+      }
+      grouped.set(input.datasourceId, next);
+    };
+
+    views.forEach((view) => {
+      upsertResource({
+        datasourceId: view.datasourceId,
         resourceId: `${view.schema}.${view.name}`,
         label: view.name,
         schema: view.schema,
         name: view.name,
         fields: view.columns.map((column) => ({ name: column.name, type: column.type })),
       });
-      grouped.set(view.datasourceId, next);
+    });
+
+    (liveResourcesQuery.data || []).forEach((group) => {
+      group.items.forEach((resource) => {
+        upsertResource({
+          datasourceId: group.datasourceId,
+          resourceId: resource.id || `${resource.schema_name}.${resource.resource_name}`,
+          label: resource.resource_name,
+          schema: resource.schema_name,
+          name: resource.resource_name,
+          fields: [],
+        });
+      });
     });
 
     return Array.from(grouped.values())
@@ -1528,7 +1591,7 @@ const DatasetCanvas = () => {
         resources: group.resources.sort((a, b) => a.resourceId.localeCompare(b.resourceId)),
       }))
       .sort((a, b) => a.datasourceName.localeCompare(b.datasourceName));
-  }, [accessMode, selectableDatasources, availableDatasourceIds, datasourceId, views]);
+  }, [accessMode, selectableDatasources, availableDatasourceIds, datasourceId, liveResourcesQuery.data, views]);
 
   const handleAccessModeChange = useCallback((nextValue: "direct" | "imported" | "") => {
     if (nextValue === accessMode) return;
@@ -1544,7 +1607,7 @@ const DatasetCanvas = () => {
     setIsDirty(true);
   }, [accessMode, resetHistory]);
 
-  const addResourceToCanvas = useCallback((
+  const addResourceToCanvas = useCallback(async (
     resource: {
       resourceId: string;
       label: string;
@@ -1565,6 +1628,25 @@ const DatasetCanvas = () => {
 
     const duplicate = nodes.some((node) => node.data.resourceId.toLowerCase() === resource.resourceId.toLowerCase());
     if (duplicate) {
+      toast({ title: "Recurso ja adicionado", description: "Esse recurso ja esta no canvas." });
+      return;
+    }
+
+    let resourceFields = resource.fields;
+    if (resourceFields.length === 0) {
+      resourceFields = await hydrateResourceFields(resource.resourceId, Number(resource.datasourceId));
+    }
+    if (resourceFields.length === 0) {
+      toast({
+        title: "Schema indisponivel",
+        description: "Nao foi possivel carregar as colunas desse recurso.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const duplicateAfterSchemaLoad = nodes.some((node) => node.data.resourceId.toLowerCase() === resource.resourceId.toLowerCase());
+    if (duplicateAfterSchemaLoad) {
       toast({ title: "Recurso ja adicionado", description: "Esse recurso ja esta no canvas." });
       return;
     }
@@ -1593,7 +1675,7 @@ const DatasetCanvas = () => {
       data: {
         resourceId: resource.resourceId,
         label: resource.label,
-        fields: resource.fields.map((field) => {
+        fields: resourceFields.map((field) => {
           const semanticType = inferFieldSemanticType(field.type);
           return {
             id: buildFieldId(field.name),
@@ -1681,7 +1763,7 @@ const DatasetCanvas = () => {
       setSelectedEdgeId(null);
     }
     setIsDirty(true);
-  }, [accessMode, datasourceId, nodes, selectableDatasources, toast]);
+  }, [accessMode, datasourceId, hydrateResourceFields, nodes, selectableDatasources, toast]);
 
   const onCreateJoinFromCanvas = useCallback((sourceNodeId: string, targetNodeId: string) => {
     if (sourceNodeId === targetNodeId) return;
@@ -2528,7 +2610,11 @@ const DatasetCanvas = () => {
                         </div>
                       ))}
 
-                      {accessMode && resourcesByDatasource.length === 0 ? (
+                      {accessMode && resourcesByDatasource.length === 0 && liveResourcesQuery.isFetching ? (
+                        <p className="text-caption text-muted-foreground">Carregando recursos da fonte...</p>
+                      ) : null}
+
+                      {accessMode && resourcesByDatasource.length === 0 && !liveResourcesQuery.isFetching ? (
                         <p className="text-caption text-muted-foreground">Nenhum recurso disponivel para o tipo selecionado.</p>
                       ) : null}
                     </div>
